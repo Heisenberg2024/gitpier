@@ -34,7 +34,8 @@ public actor GitService {
   private func releaseWrite() {
     if writeWaiters.isEmpty { writeBusy = false } else { writeWaiters.removeFirst().resume() }
   }
-  private func writing<T>(_ operation: () async throws -> T) async throws -> T {
+  // Swift 6.0/6.1 checks the async closure's result across an isolation boundary.
+  private func writing<T: Sendable>(_ operation: () async throws -> T) async throws -> T {
     await acquireWrite()
     defer { releaseWrite() }
     try Task.checkCancellation()
