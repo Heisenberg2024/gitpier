@@ -1,0 +1,86 @@
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+.Spotlight-V100/
+.Trashes/
+
+# SwiftPM / Xcode generated state (keep Package.resolved and shared schemes)
+.build/
+.swiftpm/
+DerivedData/
+xcuserdata/
+*.xcuserstate
+*.xcsettings
+*.xccheckout
+*.xcscmblueprint
+
+# Local builds, packages and caches
+/build/
+/Build/
+/dist/
+/.cache/
+/tmp/
+*.app/
+*.dmg
+*.pkg
+*.xcarchive/
+*.dSYM/
+*.dSYM.zip
+*.ipa
+
+# Editor-local state and temporary output
+.idea/
+.vscode/settings.json
+.vscode/*.local.json
+*.swp
+*.swo
+*~
+*.tmp
+*.bak
+*.log
+
+# Local environment and secrets; examples must still be reviewed
+.env
+.env.*
+*.local.env
+!.env.example
+!.env.sample
+*.secrets
+*.secret
+secrets/
+private/
+*.p12
+*.p8
+*.mobileprovision
+*.provisionprofile
+*.pem
+*.key
+id_rsa
+id_ed25519
+*.keychain
+*.keychain-db
+
+# Local application data (do not ignore all JSON files)
+local-config.json
+credentials.local.json
+user-settings.local.json
+repositories.local.json
+terminal-sessions.local.json
+workspace.local.json
+*.sqlite
+*.sqlite3
+*.sqlite-wal
+*.sqlite-shm
+*.db
+
+# Internal notes, acceptance captures and machine-specific measurements
+/.local/
+/PROJECT_MEMORY.md
+/.codex/
+/.agents/
+docs/internal/
+notes/private/
+*.local.md
+*.private.md

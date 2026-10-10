@@ -1,0 +1,76 @@
+<p align="center">
+  <img src="Resources/Branding/gitpier-icon-1024.png" width="112" alt="GitPier 应用图标">
+</p>
+<h1 align="center">GitPier</h1>
+<p align="center">
+  <strong>Native Git Client for macOS</strong><br>
+  All Your Repositories. One Workspace.
+</p>
+<p align="center"><a href="README.md">English</a> · 简体中文</p>
+
+GitPier 将仓库管理、变更审查、提交和集成终端汇集在一个专注的 macOS 工作空间中。应用采用 Swift、SwiftUI 和 AppKit 开发，直接使用本地仓库和已安装的 Git。
+
+![提交工作台：已跟踪与未跟踪变更、双栏 Diff 和终端](docs/screenshots/commit-workspace.png)
+
+## 功能
+
+- **多仓库管理。** 切换仓库和 Worktree，通过组织管理项目，并在工作空间总览中查看分支和变更数量。
+- **专注的提交流程。** 使用独立文件复选框选择变更，审查选中内容，执行提交或提交并推送。保留已有部分暂存和其他工具暂存的变更。
+- **双栏 Diff。** 通过行号、语法着色和同步垂直滚动比较代码；对支持的 Hunk 执行暂存、取消暂存或丢弃，并通过标签保留文件。
+- **集成终端。** 在真实 PTY 中运行已安装的 Shell，支持多标签、分屏和搜索。每个仓库保留自己的会话和工作目录。
+- **历史与分支。** 浏览提交图，管理分支、远程、Stash 和标签，通过 Git 执行获取、拉取、推送、合并和变基。
+- **凭证管理。** 使用 macOS Keychain 保存 HTTPS Token，并选择 SSH 身份配置。支持既有 Git 凭证助手、SSH 配置、Hooks 和提交签名。
+
+支持英语与简体中文界面、深浅主题及跟随系统外观。使用 **⌘R** 手动刷新；可选文件监听会提示外部变更。
+
+## 界面截图
+
+
+### 双栏 Diff
+
+![带行号和 Hunk 暂存控件的 Swift 代码差异](docs/screenshots/diff-viewer.png)
+
+### 集成终端
+
+![多终端标签和 Git 输出](docs/screenshots/integrated-terminal.png)
+
+### 仓库总览
+
+![包含四个演示仓库的工作空间总览](docs/screenshots/repository-dashboard.png)
+
+## 安装
+
+GitPier 要求 **macOS 14 或更高版本**。
+
+## 从源码构建
+
+需要 macOS、**Xcode 16 或更高版本**及其命令行工具、**Swift 6.0 或更高版本**和 Git。依赖通过 Swift Package Manager 管理，并由 `Package.resolved` 锁定。可在 Xcode 中打开 `Package.swift` 浏览工程，或在仓库根目录构建应用：
+
+```bash
+Scripts/build-app.sh
+open dist/GitPier.app
+```
+
+脚本为当前架构构建 Release 应用、打包资源并执行本地 ad-hoc 签名。生成包含 Apple silicon 和 Intel 二进制的本地通用压缩包：
+
+```bash
+UNIVERSAL=1 Scripts/package-release.sh
+```
+
+测试与构建选项见[开发说明](docs/development.md)，实现细节见[架构说明](docs/architecture.md)。
+
+## 安全与隐私
+
+Git 操作在本机执行。受管理的 HTTPS Token 保存在 macOS Keychain 中，工作空间元数据和草稿保存在本地。GitPier 没有仓库上传或分析服务；远程操作连接用户选择的 Git Remote。Git Hooks、凭证助手和终端命令以当前用户权限执行，也可能访问网络。
+
+提交审查保留外部 Index 和部分暂存内容。破坏性操作需要确认。GitPier 不会自动修改全局 Git、SSH 或 Shell 配置。分享日志或报告凭证问题前，请阅读[安全说明](SECURITY.md)。
+
+## 参与贡献
+
+仓库公开后欢迎提交问题报告与 Pull Request。请先阅读[贡献指南](CONTRIBUTING.md)，使用临时仓库复现 Git 问题，并移除附件中的私人数据。
+
+## 许可证
+
+GitPier 采用 [MIT License](LICENSE)。Copyright (c) 2026 Heisenberg2024。
+
+第三方组件保留各自许可证，详见[第三方声明](THIRD_PARTY_NOTICES.md)。

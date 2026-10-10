@@ -1,0 +1,45 @@
+# Architecture and security boundaries
+
+GitPier is a native macOS application built as a SwiftPM executable. `GitPierCore` contains models, status/diff parsing, process execution, Git operations, persistence, Keychain access and FSEvents watching. SwiftUI coordinates views; AppKit provides the commit text editor, virtual Diff table and SwiftTerm PTY view. `PTYSupport` contains bounded native process/session cleanup.
+
+## Ownership and state
+
+`AppStore` is shared by application windows. Each canonical working tree has one `RepositoryModel` and one `GitService` in the registry. Drafts, tabs, selected files, directory expansion and terminals belong to that repository, never to a global draft. Repositories and preferences persist in `~/Library/Application Support/GitPier/workspace.json` with atomic replacement and mode 0600. Invalid configuration is preserved and further writes are blocked rather than silently replacing it. An isolated configuration file can be selected with `GITPIER_WORKSPACE_FILE` for acceptance tests.
+
+The Git actor's explicit FIFO write queue spans async suspension points. Actor isolation alone would allow interleaving writes while awaiting child processes. Git's own locks still protect against external clients. Read refreshes use `GIT_OPTIONAL_LOCKS=0`. `write-tree` runs against an Index copy; object-directory events are ignored because Git can freshen immutable object timestamps. Index, HEAD, refs and working-tree events remain watched, with debounce when watching is enabled. Watching marks pending changes only; explicit refresh runs Git. Requests are coalesced, unchanged state is not republished, and appearance/font changes do not trigger Git commands.
+
+Status uses porcelain v2, branch headers and NUL-delimited UTF-8 paths. Renames consume their separate original-path record. Non-UTF-8 paths fail explicitly rather than being decoded into potentially wrong paths. Literal pathspecs and `--` separators prevent filenames from becoming Git options or pathspec expressions.
+
+## Reviewed commits
+
+Commit inclusion checkboxes are local repository state, separate from row highlighting and the real Index. On Commit, the Git actor validates the reviewed live snapshot, stages only selected files that have no staged content, and preserves the existing content of partially staged files. A private Index copy restores unchecked staged paths to HEAD (or removes them from an unborn Index). Normal `git commit --file=-` then operates on this exact chosen tree. Existing unchecked staging stays in the live Index, which is never replaced. Preparation staging remains available if commit or hooks fail.
+
+Temporary hook wrappers delegate original hooks and signing. The final `commit-msg` gate separately checks the chosen commit tree, a fresh copy of the expected live Index tree, and HEAD. Those trees can differ when there is unchecked staging. Post-commit/post-rewrite hooks use the live Index. Reviewed cached patches for unstaged files are checked again before staging; external Index/HEAD changes require another review. No whole-working-tree add or `commit -a` is used.
+
+External Index or HEAD changes mark the UI as requiring another review. A race after the final gate cannot insert external staged changes into the isolated commit; their live Index entries remain available. The commit phase is allowed to finish atomically; cancellation remains available for other commands. Hooks are trusted repository code and can perform arbitrary actions, just as with Git itself.
+
+Hunk application checks the patch first and uses atomic `git apply`, with an Index snapshot check. Rename/mode/submodule and whitespace-filtered hunks are deliberately restricted to file-level staging. Discard and history rewrites require explicit UI confirmation.
+
+## Authentication
+
+Keychain uses generic-password items under `GitPier.credentials`, keyed by UUID. Configuration contains only profile name, host, username, protocol and SSH identity path. Managed HTTPS profiles reset the helper chain for that process and install the GitPier helper using a quoted executable path and profile UUID. Tokens are read only in the helper and returned through stdout to Git's private credential pipe. `store` and `erase` do not copy secrets into files. HTTPS profiles answer only for their configured host and refuse HTTP.
+
+The SSH helper resolves aliases with `ssh -G`, validates the configured host, then replaces itself with system SSH and the selected identity. It preserves SSH config, agent and verification. GUI AskPass handles interactive prompts. Git errors redact credentials embedded in pre-existing HTTPS URLs. No global Git, SSH or shell configuration is written automatically. Local identity/signing/hook save buttons are explicit user actions.
+
+## PTY and lifecycle
+
+SwiftTerm 1.20.0 creates the controlling PTY, performs terminal emulation and synchronizes dimensions. Interactive login shells load their normal configuration. The terminal view and process are owned by `TerminalSession`; SwiftUI presentation can detach and reattach the same view. Hiding and repository switching retain sessions and buffers. Resizing uses global-pointer coordinates, disables implicit animation and publishes only WorkspacePanels live layout; RepositoryRecord and JSON are updated at drag completion. The same native terminal view is retained and font setup is cached; duplicate, zero and subpixel frame-size transitions are ignored. Diff rendering uses document revisions, cached fonts/line widths and no fixed-row height invalidation. Wrapped-row visible heights update during dragging and full heights are deferred until it settles. No terminal output logging is enabled. Session close hangs up its controlling session and stops the shell; application shutdown stops all owned sessions. Process cleanup checks session membership/ancestry and process start time before signaling descendants.
+
+## Distribution
+
+This is a **non-sandbox** desktop tool. It runs with the logged-in user's privileges, accesses user-selected repositories and launches Git, SSH and shell programs. macOS privacy prompts and filesystem permissions still apply. Git hooks and shell startup files are executable user code. Repository removal affects only GitPier records and associated sessions, never the real directory.
+
+`Scripts/build-app.sh` builds SwiftPM, packages the executable/resource bundles, creates ICNS from the AppIcon catalog, binds it through Info.plist, includes dependency notices, and verifies a local signature. `AppResources` resolves Contents/Resources for packaged application assets and falls back to SwiftPM's resource bundle during development. The default CoreGraphics terminal renderer does not need Metal shader lookup. Bundle roots contain only Contents, so signature sealing remains valid. Default bundle identifier is a configurable example; it claims no organization ownership. Signing identity is optional; default is ad-hoc. No public repository, release, Developer ID signature or notarization is automatically created.
+
+The CI workflow targets macOS 15 and runs the test and application build scripts. Universal packaging builds arm64 and x86_64 binaries with a macOS 14 deployment target. Compilation does not establish Intel or minimum-OS runtime compatibility; those require separate device checks.
+
+## Operation progress and performance
+
+ProcessRunner waits on termination/cancellation signals and streams stderr while preserving output limits and timeout escalation. GitProgressDecoder accepts only known Git stage counters, buffers bounded partial lines and throttles updates. OperationProgress is independently observed by the footer; operation/stage tickets reject stale transfer callbacks and commit remains protected from cancellation. Unknown stages never display invented percentages.
+
+RepositoryFileIndex is built off the main actor when file status changes. Sorting, counts, path lookup and filter results are reused; history requests are coalesced and graphs constructed off the main actor. Diff caching protects the current and recently interacted keys within its budget. Workspace views reuse their native containers while repository-owned drafts, layouts, expansion and scroll positions remain separate. Optional performance instrumentation records command categories and timings only; it is disabled in normal launches. The destructive benchmark entry point rejects anything except the generated, marked temporary fixture.

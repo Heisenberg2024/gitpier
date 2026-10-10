@@ -1,0 +1,22 @@
+name: Validate macOS
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  build-test:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Toolchain
+        run: swift --version
+      - name: Real Git repository tests
+        run: Scripts/test.sh
+      - name: Build application
+        run: Scripts/build-app.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: GitPier-development-app
+          path: dist/GitPier.app

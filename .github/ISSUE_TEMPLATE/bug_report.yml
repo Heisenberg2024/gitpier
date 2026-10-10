@@ -1,0 +1,20 @@
+name: Bug report
+description: Report a reproducible GitPier issue
+body:
+  - type: textarea
+    id: behavior
+    attributes:
+      label: Expected and actual behavior
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: Use a throwaway repository where possible. Never include tokens, private keys or private repository contents.
+    validations:
+      required: true
+  - type: input
+    id: environment
+    attributes:
+      label: macOS, architecture, GitPier version and Git version
