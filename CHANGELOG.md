@@ -2,6 +2,7 @@
 
 ## 1.0.0 — Unreleased
 
+- Use one approved icon for the sidebar, Dock, About panel, and application package; regenerate all icon sizes during packaging and refresh the packaged icon identity.
 - Native macOS workspace with repository collections, dashboard, worktrees, English and Simplified Chinese, and system/light/dark appearances.
 - Reviewed commits with independent file inclusion, preservation of external and partial staging, file and hunk operations, hooks, and signing.
 - Side-by-side Diff, per-repository drafts and tabs, history graph, branches, remotes, stashes, and tags.

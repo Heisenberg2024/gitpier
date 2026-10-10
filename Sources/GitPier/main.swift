@@ -71,6 +71,13 @@ struct GitPierApp: App {
         .frame(minWidth: 960, minHeight: 640)
     }.defaultSize(width: 1440, height: 920).windowToolbarStyle(.unifiedCompact)
       .commands {
+        CommandGroup(replacing: .appInfo) {
+          Button(store.text("About GitPier", "关于 GitPier")) {
+            var options: [NSApplication.AboutPanelOptionKey: Any] = [.applicationName: "GitPier"]
+            if let icon = AppResources.applicationIcon { options[.applicationIcon] = icon }
+            NSApp.orderFrontStandardAboutPanel(options: options)
+          }
+        }
         CommandGroup(replacing: .newItem) {
           Button(store.text("Open Repository…", "打开仓库…")) { store.openRepository() }
             .keyboardShortcut("o")
@@ -142,9 +149,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
       return consumed ? nil : event
     }
     NSApp.setActivationPolicy(.regular)
-    if let icon = AppResources.bundle.url(forResource: "gitpier-icon-1024", withExtension: "png") {
-      NSApp.applicationIconImage = NSImage(contentsOf: icon)
-    }
+    if let icon = AppResources.applicationIcon { NSApp.applicationIconImage = icon }
     NSApp.activate(ignoringOtherApps: true)
     if let index = CommandLine.arguments.firstIndex(of: "--repository"),
       CommandLine.arguments.count > index + 1

@@ -118,10 +118,7 @@ struct RootView: View {
   var sidebar: some View {
     VStack(spacing: 0) {
       HStack(spacing: 8) {
-        if let url = AppResources.bundle.url(
-          forResource: "gitpier-icon-1024", withExtension: "png"),
-          let image = NSImage(contentsOf: url)
-        {
+        if let image = AppResources.applicationIcon {
           Image(nsImage: image).resizable().frame(width: 26, height: 26)
         }
         Text(localizedUI("GitPier")).font(uiFont(size: 16, weight: .semibold))

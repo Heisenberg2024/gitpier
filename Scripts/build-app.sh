@@ -9,6 +9,8 @@ if [[ ! "$bundle_id" =~ ^[a-zA-Z][a-zA-Z0-9-]*(\.[a-zA-Z][a-zA-Z0-9-]*)+$ ]]; th
 fi
 export CLANG_MODULE_CACHE_PATH="$task_root/.cache/clang"
 export SWIFTPM_MODULECACHE_OVERRIDE="$task_root/.cache/swift"
+# Regenerate every icon surface from the canonical PNG before SwiftPM copies resources.
+swift Scripts/generate-branding.swift
 swift build --build-system native --disable-sandbox --cache-path "$task_root/.cache/swiftpm" -c "$configuration" --product GitPier
 task_bin="$(swift build --build-system native --disable-sandbox --cache-path "$task_root/.cache/swiftpm" -c "$configuration" --show-bin-path)"
 task_app="$task_root/dist/GitPier.app"
@@ -31,12 +33,19 @@ for task_bundle in "$task_bin"/*.bundle; do
   rm -rf "$task_app/$task_name"
 done
 task_icons="$task_root/.cache/GitPier.iconset"
+rm -rf "$task_icons"
 mkdir -p "$task_icons"
 for task_size in 16 32 128 256 512; do
   cp "Resources/Assets.xcassets/AppIcon.appiconset/icon_${task_size}x${task_size}@1x.png" "$task_icons/icon_${task_size}x${task_size}.png"
   cp "Resources/Assets.xcassets/AppIcon.appiconset/icon_${task_size}x${task_size}@2x.png" "$task_icons/icon_${task_size}x${task_size}@2x.png"
 done
-iconutil -c icns "$task_icons" -o "$task_app/Contents/Resources/GitPier.icns"
+task_icon_hash="$(shasum -a 256 Resources/Branding/gitpier-icon-1024.png | cut -c 1-12)"
+task_icon_name="GitPier-$task_icon_hash.icns"
+for task_old_icon in "$task_app/Contents/Resources"/GitPier*.icns; do
+  [[ -f "$task_old_icon" ]] || continue
+  rm "$task_old_icon"
+done
+iconutil -c icns "$task_icons" -o "$task_app/Contents/Resources/$task_icon_name"
 cat > "$task_app/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -47,8 +56,8 @@ cat > "$task_app/Contents/Info.plist" <<PLIST
 <key>CFBundleIdentifier</key><string>$bundle_id</string>
 <key>CFBundlePackageType</key><string>APPL</string>
 <key>CFBundleShortVersionString</key><string>1.0.0</string>
-<key>CFBundleVersion</key><string>7</string>
-<key>CFBundleIconFile</key><string>GitPier</string>
+<key>CFBundleVersion</key><string>8</string>
+<key>CFBundleIconFile</key><string>$task_icon_name</string>
 <key>LSMinimumSystemVersion</key><string>14.0</string>
 <key>NSHighResolutionCapable</key><true/>
 <key>NSHumanReadableCopyright</key><string>Copyright (c) 2026 Heisenberg2024. MIT License.</string>
@@ -63,4 +72,5 @@ rm -rf "$task_app/Contents/Resources/Licenses"
 cp -R Resources/Licenses "$task_app/Contents/Resources/Licenses"
 codesign --force --sign "${CODE_SIGN_IDENTITY:--}" "$task_app"
 codesign --verify --strict "$task_app"
+touch "$task_app"
 printf 'Built %s\n' "$task_app"

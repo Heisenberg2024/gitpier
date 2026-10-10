@@ -4,6 +4,11 @@ import ImageIO
 // The approved raster is the source of truth. Regeneration never restores old concepts.
 let root = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
 let source = root.appendingPathComponent("Resources/Branding/gitpier-icon-1024.png")
+let sourceData = try Data(contentsOf: source)
+guard let imageSource = CGImageSourceCreateWithData(sourceData as CFData, nil),
+  let sourceImage = CGImageSourceCreateImageAtIndex(imageSource, 0, nil),
+  sourceImage.width == 1024, sourceImage.height == 1024
+else { fatalError("Canonical GitPier PNG must be 1024 × 1024") }
 guard let image = NSImage(contentsOf: source) else {
   fatalError("Missing canonical GitPier PNG")
 }
@@ -11,6 +16,7 @@ let assets = root.appendingPathComponent("Resources/Assets.xcassets/AppIcon.appi
 try FileManager.default.createDirectory(at: assets, withIntermediateDirectories: true)
 
 func png(size: Int) throws -> Data {
+  if size == 1024 { return sourceData }
   guard let bitmap = NSBitmapImageRep(
     bitmapDataPlanes: nil, pixelsWide: size, pixelsHigh: size, bitsPerSample: 8,
     samplesPerPixel: 4, hasAlpha: true, isPlanar: false, colorSpaceName: .deviceRGB,
@@ -46,12 +52,10 @@ for size in [16, 32, 128, 256, 512] {
 try JSONSerialization.data(
   withJSONObject: ["images": entries, "info": ["author": "xcode", "version": 1]],
   options: [.prettyPrinted, .sortedKeys]).write(to: assets.appendingPathComponent("Contents.json"))
-let data = try png(size: 1024)
-try data.write(to: source)
-try data.write(to: root.appendingPathComponent("Sources/GitPier/Resources/gitpier-icon-1024.png"))
+try sourceData.write(to: root.appendingPathComponent("Sources/GitPier/Resources/gitpier-icon-1024.png"))
 let cleaner = Process()
 cleaner.executableURL = URL(fileURLWithPath: "/usr/bin/python3")
-cleaner.arguments = [root.appendingPathComponent("Scripts/strip-png-metadata.py").path, source.path,
+cleaner.arguments = [root.appendingPathComponent("Scripts/strip-png-metadata.py").path,
   root.appendingPathComponent("Sources/GitPier/Resources/gitpier-icon-1024.png").path]
   + entries.compactMap { $0["filename"].map { assets.appendingPathComponent($0).path } }
 try cleaner.run()
