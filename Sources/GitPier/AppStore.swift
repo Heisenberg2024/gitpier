@@ -389,6 +389,8 @@ struct DiffTab: Identifiable, Equatable {
   @Published var output: String?
   @Published var outputResult: OperationResult = .succeeded
   @Published var pushFailed = false
+  @Published var rejectedPush: PushRejection?
+  private var pendingPushRecovery: PushRejection?
   @Published var needsUpstream = false
   @Published var lastCommit: String?
   @Published var amend = false
@@ -878,6 +880,10 @@ struct DiffTab: Identifiable, Equatable {
       defer {
         busy = false
         activeTask = nil
+        if let rejection = pendingPushRecovery {
+          pendingPushRecovery = nil
+          confirmMergeAndPush(rejection)
+        }
       }
       // Finish any older read before writing, so the refresh after this action reads its result.
       if let refreshTask { await refreshTask.value }
@@ -891,9 +897,9 @@ struct DiffTab: Identifiable, Equatable {
           result = .needsAttention
         }
         let details = GitOutputSummary.details(output ?? "")
-        let summary =
-          completion ?? (label ?? store.text("Git operation", "Git 操作"))
-          + store.text(" · Completed", " · 已完成")
+        let summary = result == .succeeded
+          ? (completion ?? (label ?? store.text("Git operation", "Git 操作"))
+            + store.text(" · Completed", " · 已完成")) : ""
         output = [summary, details].filter { !$0.isEmpty }.joined(separator: "\n")
         if result == .failed { outputResult = .needsAttention }
       } catch is CancellationError {
@@ -973,6 +979,7 @@ struct DiffTab: Identifiable, Equatable {
         ? store.text("\nIndex changes made during the commit remain staged.", "\n提交过程中发生的暂存修改已保留。")
         : ""
       pushFailed = false
+      rejectedPush = nil
       if push {
         let status = try await git.status()
         if status.upstream == nil {
@@ -991,6 +998,10 @@ struct DiffTab: Identifiable, Equatable {
               store.text("Commit & push completed: ", "提交并推送已完成：")
               + String(result.hash.prefix(8)) + indexNote
             if !details.isEmpty { output! += "\n" + details }
+          } catch let rejection as PushRejection {
+            queuePushRecovery(rejection)
+            output = localOutput + indexNote
+              + store.text("\nRemote commits must be merged before pushing.", "\n远程有尚未合并的提交，需要合并后推送。")
           } catch is CancellationError {
             outputResult = .needsAttention
             output =
@@ -1034,11 +1045,90 @@ struct DiffTab: Identifiable, Equatable {
           forceWithLease: force, progress: progress)
         if operation == "push" {
           pushFailed = false
+          rejectedPush = nil
           needsUpstream = false
         }
+      } catch let rejection as PushRejection {
+        queuePushRecovery(rejection)
+        output = store.text(
+          "Push rejected because the remote has commits to merge. Your local commits are preserved.",
+          "远程有尚未合并的提交，推送被拒绝。本地提交已保留。")
       } catch {
-        if operation == "push" { pushFailed = true }
+        if operation == "push" {
+          pushFailed = true
+          rejectedPush = nil
+        }
         throw error
+      }
+    }
+  }
+  private func queuePushRecovery(_ rejection: PushRejection) {
+    pushFailed = true
+    rejectedPush = rejection
+    pendingPushRecovery = rejection
+    outputResult = .needsAttention
+  }
+  func confirmMergeAndPush(_ rejection: PushRejection) {
+    guard !busy else { return }
+    confirmation = PendingAction(
+      title: store.text("Merge remote changes and push?", "合并远程更改并推送？"),
+      detail: store.text(
+        "The remote contains commits missing locally. Fetch its latest commits, merge them into the current branch, then push? Your local commit is already saved. Conflicts stop the push for you to resolve. Commit or stash remaining tracked changes first.",
+        "远程包含本地尚未合并的提交。是否获取最新提交，合并到当前分支后继续推送？本地提交已经保存。出现冲突时会停止推送，交由你解决。若有剩余的已跟踪文件修改，请先提交或 Stash。")
+        + "\n\n" + GitService.redact(rejection.remoteURL) + "\n"
+        + String(rejection.localReference.dropFirst("refs/heads/".count)) + " → "
+        + String(rejection.remoteReference.dropFirst("refs/heads/".count)),
+      confirmTitle: store.text("Merge & Push", "合并并推送"), destructive: false
+    ) { [weak self] in self?.mergeAndPush(rejection) }
+  }
+  private func mergeAndPush(_ rejection: PushRejection) {
+    run(
+      label: store.text("Merge & Push", "合并并推送"), completion: "", notify: true
+    ) { [weak self] git in
+      guard let self else { return }
+      defer { committing = false }
+      do {
+        let details = try await git.mergeAndPush(rejection) { [weak self] phase in
+          await MainActor.run {
+            guard let self else { return nil }
+            self.committing = phase == .merging
+            let title: String
+            switch phase {
+            case .fetching: title = self.store.text("Fetching", "获取")
+            case .merging: title = self.store.text("Merging", "合并")
+            case .pushing: title = self.store.text("Pushing", "推送")
+            }
+            self.activity.advance(title, cancellable: phase != .merging)
+            return self.activity.receiver()
+          }
+        }
+        pushFailed = false
+        rejectedPush = nil
+        needsUpstream = false
+        output = store.text("Merge & push completed.", "合并并推送已完成。") + "\n" + details
+      } catch {
+        committing = false
+        pushFailed = true
+        rejectedPush = nil
+        outputResult = .needsAttention
+        let state = try? await git.status()
+        if state?.files.contains(where: \.isConflicted) == true {
+          output = store.text(
+            "Merge has conflicts; push stopped. Resolve and stage the files, continue the merge, then retry Push. Your local commit is preserved.",
+            "合并出现冲突，已停止推送。请解决并暂存冲突文件，继续合并后重试推送。本地提交已保留。")
+          self.error = output! + "\n\n" + error.localizedDescription
+        } else if state?.operation == .merge {
+          output = store.text(
+            "Merge is unfinished; push stopped. Review the Git error and continue or abort the merge before retrying Push. Your local commit is preserved.",
+            "合并尚未完成，已停止推送。请检查 Git 错误，继续或中止合并后重试推送。本地提交已保留。")
+          self.error = output! + "\n\n" + error.localizedDescription
+        } else {
+          output = store.text(
+            "Merge & Push did not complete. Your local commits are preserved; review the repository before retrying Push.",
+            "合并并推送尚未完成。本地提交已保留，请检查仓库后重试推送。")
+          if error is CancellationError { throw error }
+          self.error = error.localizedDescription
+        }
       }
     }
   }
@@ -1185,6 +1275,8 @@ struct PendingAction: Identifiable {
   let id = UUID()
   let title: String
   let detail: String
+  var confirmTitle: String? = nil
+  var destructive = true
   var action: () -> Void
 }
 

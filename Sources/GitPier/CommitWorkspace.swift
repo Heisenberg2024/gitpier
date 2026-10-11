@@ -48,7 +48,13 @@ struct RepositoryWorkspace: View {
             .lineLimit(3).textSelection(.enabled)
             .fixedSize(horizontal: false, vertical: true)
           Spacer()
-          if model.pushFailed { Button(store.text("Retry Push", "重试推送")) { model.network("push") } }
+          if let rejection = model.rejectedPush {
+            Button(store.text("Merge & Push…", "合并并推送…")) { model.confirmMergeAndPush(rejection) }
+              .disabled(model.busy)
+          } else if model.pushFailed {
+            Button(store.text("Retry Push", "重试推送")) { model.network("push") }
+              .disabled(model.busy || model.status.operation != nil || model.status.files.contains(where: \.isConflicted))
+          }
           if model.needsUpstream {
             Button(store.text("Choose Upstream…", "选择 Upstream…")) { model.needsUpstream = true }
           }
@@ -98,7 +104,10 @@ struct RepositoryWorkspace: View {
       isPresented: Binding(
         get: { model.confirmation != nil }, set: { if !$0 { model.confirmation = nil } })
     ) {
-      Button(store.text("Confirm", "确认"), role: .destructive) {
+      Button(
+        model.confirmation?.confirmTitle ?? store.text("Confirm", "确认"),
+        role: model.confirmation?.destructive == false ? nil : .destructive
+      ) {
         let action = model.confirmation?.action
         model.confirmation = nil
         action?()
@@ -690,8 +699,7 @@ struct CommitEditor: NSViewRepresentable {
   var commit: () -> Void
   func makeCoordinator() -> Coordinator { Coordinator(self) }
   func makeNSView(context: Context) -> NSScrollView {
-    let scroll = NSScrollView()
-    scroll.hasVerticalScroller = true
+    let scroll = DiffScrollView()
     scroll.drawsBackground = false
     let view = CommitTextView()
     view.isRichText = false

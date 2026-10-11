@@ -21,6 +21,47 @@ import SwiftUI
 }
 
 final class SafeTerminalView: LocalProcessTerminalView {
+  private(set) var scrollThumb: OverlayScrollThumb?
+  private var lastScrollPosition: Double?
+  override func viewDidMoveToWindow() {
+    super.viewDidMoveToWindow()
+    updateScrollThumb()
+  }
+  override func layout() {
+    super.layout()
+    updateScrollThumb()
+  }
+  override func scrolled(source terminal: Terminal, yDisp: Int) {
+    super.scrolled(source: terminal, yDisp: yDisp)
+    updateScrollThumb()
+  }
+  override func bufferActivated(source: Terminal) {
+    super.bufferActivated(source: source)
+    updateScrollThumb()
+  }
+  func updateScrollThumb() {
+    // SwiftTerm scrolls its buffer directly, rather than using NSScrollView.
+    // Hide its native scroller and drive the same thumb through its public scrollback API.
+    for scroller in subviews.compactMap({ $0 as? NSScroller }) { scroller.isHidden = true }
+    if scrollThumb == nil {
+      let thumb = OverlayScrollThumb(horizontal: false)
+      thumb.accessibilityName = "Terminal scrollback"
+      thumb.changed = { [weak self] fraction in
+        self?.scroll(toPosition: Double(fraction))
+        self?.updateScrollThumb()
+      }
+      scrollThumb = thumb
+      addSubview(thumb, positioned: .above, relativeTo: nil)
+    }
+    guard let thumb = scrollThumb else { return }
+    if thumb.tintColor != nativeForegroundColor { thumb.tintColor = nativeForegroundColor }
+    let target = NSRect(x: max(0, bounds.width - 12), y: 0, width: 12, height: bounds.height)
+    if thumb.frame != target { thumb.frame = target }
+    thumb.isHidden = !canScroll || bounds.height < 12 || bounds.width < 12
+    if let lastScrollPosition, lastScrollPosition != scrollPosition { thumb.markActive() }
+    lastScrollPosition = scrollPosition
+    thumb.update(fraction: CGFloat(scrollPosition))
+  }
   private(set) var resizeCount = 0
   override func setFrameSize(_ newSize: NSSize) {
     let size = NSSize(width: floor(newSize.width), height: floor(newSize.height))
@@ -29,6 +70,7 @@ final class SafeTerminalView: LocalProcessTerminalView {
     CATransaction.begin()
     CATransaction.setDisableActions(true)
     super.setFrameSize(size)
+    updateScrollThumb()
     CATransaction.commit()
   }
   // Used by the isolated acceptance harness only; normal sessions never collect or persist output.
@@ -36,6 +78,7 @@ final class SafeTerminalView: LocalProcessTerminalView {
   override func dataReceived(slice: ArraySlice<UInt8>) {
     acceptanceOutput?(Data(slice))
     super.dataReceived(slice: slice)
+    updateScrollThumb()
   }
   override func requestOpenLink(source: TerminalView, link: String, params: [String: String]) {
     guard let url = URL(string: link),
@@ -108,7 +151,7 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable,
     env["TERM"] = "xterm-256color"
     env["COLORTERM"] = "truecolor"
     env["TERM_PROGRAM"] = "GitPier"
-    env["TERM_PROGRAM_VERSION"] = "1.0.0"
+    env["TERM_PROGRAM_VERSION"] = AppResources.version
     if let authentication {
       for (key, value) in authentication.environment { env[key] = value }
       let pairs = stride(from: 0, to: authentication.arguments.count, by: 2).compactMap {
@@ -166,6 +209,7 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable,
       view.getTerminal().changeScrollback(max(1000, min(settings.scrollback, 100000)))
       appliedScrollback = settings.scrollback
     }
+    view.updateScrollThumb()
   }
   func close() {
     guard !exited, view.process.running else {

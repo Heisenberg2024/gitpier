@@ -63,6 +63,19 @@ public struct CommitResult: Sendable {
   public let indexChangedDuringCommit: Bool
 }
 
+/// The single current-branch destination actually rejected by Git's porcelain push output.
+public struct PushRejection: LocalizedError, Sendable {
+  public let localReference: String
+  public let localHead: String
+  public let remoteURL: String
+  public let remoteReference: String
+  public let upstreamRemote: String?
+  public let diagnostic: String
+  public var errorDescription: String? { diagnostic }
+}
+
+public enum PushRecoveryPhase: Sendable { case fetching, merging, pushing }
+
 public struct CommitRecord: Identifiable, Sendable {
   public var id: String { hash }
   public let hash: String

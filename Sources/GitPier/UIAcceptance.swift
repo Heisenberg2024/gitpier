@@ -55,6 +55,21 @@ import SwiftUI
         window.orderFront(nil)
         try await settle()
         try await waitFor { !model.refreshing && !model.diffLoading }
+        if ProcessInfo.processInfo.environment["GITPIER_UI_ACCEPTANCE_SCOPE"] == "scrollbars" {
+          try await verifyUnifiedScrollbars(store: store, model: model, output: output)
+          try await verifyDiffScrollBounds(settings: store.settings, output: output)
+          store.shutdown()
+          window.close()
+          print("Native unified scrollbar acceptance passed.")
+          exit(0)
+        }
+        if ProcessInfo.processInfo.environment["GITPIER_UI_ACCEPTANCE_SCOPE"] == "push-recovery" {
+          try await verifyPushRecovery(store: store, model: model, root: root, window: window, output: output)
+          store.shutdown()
+          window.close()
+          print("Native push recovery acceptance passed.")
+          exit(0)
+        }
         if ProcessInfo.processInfo.environment["GITPIER_UI_ACCEPTANCE_SCOPE"] == "version102" {
           model.terminal.add(settings: store.settings)
           try await verifyVersion102(
@@ -544,6 +559,7 @@ import SwiftUI
         try await verifyVersion102(
           store: store, model: model, host: host, window: window, output: output)
         try await verifyDiffScrollBounds(settings: store.settings, output: output)
+        try await verifyUnifiedScrollbars(store: store, model: model, output: output)
         session.view.acceptanceOutput = nil
         store.shutdown()
         window.close()
@@ -695,6 +711,129 @@ import SwiftUI
       "History layout serialization and page switch, full-width added-file native Diff, Esc routing with terminal exclusion, editor default/custom/one-time selection, native popup application icons and compact menu, all eight Settings initial pages and offline Help rendering passed. Real Settings tab clicks and history pointer/key events require the separate isolated GUI check. Installed editor order: \(installed.map(\.name).joined(separator: ", ")).\n"
       .write(
         to: output.appendingPathComponent("version-102.txt"), atomically: true, encoding: .utf8)
+  }
+  static func verifyPushRecovery(
+    store: AppStore, model: RepositoryModel, root: URL, window: NSWindow, output: URL
+  ) async throws {
+    window.center()
+    window.makeKeyAndOrderFront(nil)
+    let git = await model.git()
+    _ = try await git.commit(
+      message: "acceptance setup", expected: git.snapshot(), selection: git.status().files)
+    _ = try await git.network("push")
+    _ = try await git.perform(["config", "pull.rebase", "true"])
+    _ = try await git.perform(["config", "merge.ff", "only"])
+    _ = try await git.perform(["config", "core.editor", "/usr/bin/true"])
+    let remote = root.deletingLastPathComponent().appendingPathComponent("remote.git")
+    let peerRoot = root.deletingLastPathComponent().appendingPathComponent("push-recovery-peer")
+    _ = try await git.perform(["clone", "--branch", "main", remote.path, peerRoot.path])
+    let peer = GitService(root: peerRoot)
+    for (key, value) in [("user.name", "Acceptance Peer"), ("user.email", "peer@example.invalid"),
+      ("commit.gpgsign", "false")]
+    { _ = try await peer.perform(["config", key, value]) }
+    func advancePeer(path: String, contents: String) async throws -> String {
+      _ = try await peer.network("pull", strategy: "merge")
+      try contents.write(to: peerRoot.appendingPathComponent(path), atomically: true, encoding: .utf8)
+      try await peer.stage(peer.status().files)
+      let commit = try await peer.commit(message: "acceptance remote", expected: peer.snapshot())
+      _ = try await peer.network("push")
+      return commit.hash
+    }
+    func pressAlert(_ title: String) async throws {
+      try await waitFor { window.attachedSheet != nil }
+      guard let sheet = window.attachedSheet,
+        let button = descendants(sheet.contentView!).compactMap({ $0 as? NSButton }).first(where: { $0.title == title })
+      else { throw GitPierError.invalidInput("Missing native recovery alert button: " + title) }
+      button.performClick(nil)
+      try await waitFor { window.attachedSheet == nil }
+    }
+    for language in [AppLanguage.english, .simplifiedChinese] {
+      var settings = store.settings
+      settings.language = language
+      store.updateSettings(settings)
+      let remoteHead = try await advancePeer(path: "remote-recovery.txt", contents: language.rawValue + "\n")
+      try (language.rawValue + "\n").write(to: root.appendingPathComponent("local-recovery.txt"), atomically: true, encoding: .utf8)
+      await model.refresh()
+      model.toggleIncluded(model.status.files.filter { model.includedPaths.contains($0.path) })
+      model.toggleIncluded(model.status.files.filter { $0.path == "local-recovery.txt" })
+      model.editDraft("acceptance local " + language.rawValue)
+      model.requiresIndexReview = false
+      model.commit(push: true)
+      try await waitFor { !model.busy && model.confirmation != nil }
+      guard let rejection = model.rejectedPush, let localHead = model.lastCommit,
+        model.error == nil, model.pushFailed, model.outputResult == .needsAttention,
+        model.status.head == localHead, model.confirmation?.destructive == false,
+        model.activity.state?.result == .needsAttention
+      else { throw GitPierError.invalidInput("Divergent commit-and-push did not offer safe recovery") }
+      try await waitFor { window.attachedSheet != nil }
+      try await settle()
+      let captured = try await ProcessRunner().run(
+        executable: "/usr/sbin/screencapture",
+        arguments: ["-x", "-o", "-l", String(window.attachedSheet!.windowNumber),
+          output.appendingPathComponent("push-recovery-\(language.rawValue).png").path], directory: root)
+      if captured.code != 0 {
+        // Screenshot permission is optional; native button/state acceptance still runs.
+        try captured.errorText.write(
+          to: output.appendingPathComponent("push-recovery-\(language.rawValue)-capture.txt"),
+          atomically: true, encoding: .utf8)
+      }
+      try await pressAlert(store.text("Cancel", "取消"))
+      let afterCancel = try await git.status()
+      let remoteAfterCancel = try await git.read(["--git-dir=" + remote.path, "rev-parse", "refs/heads/main"]).text
+        .trimmingCharacters(in: .whitespacesAndNewlines)
+      guard model.confirmation == nil, afterCancel.head == localHead, remoteAfterCancel == remoteHead else {
+        throw GitPierError.invalidInput("Cancelling recovery mutated local or remote commits")
+      }
+      model.confirmMergeAndPush(rejection)
+      try await pressAlert(store.text("Merge & Push", "合并并推送"))
+      try await waitFor { !model.busy }
+      let remoteAfter = try await git.read(["--git-dir=" + remote.path, "rev-parse", "refs/heads/main"]).text
+        .trimmingCharacters(in: .whitespacesAndNewlines)
+      let localSubjects = try await git.read(["log", "--format=%s"]).text.split(separator: "\n")
+      guard model.error == nil, !model.pushFailed, model.rejectedPush == nil,
+        model.output?.hasPrefix(store.text("Merge & push completed.", "合并并推送已完成。")) == true,
+        model.outputResult == .succeeded, model.activity.state?.result == .succeeded,
+        model.status.head == remoteAfter,
+        localSubjects.filter({ $0 == "acceptance local " + language.rawValue }).count == 1
+      else { throw GitPierError.invalidInput("Recovery did not merge and push exactly once") }
+    }
+    let remoteConflict = try await advancePeer(path: "local-recovery.txt", contents: "remote conflict\n")
+    try "local conflict\n".write(to: root.appendingPathComponent("local-recovery.txt"), atomically: true, encoding: .utf8)
+    await model.refresh()
+    model.toggleIncluded(model.status.files.filter { model.includedPaths.contains($0.path) })
+    model.toggleIncluded(model.status.files.filter { $0.path == "local-recovery.txt" })
+    model.editDraft("acceptance conflicting local")
+    model.requiresIndexReview = false
+    model.commit(push: false)
+    try await waitFor { !model.busy }
+    let localConflict = model.lastCommit
+    model.network("push")
+    try await waitFor { !model.busy && model.confirmation != nil }
+    try await pressAlert("合并并推送")
+    try await waitFor { !model.busy }
+    let remoteAfterConflict = try await git.read(["--git-dir=" + remote.path, "rev-parse", "refs/heads/main"]).text
+      .trimmingCharacters(in: .whitespacesAndNewlines)
+    guard model.status.operation == .merge, model.status.files.contains(where: \.isConflicted),
+      model.status.head == localConflict, remoteAfterConflict == remoteConflict,
+      model.output?.hasPrefix("合并出现冲突，已停止推送") == true,
+      model.error != nil, model.pushFailed, model.activity.state?.result == .failed
+    else { throw GitPierError.invalidInput("Conflict recovery pushed or lost its merge/local commit") }
+    model.error = nil
+    try await settle()
+    try "resolved content\n".write(to: root.appendingPathComponent("local-recovery.txt"), atomically: true, encoding: .utf8)
+    try await git.stage(git.status().files.filter(\.isConflicted))
+    await model.refresh()
+    model.perform(["merge", "--continue"])
+    try await waitFor { !model.busy }
+    model.network("push")
+    try await waitFor { !model.busy }
+    let completedHead = try await git.read(["--git-dir=" + remote.path, "rev-parse", "refs/heads/main"]).text
+      .trimmingCharacters(in: .whitespacesAndNewlines)
+    guard model.error == nil, model.status.operation == nil, !model.pushFailed,
+      model.status.head == completedHead, model.output?.hasPrefix("推送已完成。") == true
+    else { throw GitPierError.invalidInput("Resolved merge could not continue and retry Push") }
+    try "English/Chinese native recovery alert buttons, cancel without writes, commit-and-push rejection, explicit push rejection, one local commit per attempt, merge despite pull.rebase/ff-only, successful push, conflict preservation, resolve/continue/retry passed against temporary local remotes.\n"
+      .write(to: output.appendingPathComponent("push-recovery.txt"), atomically: true, encoding: .utf8)
   }
   static func verifyWorkspaceImprovements(
     store: AppStore, model: RepositoryModel, root: URL, host: NSView, window: NSWindow,
@@ -1036,6 +1175,212 @@ import SwiftUI
         encoding: .utf8)
   }
 
+  static func verifyUnifiedScrollbars(
+    store: AppStore, model: RepositoryModel, output: URL
+  ) async throws {
+    let host = NSHostingView(rootView: AnyView(EmptyView()))
+    let window = NSWindow(
+      contentRect: NSRect(x: -2400, y: -2400, width: 760, height: 580),
+      styleMask: [.titled, .closable, .resizable], backing: .buffered, defer: false)
+    window.isReleasedWhenClosed = false
+    window.contentView = host
+    window.orderFront(nil)
+    defer { window.close() }
+    func validate(_ root: NSView, context: String) throws -> [OverlayScrollbars] {
+      let scrolls = ([root] + descendants(root)).compactMap { $0 as? NSScrollView }
+        .filter { !$0.isHiddenOrHasHiddenAncestor }
+      return try scrolls.map { scroll in
+        guard !scroll.hasVerticalScroller, !scroll.hasHorizontalScroller,
+          let overlay = scroll.subviews.compactMap({ $0 as? OverlayScrollbars }).first,
+          overlay.scrollView === scroll
+        else { throw GitPierError.invalidInput(
+          "Native scrollbar was not unified: \(context), type=\(type(of: scroll)), vertical=\(scroll.hasVerticalScroller), horizontal=\(scroll.hasHorizontalScroller), overlays=\(scroll.subviews.filter { $0 is OverlayScrollbars }.count), anchors=\(descendants(root).filter { $0 is ScrollbarAnchor }.count)") }
+        if !overlay.isHidden {
+          guard scroll.bounds.contains(overlay.frame),
+            overlay.verticalThumb.isHidden || overlay.bounds.contains(overlay.verticalThumb.frame),
+            overlay.horizontalThumb.isHidden || overlay.bounds.contains(overlay.horizontalThumb.frame)
+          else { throw GitPierError.invalidInput("Overlay escaped viewport: \(context)") }
+        }
+        return overlay
+      }
+    }
+    for language in [AppLanguage.english, .simplifiedChinese] {
+      var settings = store.settings
+      settings.language = language
+      store.updateSettings(settings)
+      let pages: [(String, AnyView)] = [
+        ("workspace", AnyView(RootView())), ("dashboard", AnyView(DashboardView())),
+        ("history", AnyView(HistoryView(model: model))),
+        ("branches", AnyView(BranchesView(model: model))),
+        ("remotes", AnyView(RemotesView(model: model))),
+        ("stashes", AnyView(StashView(model: model))),
+        ("tags", AnyView(TagsView(model: model))),
+        ("organizations", AnyView(OrganizationsView())),
+        ("credentials", AnyView(CredentialsView())), ("help", AnyView(HelpView())),
+      ] + (0...7).map { ("settings-\($0)", AnyView(SettingsView(initialTab: $0).id($0))) }
+      for (name, page) in pages {
+        host.rootView = AnyView(page.environmentObject(store).modifier(AppAppearance(store: store)))
+        try await settle()
+        _ = try validate(host, context: "\(language)-\(name)")
+        if name == "help" || name == "settings-3" {
+          try capture(host, to: output.appendingPathComponent("scrollbars-\(language)-\(name).png"))
+        }
+      }
+    }
+    // New SwiftUI scroll views, including indicator-free tab strips, must be discovered after replacement.
+    host.rootView = AnyView(VStack {
+      ScrollView { LazyVStack { ForEach(0..<200) { Text("Scrollable row \($0)").frame(height: 28) } } }
+      ScrollView(.horizontal, showsIndicators: false) {
+        HStack { ForEach(0..<80) { Text("Tab \($0)").frame(width: 100) } }
+      }.frame(height: 44)
+    }.background(UnifiedScrollbars()))
+    try await settle()
+    let overlays = try validate(host, context: "dynamic SwiftUI scroll views")
+    guard let vertical = overlays.first(where: { !$0.verticalThumb.isHidden }),
+      let horizontal = overlays.first(where: { !$0.horizontalThumb.isHidden }),
+      vertical.verticalThumb.knobRect.height == 150,
+      horizontal.horizontalThumb.knobRect.width == 56
+    else { throw GitPierError.invalidInput("SwiftUI scroll views lost fixed overlay thumbs") }
+    try dragThumb(vertical.verticalThumb, in: window)
+    guard vertical.verticalThumb.fraction > 0.98 else {
+      throw GitPierError.invalidInput("Native list thumb drag did not reach the bottom")
+    }
+    try dragThumb(horizontal.horizontalThumb, in: window)
+    guard horizontal.horizontalThumb.fraction > 0.98 else {
+      throw GitPierError.invalidInput("Native tab thumb drag did not reach the right edge")
+    }
+    try await Task.sleep(for: .milliseconds(1050))
+    guard abs(vertical.verticalThumb.knobOpacity - 0.19) < 0.01 else {
+      throw GitPierError.invalidInput("List scrollbar did not fade after native dragging")
+    }
+    try capture(host, to: output.appendingPathComponent("scrollbars-list-and-tabs.png"))
+    let sheetHost = NSHostingView(rootView: ScrollView {
+      VStack { ForEach(0..<100) { Text("Sheet row \($0)").frame(height: 28) } }
+    })
+    let sheet = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 420, height: 260),
+      styleMask: [.titled], backing: .buffered, defer: false)
+    sheet.isReleasedWhenClosed = false
+    sheet.contentView = sheetHost
+    window.beginSheet(sheet, completionHandler: nil)
+    try await settle()
+    let sheetOverlays = try validate(sheetHost, context: "application sheet")
+    guard sheetOverlays.contains(where: { !$0.verticalThumb.isHidden }) else {
+      throw GitPierError.invalidInput("Application sheet did not adopt overlay scrollbars")
+    }
+    window.endSheet(sheet)
+    sheet.close()
+    host.rootView = AnyView(CommitEditor(
+      text: .constant((1...200).map { "Commit message line \($0)" }.joined(separator: "\n")),
+      scheme: .dark, commit: {}).background(UnifiedScrollbars()))
+    try await settle()
+    let editors = try validate(host, context: "long commit message")
+    guard let editor = editors.first, !editor.verticalThumb.isHidden,
+      editor.horizontalThumb.isHidden, let editorScroll = editor.scrollView,
+      let wheel = CGEvent(scrollWheelEvent2Source: nil, units: .pixel, wheelCount: 1,
+        wheel1: -180, wheel2: 0, wheel3: 0).flatMap({ NSEvent(cgEvent: $0) })
+    else { throw GitPierError.invalidInput("Long commit message did not adopt vertical scrolling") }
+    editorScroll.scrollWheel(with: wheel)
+    try await Task.sleep(for: .milliseconds(180))
+    guard editorScroll.contentView.bounds.minY > 0, editor.verticalThumb.knobOpacity > 0.35 else {
+      throw GitPierError.invalidInput("Commit editor native wheel scrolling did not brighten the thumb")
+    }
+    // Preserve native document/clip identity, both coordinate directions, content resizing and replacement.
+    for flipped in [true, false] {
+      let scroll = NSScrollView(frame: NSRect(x: 0, y: 0, width: 480, height: 300))
+      let document = ScrollbarAcceptanceDocument(
+        frame: NSRect(x: 0, y: 0, width: 1600, height: 2000), flipped: flipped)
+      scroll.documentView = document
+      let clip = scroll.contentView
+      window.contentView = scroll
+      let overlay = OverlayScrollbars.install(on: scroll)
+      try await settle()
+      _ = try validate(scroll, context: "native document flipped=\(flipped)")
+      overlay.verticalThumb.changed?(1)
+      overlay.horizontalThumb.changed?(1)
+      guard scroll.documentView === document, scroll.contentView === clip,
+        abs(overlay.verticalThumb.fraction - 1) < 0.01,
+        abs(overlay.horizontalThumb.fraction - 1) < 0.01
+      else { throw GitPierError.invalidInput(
+        "Native document scrolling/identity changed: flipped=\(flipped), document=\(document.bounds), clip=\(clip.bounds), vertical=\(overlay.verticalThumb.fraction), horizontal=\(overlay.horizontalThumb.fraction)") }
+      document.setFrameSize(NSSize(width: 120, height: 80))
+      try await settle()
+      guard overlay.verticalThumb.isHidden, overlay.horizontalThumb.isHidden else {
+        throw GitPierError.invalidInput("Scrollbars remained visible after content shrank")
+      }
+      let replacement = ScrollbarAcceptanceDocument(
+        frame: NSRect(x: 0, y: 0, width: 1600, height: 2000), flipped: true)
+      scroll.documentView = replacement
+      overlay.refresh()
+      replacement.setFrameSize(NSSize(width: 1800, height: 2400))
+      try await settle()
+      guard !overlay.verticalThumb.isHidden, !overlay.horizontalThumb.isHidden else {
+        throw GitPierError.invalidInput("Replacement document was not observed")
+      }
+      window.setContentSize(NSSize(width: 220, height: 80))
+      try await settle()
+      guard overlay.verticalThumb.knobRect.height < 150,
+        overlay.verticalThumb.bounds.contains(overlay.verticalThumb.knobRect)
+      else { throw GitPierError.invalidInput("Native small viewport thumb escaped its track") }
+      window.setContentSize(NSSize(width: 760, height: 580))
+    }
+    let terminal = SafeTerminalView(frame: NSRect(x: 0, y: 0, width: 760, height: 320))
+    window.contentView = terminal
+    terminal.feed(text: (1...400).map { "scrollback row \($0)\r\n" }.joined())
+    terminal.updateScrollThumb()
+    try await settle()
+    guard let thumb = terminal.scrollThumb, !thumb.isHidden, thumb.knobRect.height == 150,
+      terminal.subviews.compactMap({ $0 as? NSScroller }).allSatisfy(\.isHidden)
+    else { throw GitPierError.invalidInput("Terminal did not adopt the shared overlay thumb") }
+    thumb.changed?(0)
+    guard terminal.scrollPosition == 0 else {
+      throw GitPierError.invalidInput("Terminal thumb cannot reach the first scrollback row")
+    }
+    try dragThumb(thumb, in: window)
+    guard terminal.scrollPosition > 0.98 else {
+      throw GitPierError.invalidInput("Terminal thumb cannot reach the last scrollback row")
+    }
+    terminal.feed(text: "\u{1B}[?1049h")
+    terminal.updateScrollThumb()
+    guard thumb.isHidden else { throw GitPierError.invalidInput("Alternate screen kept scrollback thumb") }
+    terminal.feed(text: "\u{1B}[?1049l")
+    terminal.updateScrollThumb()
+    guard !thumb.isHidden else { throw GitPierError.invalidInput("Scrollback thumb did not return") }
+    for dark in [true, false] {
+      terminal.nativeBackgroundColor = dark ? NSColor(hex: 0x191B1F) : NSColor(hex: 0xFAFBFC)
+      terminal.nativeForegroundColor = dark ? NSColor(hex: 0xD3D8E1) : NSColor(hex: 0x262B36)
+      terminal.updateScrollThumb()
+      guard thumb.tintColor == terminal.nativeForegroundColor else {
+        throw GitPierError.invalidInput("Terminal scrollbar lost its independent theme contrast")
+      }
+      try capture(terminal, to: output.appendingPathComponent("scrollbars-terminal-\(dark ? "dark" : "light").png"))
+    }
+    try "Application pages and all eight Settings tabs in both languages, dynamic SwiftUI lists/tab strips and sheets, native drag endpoints, idle fade, commit editor wheel scrolling, document/clip preservation, flipped/unflipped scrolling, content shrink/replacement, small viewports and terminal scrollback/alternate screen passed.\n"
+      .write(to: output.appendingPathComponent("unified-scrollbars.txt"), atomically: true, encoding: .utf8)
+  }
+
+  static func dragThumb(_ thumb: OverlayScrollThumb, in window: NSWindow) throws {
+    window.makeKeyAndOrderFront(nil)
+    let horizontal = thumb.horizontal
+    let start = thumb.convert(NSPoint(x: thumb.knobRect.midX, y: thumb.knobRect.midY), to: nil)
+    let end = thumb.convert(NSPoint(
+      x: horizontal ? thumb.bounds.maxX - 3 : thumb.knobRect.midX,
+      y: horizontal ? thumb.knobRect.midY : thumb.bounds.maxY - 3), to: nil)
+    guard let root = window.contentView, let parent = root.superview,
+      root.hitTest(parent.convert(start, from: nil)) === thumb
+    else { throw GitPierError.invalidInput("Native scrollbar thumb did not receive hit testing") }
+    for (kind, point) in [(NSEvent.EventType.leftMouseDown, start), (.leftMouseDragged, end), (.leftMouseUp, end)] {
+      guard let event = NSEvent.mouseEvent(with: kind, location: point, modifierFlags: [],
+        timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber,
+        context: nil, eventNumber: 1, clickCount: 1, pressure: 1)
+      else { throw GitPierError.invalidInput("Cannot construct scrollbar drag event") }
+      switch kind {
+      case .leftMouseDown: thumb.mouseDown(with: event)
+      case .leftMouseDragged: thumb.mouseDragged(with: event)
+      default: thumb.mouseUp(with: event)
+      }
+    }
+  }
+
   static func descendants(_ view: NSView) -> [NSView] {
     view.subviews.flatMap { [$0] + descendants($0) }
   }
@@ -1103,9 +1448,36 @@ import SwiftUI
       node.subviews.forEach(composeTerminal)
     }
     composeTerminal(view)
+    // The terminal-only bitmap above doesn't contain its child views. Recompose the shared thumb.
+    for terminal in ([view] + descendants(view)).compactMap({ $0 as? SafeTerminalView }) {
+      guard let thumb = terminal.scrollThumb, !thumb.isHidden,
+        let bitmap = thumb.bitmapImageRepForCachingDisplay(in: thumb.bounds),
+        let context = NSGraphicsContext(bitmapImageRep: image) else { continue }
+      thumb.cacheDisplay(in: thumb.bounds, to: bitmap)
+      let source = thumb.convert(thumb.bounds, to: view)
+      let target = NSRect(x: source.minX, y: view.bounds.height - source.maxY,
+        width: source.width, height: source.height)
+      let nativeImage = NSImage(size: thumb.bounds.size)
+      nativeImage.addRepresentation(bitmap)
+      NSGraphicsContext.saveGraphicsState()
+      NSGraphicsContext.current = context
+      nativeImage.draw(in: target, from: .zero, operation: .sourceOver, fraction: 1)
+      NSGraphicsContext.restoreGraphicsState()
+    }
     guard let png = image.representation(using: .png, properties: [:]) else {
       throw GitPierError.invalidInput("Unable to encode screenshot")
     }
     try png.write(to: url)
   }
+}
+
+/// Fixed document geometry avoids NSTextView's own text-container sizing in the scrollbar fixture.
+@MainActor private final class ScrollbarAcceptanceDocument: NSView {
+  let documentFlipped: Bool
+  override var isFlipped: Bool { documentFlipped }
+  init(frame: NSRect, flipped: Bool) {
+    documentFlipped = flipped
+    super.init(frame: frame)
+  }
+  required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
 }

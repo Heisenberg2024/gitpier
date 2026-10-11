@@ -30,6 +30,9 @@ struct HelpView: View {
           paragraph(
             "The Diff settings menu controls unified view, wrapping, line numbers and whitespace. Each side scrolls horizontally; vertical scrolling is synchronized. An empty old side is hidden for newly added files.",
             "Diff 设置菜单提供统一视图、换行、行号和空白选项。两侧独立水平滚动并同步垂直滚动；新增文件的旧侧为空时自动隐藏。")
+          paragraph(
+            "Lists, settings, help, commit messages, tabs and terminal scrollback use the same compact overlay scrollbars. Scroll or drag a thumb to brighten it; it fades after scrolling pauses.",
+            "列表、设置、帮助、提交说明、标签栏和终端缓冲区使用相同的短覆盖滑块。滚动或拖动滑块时加深，停顿后淡化。")
         }
         section("History & Layout", "历史与布局", symbol: "clock") {
           paragraph(
@@ -68,8 +71,8 @@ struct HelpView: View {
         }
         section("Troubleshooting", "问题排查", symbol: "wrench.and.screwdriver") {
           paragraph(
-            "Check the final operation message after a fetch, pull or push. If Commit & Push fails during push, the local commit remains. Choose an upstream when prompted, or resolve the remote error and retry Push.",
-            "获取、拉取或推送后请查看最终操作结果。“提交并推送”在推送阶段失败时，本地提交仍保留。根据提示选择 Upstream，或解决远程错误后重试推送。")
+            "Check the final operation message after a fetch, pull or push. If Commit & Push fails during push, the local commit remains. When the remote branch has new commits, confirm Merge & Push to fetch, merge, then push. Commit or stash remaining tracked changes first. Conflicts stop the push: resolve and stage the files, Continue the merge, then retry Push. Cancelling the confirmation preserves your local commit. Other remote errors can be corrected before retrying Push; choose an upstream when prompted.",
+            "获取、拉取或推送后请查看最终操作结果。“提交并推送”在推送阶段失败时，本地提交仍保留。远程分支有新提交时，确认“合并并推送”即可获取、合并后推送；剩余的已跟踪文件修改需先提交或 Stash。出现冲突时停止推送：解决并暂存文件，点击“继续”完成合并，再重试推送。取消确认会保留本地提交。其他远程错误解决后可重试推送，缺少 Upstream 时按提示选择。")
           paragraph(
             "If authentication fails, check the selected credential and remote URL. If Git cannot start, check Settings → Git → Git Executable. Share a reproducible example and remove private paths, tokens and repository content from reports.",
             "认证失败时检查所选凭证与远程地址。Git 无法启动时检查“设置 → Git → Git 可执行文件”。报告问题时提供可复现示例，并移除私人路径、Token 和仓库内容。")

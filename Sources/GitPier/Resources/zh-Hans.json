@@ -1,4 +1,7 @@
 {
+  "Horizontal scroll": "水平滚动",
+  "Vertical scroll": "垂直滚动",
+  "Terminal scrollback": "终端缓冲区滚动",
   "Commit": "提交",
   "Amend": "修改最后一次提交",
   "Compare": "对比",

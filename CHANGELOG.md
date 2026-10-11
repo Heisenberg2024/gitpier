@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.0.3 — 2026-10-12
+
+- Offer Merge & Push after a single current-branch push is rejected because remote commits are missing locally. Fetch the actual push destination, explicitly merge after confirmation, and push only after success; preserve local commits, partial staging and conflict state.
+- Keep authentication and server-policy failures in the existing error flow, and distinguish pending merge or failed recovery from completed operations in English and Simplified Chinese.
+- Share the Diff's 6-point overlay scrollbars across lists, settings forms, help, commit messages, tab strips and terminal scrollback; retain fixed 150-point vertical / 56-point horizontal thumbs, small-viewport clipping, native dragging and idle fading.
+- Preserve native SwiftUI scrolling, list virtualization, per-repository scroll positions, Diff vertical synchronization and Index-left placement; hide thumbs when content fits and keep operating-system file choosers unchanged.
+- Update the local application and universal archive to 1.0.3 (build 15).
+
 ## 1.0.2 — 2026-10-11
 
 - Move About to the rightmost Settings tab with a centered application identity and structured version, license and privacy information.

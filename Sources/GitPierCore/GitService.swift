@@ -602,6 +602,7 @@ public actor GitService {
     if let branch { try InputValidation.reference(branch) }
     return try await writing {
       var args = [operation, "--progress"]
+      if operation == "push" { args.append("--porcelain") }
       if operation == "fetch" && remote == nil { args.append("--all") }
       if operation == "pull" {
         if strategy == "rebase" { args.append("--rebase") }
@@ -623,9 +624,143 @@ public actor GitService {
           args.append(branch)
         }
       }
+      let localReference = operation == "push"
+        ? try await read(["symbolic-ref", "-q", "HEAD"], allowFailure: true).text
+          .trimmingCharacters(in: .whitespacesAndNewlines) : ""
+      let localHead = operation == "push"
+        ? try await read(["rev-parse", "--verify", "HEAD"], allowFailure: true).text
+          .trimmingCharacters(in: .whitespacesAndNewlines) : ""
       let decoder = progress.map { GitProgressDecoder($0) }
-      let result = try await read(args, onStderr: { bytes in decoder?.feed(bytes) })
+      let result = try await read(args, allowFailure: true, onStderr: { bytes in decoder?.feed(bytes) })
+      if result.code != 0 {
+        if operation == "push", !forceWithLease,
+          let rejection = Self.pushRejection(
+            result, localReference: localReference, localHead: localHead,
+            upstreamRemote: branch == nil ? nil : remote)
+        { throw rejection }
+        throw GitPierError.command(operation, result.code, Self.redact(result.errorText))
+      }
       return Self.redact(result.text + result.errorText)
+    }
+  }
+  private static func pushRejection(
+    _ result: CommandResult, localReference: String, localHead: String, upstreamRemote: String?
+  ) -> PushRejection? {
+    guard localReference.hasPrefix("refs/heads/"), !localHead.isEmpty else { return nil }
+    let lines = result.text.split(separator: "\n").map(String.init)
+    let destinations = lines.filter { $0.hasPrefix("To ") }.map { String($0.dropFirst(3)) }
+    let records = lines.map { $0.split(separator: "\t", omittingEmptySubsequences: false) }
+      .filter { $0.count == 3 }
+    // Multi-ref / multi-destination pushes and server policy failures need their own diagnosis.
+    guard destinations.count == 1, let destination = destinations.first,
+      !destination.isEmpty, !destination.hasPrefix("-"), records.count == 1,
+      let record = records.first, record[0] == "!",
+      record[2] == "[rejected] (fetch first)" || record[2] == "[rejected] (non-fast-forward)"
+    else { return nil }
+    let refs = record[1].split(separator: ":", omittingEmptySubsequences: false).map(String.init)
+    guard refs.count == 2, refs[0] == localReference || refs[0] == "HEAD",
+      refs[1].hasPrefix("refs/heads/") else { return nil }
+    return PushRejection(
+      localReference: localReference, localHead: localHead, remoteURL: destination,
+      remoteReference: refs[1], upstreamRemote: upstreamRemote,
+      diagnostic: "push failed (\(result.code))\n" + redact(result.text + result.errorText))
+  }
+  /// Fetch, merge and retry the confirmed destination under one working-tree write queue.
+  /// No stash, rebase, force push or automatic conflict resolution is performed.
+  public func mergeAndPush(
+    _ rejection: PushRejection,
+    phase: (@Sendable (PushRecoveryPhase) async -> (@Sendable (GitTransferProgress) -> Void)?)? = nil
+  ) async throws -> String {
+    try await writing {
+      try await read(["check-ref-format", rejection.remoteReference])
+      try await validatePushRecovery(rejection)
+      let fetchProgress = await phase?(.fetching)
+      let (remoteHead, fetched) = try await fetchPushRecovery(rejection, progress: fetchProgress)
+      // Fetch awaited a network process; recheck external branch / Index / worktree changes.
+      try Task.checkCancellation()
+      try await validatePushRecovery(rejection)
+      _ = await phase?(.merging)
+      let merged = try await read([
+        "-c", "merge.autoStash=false", "merge", "--no-edit", "--no-autostash", "--ff", remoteHead,
+      ], allowFailure: true)
+      guard merged.code == 0 else {
+        throw GitPierError.command("merge", merged.code, Self.redact(merged.text + merged.errorText))
+      }
+      try Task.checkCancellation()
+      let current = try await status()
+      guard current.branch == String(rejection.localReference.dropFirst("refs/heads/".count)),
+        current.operation == nil, !current.files.contains(where: \.isConflicted),
+        try await read(["merge-base", "--is-ancestor", rejection.localHead, "HEAD"], allowFailure: true).code == 0,
+        try await read(["merge-base", "--is-ancestor", remoteHead, "HEAD"], allowFailure: true).code == 0
+      else { throw GitPierError.invalidInput("The branch changed during merge. Review it before pushing.") }
+      var destination = rejection.remoteURL
+      var pushArguments = ["push", "--progress", "--porcelain"]
+      if let remote = rejection.upstreamRemote {
+        let urls = try await read(["remote", "get-url", "--push", "--all", "--", remote]).text
+          .split(separator: "\n").map(String.init)
+        guard urls == [rejection.remoteURL] else {
+          throw GitPierError.invalidInput("The push destination changed. Review it before pushing.")
+        }
+        destination = remote
+        pushArguments.append("--set-upstream")
+      } else {
+        // Using the matching named remote also updates its tracking ref after a successful push.
+        let names = try await read(["remote"]).text.split(separator: "\n").map(String.init)
+        var matches: [String] = []
+        for name in names {
+          let urls = try await read(["remote", "get-url", "--push", "--all", "--", name]).text
+            .split(separator: "\n").map(String.init)
+          if urls == [rejection.remoteURL] { matches.append(name) }
+        }
+        if matches.count == 1 { destination = matches[0] }
+      }
+      let pushProgress = await phase?(.pushing)
+      let pushDecoder = pushProgress.map { GitProgressDecoder($0) }
+      let pushed = try await read(
+        pushArguments + ["--", destination, "HEAD:" + rejection.remoteReference],
+        onStderr: { bytes in pushDecoder?.feed(bytes) })
+      return Self.redact(
+        fetched.text + fetched.errorText + merged.text + merged.errorText + pushed.text + pushed.errorText)
+    }
+  }
+  private func fetchPushRecovery(
+    _ rejection: PushRejection, progress: (@Sendable (GitTransferProgress) -> Void)?
+  ) async throws -> (String, CommandResult) {
+    // Other Git clients can overwrite FETCH_HEAD. Use a private ref, then merge its fixed object ID.
+    let reference = "refs/gitpier/push-recovery/" + UUID().uuidString.lowercased()
+    let decoder = progress.map { GitProgressDecoder($0) }
+    do {
+      let fetched = try await read(
+        ["fetch", "--progress", "--no-tags", "--no-recurse-submodules", "--no-write-fetch-head", "--",
+          rejection.remoteURL, rejection.remoteReference + ":" + reference],
+        onStderr: { bytes in decoder?.feed(bytes) })
+      let head = try await read(["rev-parse", "--verify", reference + "^{commit}"]).text
+        .trimmingCharacters(in: .whitespacesAndNewlines)
+      try await read(["update-ref", "-d", reference, head])
+      return (head, fetched)
+    } catch {
+      // An unstructured task permits cleanup after cancellation; the parent still owns the write queue.
+      let cleanup = Task { try? await self.read(["update-ref", "-d", reference]) }
+      _ = await cleanup.value
+      throw error
+    }
+  }
+  private func validatePushRecovery(_ rejection: PushRejection) async throws {
+    let current = try await status()
+    guard current.head == rejection.localHead,
+      current.branch == String(rejection.localReference.dropFirst("refs/heads/".count))
+    else {
+      throw GitPierError.invalidInput("The branch or HEAD changed since the rejected push. Retry Push to review the new state.")
+    }
+    guard current.operation == nil, current.tracked.isEmpty else {
+      throw GitPierError.invalidInput("Commit or stash tracked changes and finish any Git operation before merging and pushing. Your local commit is preserved.")
+    }
+    if let remote = rejection.upstreamRemote {
+      let urls = try await read(["remote", "get-url", "--push", "--all", "--", remote]).text
+        .split(separator: "\n").map(String.init)
+      guard urls == [rejection.remoteURL] else {
+        throw GitPierError.invalidInput("The push destination changed. Review it before merging and pushing.")
+      }
     }
   }
   /// Arguments are constructed by typed UI actions, never from a shell command field.

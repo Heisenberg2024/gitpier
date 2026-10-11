@@ -7,6 +7,7 @@ struct AppAppearance: ViewModifier {
   func body(content: Content) -> some View {
     content.environment(\.colorScheme, store.resolvedColorScheme)
       .background(WindowAppearance(mode: store.settings.appearance))
+      .background(UnifiedScrollbars())
   }
 }
 struct WindowAppearance: NSViewRepresentable {
