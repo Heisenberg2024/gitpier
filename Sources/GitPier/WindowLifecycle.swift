@@ -50,7 +50,10 @@ struct WindowLifecycle: NSViewRepresentable {
         alert.runModal()
         return false
       }
-      if store.models.values.contains(where: { $0.terminal.sessions.contains { !$0.exited } }) {
+      if !store.unsavedConflictDrafts.isEmpty {
+        if !store.confirmDiscardConflictDrafts(quitting: false) { return false }
+      } else if store.models.values.contains(where: { $0.terminal.sessions.contains { !$0.exited } }
+      ) {
         let alert = NSAlert()
         alert.messageText = store.text("Close the workspace?", "关闭工作空间？")
         alert.informativeText = store.text(

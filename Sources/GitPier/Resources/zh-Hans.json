@@ -92,5 +92,7 @@
   "Credentials": "凭证",
   "OpenPGP": "OpenPGP",
   "SSH Identity": "SSH 私钥",
-  "HTTPS Token": "HTTPS Token"
+  "HTTPS Token": "HTTPS Token",
+  "Conflict version": "冲突版本",
+  "Conflict result": "冲突结果"
 }

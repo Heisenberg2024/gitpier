@@ -95,7 +95,18 @@ struct DiffPanel: View {
           if model.selectedFile?.submodule.hasPrefix("S") == true { Badge(text: "Submodule") }
         }.font(uiFont(size: 10)).padding(.horizontal, 12).frame(height: 27)
         Divider()
-        if let error = model.diffError {
+        if model.selectedFile?.isConflicted == true {
+          VStack(spacing: 16) {
+            EmptyState(
+              symbol: "exclamationmark.triangle",
+              title: store.text("Unresolved conflict", "尚未解决的冲突"),
+              detail: store.text(
+                "Compare Current and Incoming, edit the result, then save and mark the file resolved.",
+                "对照当前版本和传入版本，编辑结果，再保存并标记此文件已解决。"))
+            Button(store.text("Resolve Conflict…", "解决冲突…")) { model.openConflicts(path) }
+              .buttonStyle(.borderedProminent)
+          }
+        } else if let error = model.diffError {
           EmptyState(
             symbol: "doc.text.magnifyingglass",
             title: store.text("Unable to load Diff", "无法加载 Diff"), detail: error)

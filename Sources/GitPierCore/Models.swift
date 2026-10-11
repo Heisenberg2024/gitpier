@@ -313,6 +313,7 @@ public enum GitPierError: LocalizedError, Sendable {
   case unsafePath(String)
   case invalidInput(String)
   case indexChanged
+  case conflictChanged
   case emptyIndex
   case outputLimit
   case timeout
@@ -327,6 +328,9 @@ public enum GitPierError: LocalizedError, Sendable {
     case .indexChanged:
       return
         "The Index or HEAD changed outside this view. Review the refreshed staged changes before committing."
+    case .conflictChanged:
+      return
+        "The conflict, working file or Git operation changed outside this editor. Reload and review before saving."
     case .emptyIndex: return "There are no staged changes to commit."
     case .outputLimit:
       return "Output exceeds the safe loading limit. Open this file in an external editor."

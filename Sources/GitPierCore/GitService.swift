@@ -1,4 +1,5 @@
 import Foundation
+import CryptoKit
 
 /// One shared actor per canonical working tree. A queue spans awaits, unlike actor isolation alone.
 public actor GitService {
@@ -137,6 +138,213 @@ public actor GitService {
     try FileManager.default.copyItem(at: source, to: copy)
     return try await read(["write-tree"], environment: ["GIT_INDEX_FILE": copy.path]).text
       .trimmingCharacters(in: .whitespacesAndNewlines)
+  }
+  private func metadataFile(_ name: String) async throws -> URL {
+    let path = try await read(["rev-parse", "--git-path", name]).text
+      .trimmingCharacters(in: .newlines)
+    return path.hasPrefix("/") ? URL(fileURLWithPath: path) : root.appendingPathComponent(path)
+  }
+  private func conflictOperationIdentity() async throws -> Data {
+    let directory = try await metadataDirectories()[0]
+    var bytes = Data()
+    for name in [
+      "MERGE_HEAD", "CHERRY_PICK_HEAD", "REVERT_HEAD", "rebase-merge/head-name",
+      "rebase-merge/onto", "rebase-merge/stopped-sha", "rebase-apply/head-name",
+      "rebase-apply/onto",
+    ] {
+      bytes.append(Data(name.utf8))
+      bytes.append(0)
+      if let data = try? Data(contentsOf: directory.appendingPathComponent(name)) {
+        bytes.append(data)
+      }
+      bytes.append(0)
+    }
+    return bytes
+  }
+  private func conflictURL(_ path: String) throws -> URL {
+    try InputValidation.repositoryPath(path)
+    let url = root.appendingPathComponent(path).standardizedFileURL
+    let parent = url.deletingLastPathComponent()
+    guard url.path.hasPrefix(root.path + "/"),
+      parent.resolvingSymlinksInPath().path == parent.path
+    else { throw GitPierError.unsafePath(path) }
+    return url
+  }
+  private func conflictWorkingFile(_ path: String) throws -> (ConflictWorkingState, Data?) {
+    let url = try conflictURL(path)
+    let fm = FileManager.default
+    let info: [FileAttributeKey: Any]
+    do { info = try fm.attributesOfItem(atPath: url.path) } catch let error as CocoaError
+      where error.code == .fileReadNoSuchFile || error.code == .fileNoSuchFile
+    {
+      return (ConflictWorkingState(kind: .absent, digest: "", permissions: 0), nil)
+    }
+    let permissions = info[.posixPermissions] as? Int ?? 0o644
+    if info[.type] as? FileAttributeType == .typeSymbolicLink {
+      let target = try fm.destinationOfSymbolicLink(atPath: url.path)
+      return (
+        ConflictWorkingState(kind: .symbolicLink, digest: target, permissions: permissions), nil
+      )
+    }
+    guard info[.type] as? FileAttributeType == .typeRegular else {
+      return (ConflictWorkingState(kind: .other, digest: "", permissions: permissions), nil)
+    }
+    let handle = try FileHandle(forReadingFrom: url)
+    defer { try? handle.close() }
+    var hash = SHA256()
+    var content: Data? = Data()
+    while let chunk = try handle.read(upToCount: 64 * 1024), !chunk.isEmpty {
+      try Task.checkCancellation()
+      hash.update(data: chunk)
+      if let current = content, current.count + chunk.count <= ConflictSnapshot.textLimit {
+        content?.append(chunk)
+      } else {
+        content = nil
+      }
+    }
+    let digest = hash.finalize().map { String(format: "%02x", $0) }.joined()
+    return (ConflictWorkingState(kind: .regular, digest: digest, permissions: permissions), content)
+  }
+  private func unmergedEntries(_ path: String) async throws -> Data {
+    try await read(["--literal-pathspecs", "ls-files", "--unmerged", "-z", "--", path]).stdout
+  }
+  public func conflictSnapshot(_ path: String) async throws -> ConflictSnapshot {
+    try await writing {
+      _ = try conflictURL(path)
+      let state = try await status()
+      let entries = try await unmergedEntries(path)
+      guard !entries.isEmpty else { throw GitPierError.conflictChanged }
+      let operation = try await conflictOperationIdentity()
+      let (working, contents) = try conflictWorkingFile(path)
+      var versions: [ConflictVersion] = []
+      for row in entries.split(separator: 0) {
+        guard let tab = row.firstIndex(of: 9),
+          String(data: Data(row[row.index(after: tab)...]), encoding: .utf8) == path,
+          let header = String(data: Data(row[..<tab]), encoding: .utf8)
+        else { throw GitPierError.unsafePath(path) }
+        let fields = header.split(separator: " ").map(String.init)
+        guard fields.count == 3, let stage = Int(fields[2]), (1...3).contains(stage) else {
+          throw GitPierError.invalidInput("Invalid conflict Index entry.")
+        }
+        let regular = fields[0] == "100644" || fields[0] == "100755"
+        let size =
+          regular
+          ? Int(
+            try await read(["cat-file", "-s", fields[1]]).text.trimmingCharacters(in: .newlines))
+          : nil
+        let data =
+          regular && (size ?? Int.max) <= ConflictSnapshot.textLimit
+          ? try await read(["cat-file", "blob", fields[1]], limit: ConflictSnapshot.textLimit)
+            .stdout : nil
+        versions.append(
+          ConflictVersion(stage: stage, mode: fields[0], objectID: fields[1], contents: data))
+      }
+      let attribute = try await read([
+        "--literal-pathspecs", "check-attr", "-z", "conflict-marker-size", "--", path,
+      ]).stdout
+        .split(separator: 0).map { String(decoding: $0, as: UTF8.self) }
+      let markerSize = attribute.count == 3 ? Int(attribute[2]) ?? 7 : 7
+      guard (1...1024).contains(markerSize) else {
+        throw GitPierError.invalidInput(
+          "The conflict marker size exceeds the built-in editor limit.")
+      }
+      let snapshot = ConflictSnapshot(
+        path: path, head: state.head, branch: state.branch, operation: state.operation,
+        operationIdentity: operation, indexEntries: entries, versions: versions,
+        working: working, workingContents: contents, markerSize: markerSize)
+      try await validateConflictSnapshot(snapshot)
+      return snapshot
+    }
+  }
+  private func validateConflictSnapshot(_ expected: ConflictSnapshot) async throws {
+    let current = try await status()
+    guard current.head == expected.head, current.branch == expected.branch,
+      current.operation == expected.operation,
+      try await conflictOperationIdentity() == expected.operationIdentity,
+      try await unmergedEntries(expected.path) == expected.indexEntries,
+      try conflictWorkingFile(expected.path).0 == expected.working
+    else { throw GitPierError.conflictChanged }
+  }
+  public func resolveConflict(_ expected: ConflictSnapshot, resolution: ConflictResolution)
+    async throws
+  {
+    try await writing {
+      try await validateConflictSnapshot(expected)
+      guard expected.supportsVersions, expected.working.kind != .other else {
+        throw GitPierError.invalidInput(
+          "Resolve symlink, submodule or file-type conflicts in an external editor or terminal.")
+      }
+      let url = try conflictURL(expected.path)
+      let fm = FileManager.default
+      switch resolution {
+      case .text(let text):
+        guard expected.resultText != nil, !text.utf8.contains(0),
+          text.utf8.count <= ConflictSnapshot.textLimit,
+          !ConflictMarkers.containsMarkers(text, size: expected.markerSize)
+        else {
+          throw GitPierError.invalidInput(
+            "Remove all conflict markers before saving a UTF-8 text result.")
+        }
+        var saved = text
+        if let original = expected.resultText, original.contains("\r\n"),
+          !original.replacingOccurrences(of: "\r\n", with: "").contains("\n")
+        {
+          saved = text.replacingOccurrences(of: "\r\n", with: "\n")
+            .replacingOccurrences(of: "\n", with: "\r\n")
+        }
+        guard saved.utf8.count <= ConflictSnapshot.textLimit else { throw GitPierError.outputLimit }
+        try Data(saved.utf8).write(to: url, options: .atomic)
+        try fm.setAttributes(
+          [.posixPermissions: expected.working.permissions], ofItemAtPath: url.path)
+      case .ours, .theirs:
+        let version = {
+          if case .ours = resolution { return expected.ours }; return expected.theirs
+        }()
+        if let version {
+          if let text = version.text,
+            ConflictMarkers.containsMarkers(text, size: expected.markerSize)
+          {
+            throw GitPierError.invalidInput("The selected version still contains conflict markers.")
+          }
+          try await read([
+            "--literal-pathspecs", "checkout-index", "--force", "--stage=\(version.stage)", "--",
+            expected.path,
+          ])
+        } else if expected.working.kind != .absent {
+          try fm.removeItem(at: url)
+        }
+      case .delete:
+        if expected.working.kind != .absent { try fm.removeItem(at: url) }
+      }
+      // Only this literal path is staged; unrelated external and partially staged content stays intact.
+      let current = try await status()
+      guard current.head == expected.head, current.branch == expected.branch,
+        current.operation == expected.operation,
+        try await conflictOperationIdentity() == expected.operationIdentity,
+        try await unmergedEntries(expected.path) == expected.indexEntries
+      else {
+        throw GitPierError.conflictChanged
+      }
+      try await read(["--literal-pathspecs", "add", "-A", "--", expected.path])
+      guard try await unmergedEntries(expected.path).isEmpty else {
+        throw GitPierError.conflictChanged
+      }
+    }
+  }
+  public func reviewMerge() async throws -> MergeReview {
+    try await writing {
+      guard try await status().operation == .merge else { throw GitPierError.conflictChanged }
+      let index = try await snapshot()
+      let parentsFile = try await metadataFile("MERGE_HEAD")
+      let messageFile = try await metadataFile("MERGE_MSG")
+      let parents = try Data(contentsOf: parentsFile)
+      let message = try String(contentsOf: messageFile, encoding: .utf8)
+      return MergeReview(index: index, parents: parents, message: message)
+    }
+  }
+  public func completeMerge(_ review: MergeReview) async throws -> CommitResult {
+    try await commitReviewed(
+      message: review.message, expected: review.index, mergeParents: review.parents)
   }
   public func stage(_ files: [FileChange]) async throws {
     try await writing { try await stageSelected(files) }
@@ -299,6 +507,14 @@ public actor GitService {
   ) async throws
     -> CommitResult
   {
+    try await commitReviewed(
+      message: message, expected: expected, amend: amend, selection: selection,
+      reviewedPatches: reviewedPatches)
+  }
+  private func commitReviewed(
+    message: String, expected: IndexSnapshot, amend: Bool = false, selection: [FileChange]? = nil,
+    reviewedPatches: [String: Data] = [:], mergeParents: Data? = nil
+  ) async throws -> CommitResult {
     let title = message.components(separatedBy: "\n").first ?? ""
     guard !title.trimmingCharacters(in: .whitespaces).isEmpty else {
       throw GitPierError.invalidInput("A commit title is required.")
@@ -308,9 +524,17 @@ public actor GitService {
         throw GitPierError.indexChanged
       }
       let state = try await status()
-      guard state.operation == nil, !state.files.contains(where: \.isConflicted) else {
+      guard state.operation == (mergeParents == nil ? nil : .merge),
+        !state.files.contains(where: \.isConflicted)
+      else {
         throw GitPierError.invalidInput(
           "Resolve conflicts or complete the in-progress Git operation first.")
+      }
+      if let mergeParents {
+        let parentsFile = try await metadataFile("MERGE_HEAD")
+        guard try Data(contentsOf: parentsFile) == mergeParents else {
+          throw GitPierError.conflictChanged
+        }
       }
       var liveReview = expected
       if let selection {
@@ -341,7 +565,9 @@ public actor GitService {
           guard changed.code == 0 else { throw GitPierError.indexChanged }
         }
       }
-      guard !liveReview.paths.isEmpty || amend else { throw GitPierError.emptyIndex }
+      guard !liveReview.paths.isEmpty || amend || mergeParents != nil else {
+        throw GitPierError.emptyIndex
+      }
       let temp = FileManager.default.temporaryDirectory.appendingPathComponent(
         "GitPier-commit-" + UUID().uuidString)
       try FileManager.default.createDirectory(
@@ -379,6 +605,8 @@ public actor GitService {
         originalHooks.hasPrefix("/")
         ? URL(fileURLWithPath: originalHooks) : root.appendingPathComponent(originalHooks)
       let hooks = temp.appendingPathComponent("hooks")
+      let expectedParents = temp.appendingPathComponent("merge-parents")
+      if let mergeParents { try mergeParents.write(to: expectedParents) }
       try FileManager.default.createDirectory(at: hooks, withIntermediateDirectories: true)
       // Honor original hooks. commit-msg is the last pre-commit gate: hook-added changes require another review.
       for name in ["pre-commit", "prepare-commit-msg", "commit-msg", "post-commit", "post-rewrite"]
@@ -397,18 +625,27 @@ public actor GitService {
             "cp \"$GITPIER_REAL_INDEX\" \"$GITPIER_CHECK_INDEX\" || exit $?\nlive=$(GIT_INDEX_FILE=\"$GITPIER_CHECK_INDEX\" \"$GITPIER_GIT\" write-tree) || exit $?\n[ \"$live\" = \"$GITPIER_LIVE_TREE\" ] || { echo 'GitPier: the real Index changed; review staged changes again.' >&2; exit 1; }\n"
           script +=
             "head=$(\"$GITPIER_GIT\" rev-parse --verify HEAD 2>/dev/null || true)\n[ \"$head\" = \"$GITPIER_HEAD\" ] || { echo 'GitPier: HEAD changed; review again.' >&2; exit 1; }\n"
+          if mergeParents != nil {
+            script +=
+              "cmp -s \"$GITPIER_MERGE_HEAD\" \"$GITPIER_EXPECTED_MERGE_HEAD\" || { echo 'GitPier: merge parents changed; review again.' >&2; exit 1; }\n"
+          }
         }
         let url = hooks.appendingPathComponent(name)
         try script.write(to: url, atomically: true, encoding: .utf8)
         try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: url.path)
       }
-      let env = [
+      var env = [
         "GIT_INDEX_FILE": isolatedIndex.path, "GITPIER_REAL_INDEX": indexURL.path,
         "GITPIER_TREE": committedTree, "GITPIER_LIVE_TREE": liveReview.tree,
         "GITPIER_HEAD": liveReview.head ?? "", "GITPIER_GIT": gitPath,
         "GITPIER_CHECK_INDEX": temp.appendingPathComponent("checked-index").path,
       ]
+      if mergeParents != nil {
+        env["GITPIER_MERGE_HEAD"] = try await metadataFile("MERGE_HEAD").path
+        env["GITPIER_EXPECTED_MERGE_HEAD"] = expectedParents.path
+      }
       var args = ["-c", "core.hooksPath=" + hooks.path, "commit", "--file=-"]
+      if mergeParents != nil { args.append("--cleanup=strip") }
       if amend { args.append("--amend") }
       let result = try await read(args, input: Data(message.utf8), environment: env)
       let hash = try await read(["rev-parse", "HEAD"]).text.trimmingCharacters(
@@ -693,35 +930,67 @@ public actor GitService {
         try await read(["merge-base", "--is-ancestor", rejection.localHead, "HEAD"], allowFailure: true).code == 0,
         try await read(["merge-base", "--is-ancestor", remoteHead, "HEAD"], allowFailure: true).code == 0
       else { throw GitPierError.invalidInput("The branch changed during merge. Review it before pushing.") }
-      var destination = rejection.remoteURL
-      var pushArguments = ["push", "--progress", "--porcelain"]
-      if let remote = rejection.upstreamRemote {
-        let urls = try await read(["remote", "get-url", "--push", "--all", "--", remote]).text
-          .split(separator: "\n").map(String.init)
-        guard urls == [rejection.remoteURL] else {
-          throw GitPierError.invalidInput("The push destination changed. Review it before pushing.")
-        }
-        destination = remote
-        pushArguments.append("--set-upstream")
-      } else {
-        // Using the matching named remote also updates its tracking ref after a successful push.
-        let names = try await read(["remote"]).text.split(separator: "\n").map(String.init)
-        var matches: [String] = []
-        for name in names {
-          let urls = try await read(["remote", "get-url", "--push", "--all", "--", name]).text
-            .split(separator: "\n").map(String.init)
-          if urls == [rejection.remoteURL] { matches.append(name) }
-        }
-        if matches.count == 1 { destination = matches[0] }
-      }
       let pushProgress = await phase?(.pushing)
-      let pushDecoder = pushProgress.map { GitProgressDecoder($0) }
-      let pushed = try await read(
-        pushArguments + ["--", destination, "HEAD:" + rejection.remoteReference],
-        onStderr: { bytes in pushDecoder?.feed(bytes) })
+      let pushed = try await pushConfirmedTarget(rejection, progress: pushProgress)
       return Self.redact(
-        fetched.text + fetched.errorText + merged.text + merged.errorText + pushed.text + pushed.errorText)
+        fetched.text + fetched.errorText + merged.text + merged.errorText + pushed.text
+          + pushed.errorText)
     }
+  }
+  public func pushCompletedMerge(
+    _ rejection: PushRejection, head: String,
+    progress: (@Sendable (GitTransferProgress) -> Void)? = nil
+  ) async throws -> String {
+    try await writing {
+      let current = try await status()
+      guard current.head == head, current.operation == nil,
+        current.branch == String(rejection.localReference.dropFirst("refs/heads/".count)),
+        !current.files.contains(where: \.isConflicted)
+      else { throw GitPierError.conflictChanged }
+      let result = try await pushConfirmedTarget(rejection, progress: progress)
+      return Self.redact(result.text + result.errorText)
+    }
+  }
+  private func pushConfirmedTarget(
+    _ rejection: PushRejection, progress: (@Sendable (GitTransferProgress) -> Void)?
+  ) async throws -> CommandResult {
+    var destination = rejection.remoteURL
+    var pushArguments = ["push", "--progress", "--porcelain"]
+    if let remote = rejection.upstreamRemote {
+      let urls = try await read(["remote", "get-url", "--push", "--all", "--", remote]).text
+        .split(separator: "\n").map(String.init)
+      guard urls == [rejection.remoteURL] else {
+        throw GitPierError.invalidInput("The push destination changed. Review it before pushing.")
+      }
+      destination = remote
+      pushArguments.append("--set-upstream")
+    } else {
+      // Using the matching named remote also updates its tracking ref after a successful push.
+      let names = try await read(["remote"]).text.split(separator: "\n").map(String.init)
+      var matches: [String] = []
+      for name in names {
+        let urls = try await read(["remote", "get-url", "--push", "--all", "--", name]).text
+          .split(separator: "\n").map(String.init)
+        if urls == [rejection.remoteURL] { matches.append(name) }
+      }
+      if matches.count == 1 { destination = matches[0] }
+    }
+    let pushDecoder = progress.map { GitProgressDecoder($0) }
+    let reference = try await read(["symbolic-ref", "-q", "HEAD"], allowFailure: true).text
+      .trimmingCharacters(in: .newlines)
+    let head = try await read(["rev-parse", "HEAD"]).text.trimmingCharacters(in: .newlines)
+    let pushed = try await read(
+      pushArguments + ["--", destination, "HEAD:" + rejection.remoteReference],
+      allowFailure: true, onStderr: { bytes in pushDecoder?.feed(bytes) })
+    if pushed.code != 0 {
+      if let updated = Self.pushRejection(
+        pushed, localReference: reference, localHead: head, upstreamRemote: rejection.upstreamRemote
+      ) {
+        throw updated
+      }
+      throw GitPierError.command("push", pushed.code, Self.redact(pushed.text + pushed.errorText))
+    }
+    return pushed
   }
   private func fetchPushRecovery(
     _ rejection: PushRejection, progress: (@Sendable (GitTransferProgress) -> Void)?

@@ -55,6 +55,14 @@ import SwiftUI
         window.orderFront(nil)
         try await settle()
         try await waitFor { !model.refreshing && !model.diffLoading }
+        if ProcessInfo.processInfo.environment["GITPIER_UI_ACCEPTANCE_SCOPE"] == "conflicts" {
+          try await verifyConflictEditor(
+            store: store, model: model, root: root, host: host, window: window, output: output)
+          store.shutdown()
+          window.close()
+          print("Native conflict editor acceptance passed.")
+          exit(0)
+        }
         if ProcessInfo.processInfo.environment["GITPIER_UI_ACCEPTANCE_SCOPE"] == "scrollbars" {
           try await verifyUnifiedScrollbars(store: store, model: model, output: output)
           try await verifyDiffScrollBounds(settings: store.settings, output: output)
@@ -712,6 +720,236 @@ import SwiftUI
       .write(
         to: output.appendingPathComponent("version-102.txt"), atomically: true, encoding: .utf8)
   }
+  static func verifyConflictEditor(
+    store: AppStore, model: RepositoryModel, root: URL, host: NSView, window: NSWindow, output: URL
+  ) async throws {
+    window.center()
+    window.makeKeyAndOrderFront(nil)
+    NSApp.activate(ignoringOtherApps: true)
+    let git = await model.git()
+    let path = "conflict-example.txt"
+    let secondPath = "second-conflict.txt"
+    let middle = (1...70).map { "unchanged line \($0)" }.joined(separator: "\n")
+    try ("base first\n" + middle + "\nbase last\n").write(
+      to: root.appendingPathComponent(path), atomically: true, encoding: .utf8)
+    try "base\n".write(
+      to: root.appendingPathComponent(secondPath), atomically: true, encoding: .utf8)
+    _ = try await git.commit(
+      message: "conflict acceptance setup", expected: git.snapshot(), selection: git.status().files)
+    _ = try await git.network("push")
+    _ = try await git.perform(["config", "merge.conflictStyle", "diff3"])
+    let remote = root.deletingLastPathComponent().appendingPathComponent("remote.git")
+    let peerRoot = root.deletingLastPathComponent().appendingPathComponent("conflict-editor-peer")
+    _ = try await git.perform(["clone", "--branch", "main", remote.path, peerRoot.path])
+    let peer = GitService(root: peerRoot)
+    _ = try await peer.perform(["config", "user.name", "Conflict Peer"])
+    _ = try await peer.perform(["config", "user.email", "peer@example.invalid"])
+    _ = try await peer.perform(["config", "commit.gpgsign", "false"])
+    try ("incoming first\n" + middle + "\nincoming last\n").write(
+      to: peerRoot.appendingPathComponent(path), atomically: true, encoding: .utf8)
+    try "incoming second\n".write(
+      to: peerRoot.appendingPathComponent(secondPath), atomically: true, encoding: .utf8)
+    try await peer.stage(peer.status().files)
+    let remoteCommit = try await peer.commit(
+      message: "conflict acceptance incoming", expected: peer.snapshot())
+    _ = try await peer.network("push")
+    try ("current first\n" + middle + "\ncurrent last\n").write(
+      to: root.appendingPathComponent(path), atomically: true, encoding: .utf8)
+    try "current second\n".write(
+      to: root.appendingPathComponent(secondPath), atomically: true, encoding: .utf8)
+    await model.refresh()
+    model.toggleIncluded(model.status.files.filter { model.includedPaths.contains($0.path) })
+    model.toggleIncluded(model.status.files.filter { $0.path == path || $0.path == secondPath })
+    model.editDraft("conflict acceptance current")
+    model.requiresIndexReview = false
+    func press(_ title: String) throws {
+      var visited: Set<ObjectIdentifier> = []
+      var labels: [String] = []
+      func value(_ object: NSObject, _ name: String) -> Any? {
+        let selector = NSSelectorFromString(name)
+        return object.responds(to: selector) ? object.perform(selector)?.takeUnretainedValue() : nil
+      }
+      func find(_ object: Any, depth: Int = 0) -> NSObject? {
+        guard depth < 80, let element = object as? NSObject,
+          visited.insert(ObjectIdentifier(element)).inserted
+        else { return nil }
+        let role = value(element, "accessibilityRole") as? String
+        let label = value(element, "accessibilityLabel") as? String
+        if let label { labels.append((role ?? "") + ": " + label) }
+        if role == "AXButton", label == title { return element }
+        let children = value(element, "accessibilityChildren") as? [Any] ?? []
+        for child in children {
+          if let found = find(child, depth: depth + 1) { return found }
+        }
+        if let view = element as? NSView {
+          for child in view.subviews {
+            if let found = find(child, depth: depth + 1) { return found }
+          }
+        }
+        return nil
+      }
+      let selector = NSSelectorFromString("accessibilityPerformPress")
+      guard let button = find(host), button.responds(to: selector) else {
+        throw GitPierError.invalidInput(
+          "Missing accessible native conflict button: " + title + "\n"
+            + labels.joined(separator: "\n"))
+      }
+      // SwiftUI virtual elements implement the public ObjC action without adopting the full Swift protocol.
+      typealias PressAction = @convention(c) (AnyObject, Selector) -> Bool
+      let action = unsafeBitCast(button.method(for: selector), to: PressAction.self)
+      guard action(button, selector) else {
+        throw GitPierError.invalidInput("Conflict button press failed: " + title)
+      }
+    }
+    func pressAlert(_ title: String) async throws {
+      try await waitFor { window.attachedSheet != nil }
+      try await settle()
+      guard
+        let button = descendants(window.attachedSheet!.contentView!).compactMap({ $0 as? NSButton })
+          .first(where: { $0.title == title })
+      else {
+        throw GitPierError.invalidInput("Missing native conflict confirmation: " + title)
+      }
+      button.performClick(nil)
+      try await waitFor { window.attachedSheet == nil }
+    }
+    model.commit(push: true)
+    try await waitFor { !model.busy && model.confirmation != nil }
+    try await pressAlert("Merge & Push")
+    let editor = model.conflictEditor
+    try await waitFor {
+      !model.busy && model.page == "conflicts" && editor.snapshot != nil && !editor.loading
+    }
+    let localHead = model.status.head
+    editor.select(path)
+    try await waitFor { editor.path == path && editor.snapshot != nil && !editor.loading }
+    guard editor.blocks.count == 2, !editor.canSave, model.conflictPush != nil,
+      model.error == nil, model.status.operation == .merge
+    else { throw GitPierError.invalidInput("Merge conflict did not open the built-in editor") }
+    for language in [AppLanguage.english, .simplifiedChinese] {
+      var settings = store.settings
+      settings.language = language
+      store.updateSettings(settings)
+      try await settle()
+      let views = descendants(host).compactMap({ $0 as? NSTextView })
+      guard views.contains(where: { $0.isEditable && $0.string == editor.result }),
+        views.filter({ !$0.isEditable }).count >= 2
+      else {
+        throw GitPierError.invalidInput("Conflict editor did not render its native code panes")
+      }
+      let capture = try await ProcessRunner().run(
+        executable: "/usr/sbin/screencapture",
+        arguments: [
+          "-x", "-o", "-l", String(window.windowNumber),
+          output.appendingPathComponent("conflict-editor-\(language.rawValue).png").path,
+        ], directory: root)
+      guard capture.code == 0 else {
+        throw GitPierError.invalidInput("Could not capture conflict editor")
+      }
+    }
+    guard
+      let textView = descendants(host).compactMap({ $0 as? NSTextView }).first(where: {
+        $0.isEditable && $0.string == editor.result
+      })
+    else {
+      throw GitPierError.invalidInput("Missing native editable conflict result")
+    }
+    window.makeFirstResponder(textView)
+    textView.setSelectedRange(NSRange(location: textView.string.utf16.count, length: 0))
+    textView.insertText("// reviewed draft\n", replacementRange: textView.selectedRange())
+    guard editor.result.hasSuffix("// reviewed draft\n") else {
+      throw GitPierError.invalidInput("Native conflict typing did not update draft")
+    }
+    guard editor.unsavedPaths.contains(path) else {
+      throw GitPierError.invalidInput("Conflict draft was not tracked for close/quit protection")
+    }
+    guard let discardAlert = store.makeConflictDraftDiscardAlert(quitting: true) else {
+      throw GitPierError.invalidInput("No quit confirmation for unsaved conflict draft")
+    }
+    guard discardAlert.buttons.count == 2, discardAlert.buttons[1].title == "取消",
+      discardAlert.buttons[1].keyEquivalent == "\r", !discardAlert.buttons[0].hasDestructiveAction,
+      discardAlert.window.appearance?.name == .darkAqua, discardAlert.icon != nil
+    else {
+      throw GitPierError.invalidInput(
+        "Quit confirmation theme/default-cancel/contrast configuration was wrong")
+    }
+    // App-modal NSAlert is a different surface from SwiftUI sheets. Its real appearance was owner-verified.
+    if ProcessInfo.processInfo.environment["GITPIER_UI_ACCEPTANCE_INTERACTIVE_QUIT"] == "1" {
+      let response = discardAlert.runModal()
+      guard response == .alertSecondButtonReturn, editor.result.hasSuffix("// reviewed draft\n")
+      else {
+        throw GitPierError.invalidInput("Interactive quit cancellation did not preserve the draft")
+      }
+    }
+    let draft = editor.result
+    editor.select(secondPath)
+    try await waitFor { editor.snapshot?.path == secondPath && !editor.loading }
+    editor.select(path)
+    try await waitFor { editor.snapshot?.path == path && !editor.loading }
+    guard editor.result == draft else {
+      throw GitPierError.invalidInput("Switching conflict files lost draft")
+    }
+    try await settle()
+    try press("当前")
+    try await settle()
+    try press("传入")
+    try await settle()
+    guard editor.blocks.isEmpty, editor.canSave else {
+      throw GitPierError.invalidInput("Native block choices did not resolve both regions")
+    }
+    let original = try Data(contentsOf: root.appendingPathComponent(path))
+    try press("保存并标记解决")
+    try await pressAlert("取消")
+    guard try Data(contentsOf: root.appendingPathComponent(path)) == original,
+      model.status.files.contains(where: { $0.path == path && $0.isConflicted })
+    else { throw GitPierError.invalidInput("Cancelling conflict save wrote or staged content") }
+    try press("保存并标记解决")
+    try await pressAlert("保存并解决")
+    try await waitFor { !model.busy && editor.snapshot?.path == secondPath && !editor.loading }
+    let saved = try String(contentsOf: root.appendingPathComponent(path), encoding: .utf8)
+    guard saved.hasPrefix("current first\n"), saved.contains("incoming last\n"),
+      saved.hasSuffix("// reviewed draft\n")
+    else {
+      throw GitPierError.invalidInput("Saved conflict result differed from reviewed draft")
+    }
+    try await settle()
+    try press("双方")
+    try await settle()
+    try press("保存并标记解决")
+    try await pressAlert("保存并解决")
+    try await waitFor { !model.busy && !model.status.files.contains(where: \.isConflicted) }
+    try await settle()
+    try press("审查、继续并推送")
+    try await waitFor { !model.busy && model.confirmation != nil }
+    try await pressAlert("取消")
+    guard model.status.head == localHead, model.status.operation == .merge else {
+      throw GitPierError.invalidInput("Cancelling merge review created a commit")
+    }
+    try press("审查、继续并推送")
+    try await waitFor { !model.busy && model.confirmation != nil }
+    try await pressAlert("继续并推送")
+    try await waitFor { !model.busy }
+    let remoteHead = try await git.read([
+      "--git-dir=" + remote.path, "rev-parse", "refs/heads/main",
+    ]).text.trimmingCharacters(in: .newlines)
+    let parents = try await git.read(["show", "-s", "--format=%P", "HEAD"]).text.split(
+      whereSeparator: \.isWhitespace
+    ).map(String.init)
+    guard model.error == nil, model.status.operation == nil, !model.pushFailed,
+      model.output?.hasPrefix("合并并推送已完成。") == true, model.status.head == remoteHead,
+      parents == [localHead!, remoteCommit.hash]
+    else {
+      throw GitPierError.invalidInput(
+        "Reviewed conflict merge did not continue and push its original destination")
+    }
+    guard store.unsavedConflictDrafts.isEmpty else {
+      throw GitPierError.invalidInput("Saved conflict drafts still blocked close/quit")
+    }
+    try
+      "Native English/Chinese conflict panes, marker blocking, actual text input, draft preservation across files, Current/Incoming/Both button actions, cancel without writes, save/stage only reviewed results, merge-review cancellation, protected merge commit and original-target push passed. Quit alert theme/icon/neutral-discard/default-cancel properties passed; app-modal appearance was separately owner-verified.\n"
+      .write(
+        to: output.appendingPathComponent("conflict-editor.txt"), atomically: true, encoding: .utf8)
+  }
   static func verifyPushRecovery(
     store: AppStore, model: RepositoryModel, root: URL, window: NSWindow, output: URL
   ) async throws {
@@ -815,8 +1053,8 @@ import SwiftUI
       .trimmingCharacters(in: .whitespacesAndNewlines)
     guard model.status.operation == .merge, model.status.files.contains(where: \.isConflicted),
       model.status.head == localConflict, remoteAfterConflict == remoteConflict,
-      model.output?.hasPrefix("合并出现冲突，已停止推送") == true,
-      model.error != nil, model.pushFailed, model.activity.state?.result == .failed
+      model.page == "conflicts", model.error == nil,
+      model.pushFailed, model.activity.state?.result == .failed
     else { throw GitPierError.invalidInput("Conflict recovery pushed or lost its merge/local commit") }
     model.error = nil
     try await settle()

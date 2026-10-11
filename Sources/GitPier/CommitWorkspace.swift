@@ -20,9 +20,17 @@ struct RepositoryWorkspace: View {
           Image(systemName: "exclamationmark.triangle").foregroundStyle(.orange)
           Text(operation.rawValue.capitalized + store.text(" in progress", " 进行中"))
           Spacer()
-          Button(store.text("Continue", "继续")) {
-            model.perform([command(operation), "--continue"])
+          if model.status.files.contains(where: \.isConflicted) {
+            Button(store.text("Resolve Conflicts…", "解决冲突…")) { model.openConflicts() }.disabled(
+              model.busy)
           }
+          Button(store.text("Continue", "继续")) {
+            if operation == .merge {
+              model.reviewMergeContinuation()
+            } else {
+              model.perform([command(operation), "--continue"])
+            }
+          }.disabled(model.busy || model.status.files.contains(where: \.isConflicted))
           Button(store.text("Abort…", "中止…")) {
             model.perform(
               [command(operation), "--abort"],
@@ -52,7 +60,7 @@ struct RepositoryWorkspace: View {
             Button(store.text("Merge & Push…", "合并并推送…")) { model.confirmMergeAndPush(rejection) }
               .disabled(model.busy)
           } else if model.pushFailed {
-            Button(store.text("Retry Push", "重试推送")) { model.network("push") }
+            Button(store.text("Retry Push", "重试推送")) { model.retryPush() }
               .disabled(model.busy || model.status.operation != nil || model.status.files.contains(where: \.isConflicted))
           }
           if model.needsUpstream {
@@ -131,6 +139,7 @@ struct RepositoryWorkspace: View {
     case "stash": StashView(model: model)
     case "tags": TagsView(model: model)
     case "repository": RepositorySettingsView(model: model)
+    case "conflicts": ConflictResolutionView(model: model)
     default:
       GeometryReader { area in
         HStack(spacing: 0) {
@@ -179,6 +188,7 @@ struct RepositoryWorkspace: View {
         }.buttonStyle(.workspace)
       }
       Menu {
+        Button(store.text("Resolve Conflicts", "解决冲突")) { model.openConflicts() }
         Button(store.text("Remotes", "远程")) { model.setPage("remotes") }
         Button(localizedUI("Stash")) { model.setPage("stash") }
         Button(store.text("Tags", "标签")) { model.setPage("tags") }
@@ -207,7 +217,8 @@ struct RepositoryWorkspace: View {
           }
         } label: {
           Label(store.text("Push", "推送"), systemImage: "arrow.up")
-        }
+        }.disabled(
+          model.status.operation != nil || model.status.files.contains(where: \.isConflicted))
       }.font(uiFont(size: 11)).buttonStyle(.plain).disabled(model.busy || !model.available)
       IconButton("arrow.clockwise", help: store.text("Refresh (⌘R)", "刷新 (⌘R)")) {
         Task { await model.refresh() }
@@ -547,6 +558,12 @@ struct ChangesPanel: View {
         model.run { git in try await git.ignore(file.path) }
       },
     ]
+    if file.isConflicted {
+      items.insert(
+        NativeMenuItems.action(store.text("Resolve Conflict…", "解决冲突…")) {
+          model.openConflicts(file.path)
+        }, at: 0)
+    }
     if file.isUntracked {
       items.append(
         NativeMenuItems.action(

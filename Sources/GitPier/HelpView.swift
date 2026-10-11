@@ -34,6 +34,20 @@ struct HelpView: View {
             "Lists, settings, help, commit messages, tabs and terminal scrollback use the same compact overlay scrollbars. Scroll or drag a thumb to brighten it; it fades after scrolling pauses.",
             "列表、设置、帮助、提交说明、标签栏和终端缓冲区使用相同的短覆盖滑块。滚动或拖动滑块时加深，停顿后淡化。")
         }
+        section("Resolve Conflicts", "解决冲突", symbol: "arrow.triangle.merge") {
+          paragraph(
+            "New conflicts open Resolve Conflicts automatically. You can also open it from the operation banner, a conflicted file's Diff or context menu, or the toolbar menu. Compare Current (Ours), Incoming (Theirs), and the optional Base preview. During rebase, Current is the rebase target; Incoming is the replayed commit.",
+            "出现新冲突时会自动进入“解决冲突”，也可从操作提示条、冲突文件的 Diff 或右键菜单、工具栏菜单打开。对照当前版本（Ours）、传入版本（Theirs），可选择预览共同祖先。变基时，当前版本是变基目标，传入版本是重放的提交。"
+          )
+          paragraph(
+            "Use the arrows to select a conflict and choose Current, Incoming or Both, or edit the Result directly. Drafts stay with each repository and file while switching pages. Save & Mark Resolved asks before writing and staging that file. Remove all conflict markers first. External changes require Reload and another review; the existing draft is kept until you confirm reloading. Closing the last window or quitting asks before discarding unsaved conflict drafts.",
+            "使用箭头选择冲突块，采用当前、传入或双方内容，也可直接编辑合并结果。切换页面或文件时，草稿随仓库和文件保留。“保存并标记解决”会先确认，再写入并仅暂存此文件；保存前必须清除冲突标记。外部修改发生后需重新加载并审查，确认重新加载前会保留原草稿。关闭最后一个窗口或退出时，会先确认是否丢弃未保存的冲突草稿。"
+          )
+          paragraph(
+            "After saving every file, review the staged merge result and continue. If the conflict came from Merge & Push, choose Review, Continue & Push to finish the original destination. UTF-8 text up to 1 MiB is editable. Binary and larger files allow Current, Incoming or Delete choices. Symlink, submodule and file-type conflicts use your external editor or terminal.",
+            "保存所有冲突文件后，审查已暂存结果并继续合并。若冲突来自“合并并推送”，可选择“审查、继续并推送”完成原目标。内置编辑支持 1 MiB 以内的 UTF-8 文本；二进制和更大文件可选择当前、传入版本或删除。符号链接、子模块及文件类型冲突需使用外部编辑器或终端。"
+          )
+        }
         section("History & Layout", "历史与布局", symbol: "clock") {
           paragraph(
             "Select a history row to inspect changed files and compare the commit with its parent or another commit. Click the same row again, press Esc, or use the close button to dismiss the details.",

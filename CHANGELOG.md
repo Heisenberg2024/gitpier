@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+- Add a native conflict-resolution page with Current/Incoming/Base previews, editable results, per-block Current/Incoming/Both choices, file-owned drafts and explicit save/stage confirmation.
+- Warn before discarding unsaved conflict drafts on last-window close or quit; retain the approved push destination and offer another merge if the remote advances during recovery.
+- Match the discard-draft alert to the application theme and icon, use readable neutral buttons and make Cancel the default Return action.
+- Protect external file, Index, branch and operation changes; retain partial staging, file permissions and CRLF. Offer whole-version/deletion choices for binary or large regular files, and preserve unsupported file-type/submodule conflicts for external resolution.
+- Review and complete merge commits through the existing private Index, hooks and signing checks, then continue the original merge-and-push destination. Open new conflicts in the editor and disable continuation/push until files are resolved.
+- Update the local development bundle to build 16.
+
 ## 1.0.3 — 2026-10-12
 
 - Offer Merge & Push after a single current-branch push is rejected because remote commits are missing locally. Fetch the actual push destination, explicitly merge after confirmation, and push only after success; preserve local commits, partial staging and conflict state.

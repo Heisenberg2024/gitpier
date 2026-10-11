@@ -172,7 +172,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
       alert.runModal()
       return .terminateCancel
     }
-    if store.models.values.contains(where: { $0.terminal.sessions.contains { !$0.exited } }) {
+    if !store.unsavedConflictDrafts.isEmpty {
+      if !store.confirmDiscardConflictDrafts(quitting: true) { return .terminateCancel }
+    } else if store.models.values.contains(where: { $0.terminal.sessions.contains { !$0.exited } })
+    {
       let alert = NSAlert()
       alert.messageText = store.text("Quit GitPier?", "退出 GitPier？")
       alert.informativeText = store.text(

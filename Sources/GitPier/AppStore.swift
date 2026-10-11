@@ -336,6 +336,41 @@ import UserNotifications
     }
     save()
   }
+  var unsavedConflictDrafts: [String] {
+    models.values.flatMap { model in
+      model.conflictEditor.unsavedPaths.map { model.record.name + " / " + $0 }
+    }.sorted()
+  }
+  func confirmDiscardConflictDrafts(quitting: Bool) -> Bool {
+    guard let alert = makeConflictDraftDiscardAlert(quitting: quitting) else { return true }
+    return alert.runModal() == .alertFirstButtonReturn
+  }
+  func makeConflictDraftDiscardAlert(quitting: Bool) -> NSAlert? {
+    let drafts = unsavedConflictDrafts
+    guard !drafts.isEmpty else { return nil }
+    let alert = NSAlert()
+    alert.messageText = text(
+      quitting ? "Discard conflict drafts and quit?" : "Discard conflict drafts and close?",
+      quitting ? "丢弃冲突草稿并退出？" : "丢弃冲突草稿并关闭？")
+    alert.informativeText =
+      text(
+        "These conflict editor drafts have not been saved. Their files on disk are preserved. Running terminal sessions and jobs will stop.",
+        "这些冲突编辑草稿尚未保存，磁盘文件会保留。运行中的终端会话及作业将停止。") + "\n\n" + drafts.joined(separator: "\n")
+    alert.addButton(
+      withTitle: text(quitting ? "Discard & Quit" : "Discard & Close", quitting ? "丢弃并退出" : "丢弃并关闭")
+    )
+    alert.addButton(withTitle: text("Cancel", "取消"))
+    if let icon = AppResources.applicationIcon { alert.icon = icon }
+    alert.window.appearance =
+      settings.appearance == .system
+      ? nil
+      : NSAppearance(named: settings.appearance == .dark ? .darkAqua : .aqua)
+    // The explicit title identifies discarding. Keep the system's neutral, legible button style.
+    alert.buttons[0].hasDestructiveAction = false
+    alert.buttons[0].keyEquivalent = ""
+    alert.buttons[1].keyEquivalent = "\r"
+    return alert
+  }
   func shutdown() {
     for model in models.values { model.shutdown() }
     cloneTask?.cancel()
@@ -391,6 +426,9 @@ struct DiffTab: Identifiable, Equatable {
   @Published var pushFailed = false
   @Published var rejectedPush: PushRejection?
   private var pendingPushRecovery: PushRejection?
+  @Published private(set) var conflictPush: PushRejection?
+  private var pendingMergeReview: (MergeReview, Bool)?
+  lazy var conflictEditor = ConflictEditorModel(repository: self)
   @Published var needsUpstream = false
   @Published var lastCommit: String?
   @Published var amend = false
@@ -560,6 +598,9 @@ struct DiffTab: Identifiable, Equatable {
         fileGeneration += 1
       }
       if status != new { status = new }
+      if let target = conflictPush, new.operation == nil, new.head == target.localHead {
+        conflictPush = nil
+      }
       if snapshot != snap {
         snapshot = snap
         let patch = snap?.patch ?? Data()
@@ -601,6 +642,7 @@ struct DiffTab: Identifiable, Equatable {
         await loadPage(page)
       }
       warmDiffCache()
+      if page == "conflicts" { conflictEditor.repositoryDidRefresh() }
     } catch is CancellationError {} catch {
       available = false
       snapshot = nil
@@ -854,14 +896,8 @@ struct DiffTab: Identifiable, Equatable {
   }
   func stageGroup(_ files: [FileChange], unstage: Bool) {
     if !unstage { includedPaths.formUnion(files.filter { !$0.isConflicted }.map(\.path)) }
-    if !unstage && files.contains(where: \.isConflicted) {
-      confirmation = PendingAction(
-        title: store.text("Mark conflicts resolved?", "标记冲突已解决？"),
-        detail: store.text(
-          "Review and edit these files first. Staging records their current content as resolved; it does not remove conflict markers automatically.",
-          "请先审查和编辑这些文件；暂存会将当前内容标记为已解决，不会自动移除冲突标记。") + "\n\n"
-          + files.filter(\.isConflicted).map(\.path).joined(separator: "\n")
-      ) { [weak self] in self?.run { git in try await git.stage(files) } }
+    if !unstage, let conflict = files.first(where: \.isConflicted) {
+      openConflicts(conflict.path)
       return
     }
     run { git in if unstage { try await git.unstage(files) } else { try await git.stage(files) } }
@@ -876,6 +912,7 @@ struct DiffTab: Identifiable, Equatable {
     output = nil
     outputResult = .succeeded
     let progressTicket = activity.begin(label ?? store.text("Git operation", "Git 操作"))
+    let hadConflicts = status.files.contains(where: \.isConflicted)
     activeTask = Task {
       defer {
         busy = false
@@ -883,6 +920,10 @@ struct DiffTab: Identifiable, Equatable {
         if let rejection = pendingPushRecovery {
           pendingPushRecovery = nil
           confirmMergeAndPush(rejection)
+        }
+        if let (review, push) = pendingMergeReview {
+          pendingMergeReview = nil
+          confirmMergeContinuation(review, push: push)
         }
       }
       // Finish any older read before writing, so the refresh after this action reads its result.
@@ -913,6 +954,16 @@ struct DiffTab: Identifiable, Equatable {
       }
       activity.advance(store.text("Refreshing", "刷新仓库"), cancellable: false)
       await refresh()
+      if !hadConflicts, status.files.contains(where: \.isConflicted) {
+        setPage("conflicts")
+        let diagnosis = error.map { "\n\n" + $0 } ?? ""
+        output =
+          store.text(
+            "Conflicts need resolution. Review the files in Resolve Conflicts, save each result, then continue the Git operation.",
+            "存在需要解决的冲突。请在“解决冲突”中审查文件、保存结果，再继续 Git 操作。") + diagnosis
+        outputResult = .needsAttention
+        error = nil
+      }
       activity.finish(result, ticket: progressTicket)
       if notify, let output { store.notifyCompletion(output) }
     }
@@ -1112,7 +1163,15 @@ struct DiffTab: Identifiable, Equatable {
         rejectedPush = nil
         outputResult = .needsAttention
         let state = try? await git.status()
+        if let updated = error as? PushRejection {
+          queuePushRecovery(updated)
+          output = store.text(
+            "New remote commits arrived during recovery. Your merge commit is saved; review Merge & Push again.",
+            "恢复过程中远程又出现新提交，合并提交已保存；请再次确认合并并推送。")
+          return
+        }
         if state?.files.contains(where: \.isConflicted) == true {
+          conflictPush = rejection
           output = store.text(
             "Merge has conflicts; push stopped. Resolve and stage the files, continue the merge, then retry Push. Your local commit is preserved.",
             "合并出现冲突，已停止推送。请解决并暂存冲突文件，继续合并后重试推送。本地提交已保留。")
@@ -1129,6 +1188,111 @@ struct DiffTab: Identifiable, Equatable {
           if error is CancellationError { throw error }
           self.error = error.localizedDescription
         }
+      }
+    }
+  }
+  func openConflicts(_ path: String? = nil) {
+    setPage("conflicts")
+    conflictEditor.select(path ?? status.files.first(where: \.isConflicted)?.path)
+  }
+  func reviewMergeContinuation(push: Bool = false) {
+    guard status.operation == .merge, !status.files.contains(where: \.isConflicted) else { return }
+    run(label: store.text("Reviewing merge", "审查合并"), completion: "") { [weak self] git in
+      guard let self else { return }
+      pendingMergeReview = (try await git.reviewMerge(), push)
+      outputResult = .needsAttention
+      output = store.text("Review the staged merge result before continuing.", "请审查已暂存的合并结果，再继续合并。")
+    }
+  }
+  private func confirmMergeContinuation(_ review: MergeReview, push: Bool) {
+    let target = push ? conflictPush : nil
+    confirmation = PendingAction(
+      title: store.text(
+        target == nil ? "Continue merge?" : "Continue merge and push?",
+        target == nil ? "继续合并？" : "继续合并并推送？"),
+      detail: store.text(
+        "Create the merge commit from these staged files? Hooks and signing stay enabled. Unstaged edits are excluded.",
+        "是否使用以下已暂存文件创建合并提交？Hooks 和签名仍有效，不包含未暂存修改。")
+        + "\n\n"
+        + (review.index.paths.isEmpty
+          ? store.text("The merge keeps the current file tree.", "合并将保留当前文件树。")
+          : review.index.paths.joined(separator: "\n"))
+        + (target.map {
+          "\n\n" + GitService.redact($0.remoteURL) + "\n" + review.index.branch + " → "
+            + String($0.remoteReference.dropFirst("refs/heads/".count))
+        } ?? ""),
+      confirmTitle: store.text(
+        target == nil ? "Continue Merge" : "Continue & Push", target == nil ? "继续合并" : "继续并推送"),
+      destructive: false
+    ) { [weak self] in self?.finishMerge(review, target: target) }
+  }
+  private func finishMerge(_ review: MergeReview, target: PushRejection?) {
+    run(
+      label: store.text(
+        target == nil ? "Continuing merge" : "Continue Merge & Push",
+        target == nil ? "继续合并" : "继续合并并推送"),
+      completion: "", notify: true
+    ) { [weak self] git in
+      guard let self else { return }
+      committing = true
+      activity.advance(store.text("Creating merge commit", "创建合并提交"), cancellable: false)
+      defer { committing = false }
+      let commit = try await git.completeMerge(review)
+      committing = false
+      conflictPush = nil
+      output = store.text("Merge completed: ", "合并已完成：") + String(commit.hash.prefix(8))
+      if let target {
+        conflictPush = target
+        activity.advance(store.text("Pushing", "推送"), cancellable: true)
+        do {
+          let details = try await git.pushCompletedMerge(
+            target, head: commit.hash, progress: activity.receiver())
+          pushFailed = false
+          conflictPush = nil
+          needsUpstream = false
+          output = store.text("Merge & push completed.", "合并并推送已完成。") + "\n" + details
+        } catch let updated as PushRejection {
+          conflictPush = nil
+          queuePushRecovery(updated)
+          output = store.text(
+            "Merge commit saved; new remote commits need another merge before pushing.",
+            "合并提交已保存；远程又有新提交，需要再次合并后推送。")
+        } catch {
+          pushFailed = true
+          outputResult = .needsAttention
+          output = store.text(
+            "Merge commit saved; push did not complete. Retry Push sends the existing commit to the same destination.",
+            "合并提交已保存，推送尚未完成。重试推送会将已有提交发送到同一目标。")
+          if error is CancellationError {
+            output = store.text(
+              "Merge commit saved; push cancelled. Retry Push sends the existing commit to the same destination.",
+              "合并提交已保存，推送已取消。重试推送会将已有提交发送到同一目标。")
+          } else {
+            self.error = error.localizedDescription
+          }
+        }
+      }
+    }
+  }
+  func retryPush() {
+    guard let target = conflictPush, let head = status.head, status.operation == nil else {
+      network("push")
+      return
+    }
+    run(
+      label: store.text("Pushing", "推送"), completion: store.text("Push completed.", "推送已完成。"),
+      notify: true
+    ) { [weak self] git in
+      guard let self else { return }
+      do {
+        output = try await git.pushCompletedMerge(target, head: head, progress: activity.receiver())
+        pushFailed = false
+        conflictPush = nil
+      } catch let updated as PushRejection {
+        conflictPush = nil
+        queuePushRecovery(updated)
+        output = store.text(
+          "New remote commits need to be merged before pushing.", "远程新提交需要合并后才能推送。")
       }
     }
   }
@@ -1176,7 +1340,10 @@ struct DiffTab: Identifiable, Equatable {
   }
   func perform(_ args: [String], confirmation detail: String? = nil) {
     let action: () -> Void = { [weak self] in
-      self?.run { [weak self] git in self?.output = try await git.perform(args) }
+      self?.run { [weak self] git in
+        self?.output = try await git.perform(args)
+        if args == ["merge", "--abort"] { self?.conflictPush = nil }
+      }
     }
     if let detail {
       confirmation = PendingAction(
@@ -1259,6 +1426,7 @@ struct DiffTab: Identifiable, Equatable {
     ])
   }
   func shutdown() {
+    conflictEditor.shutdown()
     watcher?.stop()
     watcher = nil
     activationTask?.cancel()
