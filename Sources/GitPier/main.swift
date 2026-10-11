@@ -4,9 +4,9 @@ import SwiftTerm
 import SwiftUI
 
 #if DEBUG
-if CommandLine.arguments.contains("--product-screenshots") {
-  ProductScreenshots.run()
-}
+  if CommandLine.arguments.contains("--product-screenshots") {
+    ProductScreenshots.run()
+  }
 #endif
 
 if CommandLine.arguments.contains("--ssh-profile") {
@@ -113,7 +113,18 @@ struct GitPierApp: App {
         CommandGroup(after: .appSettings) {
           Button(store.text("Credentials…", "凭证…")) { store.showCredentials = true }
         }
+        CommandGroup(replacing: .help) {
+          Button(store.text("GitPier Help", "GitPier 帮助")) { openWindow(id: "help") }
+            .keyboardShortcut("/", modifiers: [.command, .shift])
+          Link(
+            store.text("Report an Issue…", "报告问题…"),
+            destination: URL(string: "https://github.com/Heisenberg2024/gitpier/issues")!)
+        }
       }
+    Window(store.text("GitPier Help", "GitPier 帮助"), id: "help") {
+      HelpView().environmentObject(store).modifier(AppAppearance(store: store))
+        .frame(minWidth: 640, minHeight: 500)
+    }.defaultSize(width: 780, height: 640)
     Settings {
       SettingsView().environmentObject(store).modifier(AppAppearance(store: store)).frame(
         width: 760, height: 580)
@@ -136,15 +147,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
   func applicationDidFinishLaunching(_ notification: Notification) {
     keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
       let consumed = MainActor.assumeIsolated {
-        let modifiers = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
-        guard modifiers.contains(.command), !modifiers.contains(.option),
-          !modifiers.contains(.control), !modifiers.contains(.shift),
-          event.charactersIgnoringModifiers?.lowercased() == "w",
-          let window = NSApp.keyWindow,
-          AppStore.shared.managedWindows.contains(ObjectIdentifier(window)),
-          window.attachedSheet == nil
-        else { return false }
-        return ShortcutRouter.closeTab(store: AppStore.shared, responder: window.firstResponder)
+        ShortcutRouter.handleKeyDown(event, store: AppStore.shared, window: NSApp.keyWindow)
       }
       return consumed ? nil : event
     }

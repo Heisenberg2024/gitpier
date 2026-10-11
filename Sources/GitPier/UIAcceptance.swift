@@ -48,12 +48,22 @@ import SwiftUI
           contentRect: NSRect(x: 0, y: 0, width: 1440, height: 900),
           styleMask: [.titled, .closable, .resizable], backing: .buffered, defer: false)
         window.title = "GitPier Acceptance"
+        window.isReleasedWhenClosed = false
         window.contentView = host
         window.setContentSize(NSSize(width: 1440, height: 900))
         window.setFrameOrigin(NSPoint(x: -2000, y: -2000))
         window.orderFront(nil)
         try await settle()
         try await waitFor { !model.refreshing && !model.diffLoading }
+        if ProcessInfo.processInfo.environment["GITPIER_UI_ACCEPTANCE_SCOPE"] == "version102" {
+          model.terminal.add(settings: store.settings)
+          try await verifyVersion102(
+            store: store, model: model, host: host, window: window, output: output)
+          store.shutdown()
+          window.close()
+          print("Native 1.0.2 UI acceptance passed.")
+          exit(0)
+        }
         let progressProbe = OperationProgress()
         let oldTicket = progressProbe.begin("Previous")
         let staleReceiver = progressProbe.receiver()
@@ -531,6 +541,8 @@ import SwiftUI
         }
         try await verifyWorkspaceImprovements(
           store: store, model: model, root: root, host: host, window: window, output: output)
+        try await verifyVersion102(
+          store: store, model: model, host: host, window: window, output: output)
         try await verifyDiffScrollBounds(settings: store.settings, output: output)
         session.view.acceptanceOutput = nil
         store.shutdown()
@@ -548,6 +560,141 @@ import SwiftUI
       }
     }
     NSApp.run()
+  }
+  static func verifyVersion102(
+    store: AppStore, model: RepositoryModel, host: NSView, window: NSWindow, output: URL
+  ) async throws {
+    FileHandle.standardError.write(Data("1.0.2 acceptance: history selection and layout\n".utf8))
+    var layout = model.panels.layout
+    layout.terminalVisible = false
+    model.editLayout(layout)
+    model.setPage("history")
+    store.select(model.record.id)
+    guard model.page == "commit" else {
+      throw GitPierError.invalidInput("Opening a repository did not default to Commit")
+    }
+    let reopened = RepositoryModel(record: model.record, store: store)
+    guard reopened.page == "commit" else {
+      throw GitPierError.invalidInput("New repository session restored an old page")
+    }
+    await model.activate()
+    model.setPage("history")
+    await model.loadHistory(reset: true)
+    model.selectedHistoryCommit = nil
+    window.setContentSize(NSSize(width: 1440, height: 900))
+    try await settle()
+    guard let commit = model.history.last else {
+      throw GitPierError.invalidInput("Missing history fixture")
+    }
+    model.selectedHistoryCommit = commit
+    try await waitFor { descendants(host).compactMap { $0 as? DiffSplitContainer }.first != nil }
+    guard let diff = descendants(host).compactMap({ $0 as? DiffSplitContainer }).first,
+      diff.afterOnly, diff.scrolls[0].isHidden, diff.scrolls[1].frame.width == diff.bounds.width
+    else { throw GitPierError.invalidInput("History addition did not hide its empty old side") }
+    layout = model.panels.layout
+    layout.historyDetailHeight = 385
+    layout.historyFilesWidth = 315
+    model.editLayout(layout, persist: false)
+    model.persistLayout()
+    guard
+      try store.persistence.load().repositories.first(where: { $0.id == model.record.id })?.layout
+        == layout
+    else { throw GitPierError.invalidInput("History layout was not persisted") }
+    try await settle()
+    try capture(host, to: output.appendingPathComponent("history-detail-102.png"))
+    model.setPage("commit")
+    try await settle()
+    model.setPage("history")
+    try await settle()
+    guard model.panels.layout == layout else {
+      throw GitPierError.invalidInput("Page switch reset history layout")
+    }
+    let escape = NSEvent.keyEvent(
+      with: .keyDown, location: .zero, modifierFlags: [],
+      timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber,
+      context: nil, characters: "\u{1B}", charactersIgnoringModifiers: "\u{1B}", isARepeat: false,
+      keyCode: 53)!
+    guard
+      !ShortcutRouter.closeHistory(store: store, responder: model.terminal.sessions.first?.view),
+      ShortcutRouter.handleKeyDown(escape, store: store, window: window),
+      model.selectedHistoryCommit == nil
+    else { throw GitPierError.invalidInput("History Esc routing failed or consumed terminal Esc") }
+    try await settle()
+    guard descendants(host).compactMap({ $0 as? DiffSplitContainer }).isEmpty else {
+      throw GitPierError.invalidInput("Closing history did not remove the native Diff")
+    }
+    let installed = ExternalEditors.installed()
+    var preferences = AppSettings()
+    guard Set(installed.map(\.id)).count == installed.count,
+      ExternalEditors.application(settings: preferences) == installed.first?.url
+    else {
+      throw GitPierError.invalidInput("Editor automatic priority or deduplication failed")
+    }
+    if let selected = installed.last {
+      preferences.editorPath = selected.id
+      preferences.customEditorPaths = [selected.id, selected.id]
+      guard ExternalEditors.application(settings: preferences) == selected.url,
+        Set(ExternalEditors.available(settings: preferences).map(\.id)).count == installed.count
+      else { throw GitPierError.invalidInput("Editor selection or custom deduplication failed") }
+      let override = installed.first!.url
+      guard ExternalEditors.application(settings: preferences, override: override) == override,
+        preferences.editorPath == selected.id
+      else {
+        throw GitPierError.invalidInput("One-time editor choice changed the default")
+      }
+    }
+    let settingsHost = NSHostingView(
+      rootView: AnyView(
+        SettingsView().environmentObject(store).modifier(AppAppearance(store: store))))
+    let settingsWindow = NSWindow(
+      contentRect: NSRect(x: -2400, y: -2400, width: 760, height: 580),
+      styleMask: [.titled, .closable], backing: .buffered, defer: false)
+    settingsWindow.isReleasedWhenClosed = false
+    settingsWindow.contentView = settingsHost
+    settingsWindow.orderFront(nil)
+    defer { settingsWindow.close() }
+    FileHandle.standardError.write(Data("1.0.2 acceptance: Settings tabs and offline Help\n".utf8))
+    for language in [AppLanguage.english, .simplifiedChinese] {
+      var settings = store.settings
+      settings.language = language
+      store.updateSettings(settings)
+      try await settle()
+      for index in 0...7 {
+        settingsHost.rootView = AnyView(
+          SettingsView(initialTab: index).id(index)
+            .environmentObject(store).modifier(AppAppearance(store: store)))
+        try await settle()
+        if index == 0 {
+          guard
+            let picker = descendants(settingsHost).compactMap({ $0 as? NSPopUpButton })
+              .first(where: { $0.accessibilityIdentifier() == "external-editor-picker" }),
+            picker.itemArray.last?.title == store.text("Choose Application…", "选择应用…"),
+            picker.itemArray.filter({ $0.representedObject is String }).allSatisfy({
+              $0.image != nil
+            }),
+            !picker.itemArray.contains(where: {
+              $0.title.contains("Automatic") || $0.title.contains("自动选择")
+            })
+          else {
+            throw GitPierError.invalidInput("Editor popup icons or compact menu layout failed")
+          }
+        }
+        try capture(
+          settingsHost,
+          to: output.appendingPathComponent("settings-102-\(language.rawValue)-\(index).png"))
+      }
+      settingsHost.rootView = AnyView(
+        HelpView().environmentObject(store).modifier(AppAppearance(store: store)))
+      try await settle()
+      try capture(
+        settingsHost, to: output.appendingPathComponent("help-102-\(language.rawValue).png"))
+      settingsHost.rootView = AnyView(
+        SettingsView().environmentObject(store).modifier(AppAppearance(store: store)))
+    }
+    try
+      "History layout serialization and page switch, full-width added-file native Diff, Esc routing with terminal exclusion, editor default/custom/one-time selection, native popup application icons and compact menu, all eight Settings initial pages and offline Help rendering passed. Real Settings tab clicks and history pointer/key events require the separate isolated GUI check. Installed editor order: \(installed.map(\.name).joined(separator: ", ")).\n"
+      .write(
+        to: output.appendingPathComponent("version-102.txt"), atomically: true, encoding: .utf8)
   }
   static func verifyWorkspaceImprovements(
     store: AppStore, model: RepositoryModel, root: URL, host: NSView, window: NSWindow,
@@ -807,6 +954,7 @@ import SwiftUI
     let window = NSWindow(
       contentRect: NSRect(x: -2400, y: -2400, width: 640, height: 360),
       styleMask: [.titled, .closable, .resizable], backing: .buffered, defer: false)
+    window.isReleasedWhenClosed = false
     window.appearance = NSAppearance(named: .darkAqua)
     window.contentView = view
     window.orderFront(nil)

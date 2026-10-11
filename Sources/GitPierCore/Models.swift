@@ -109,7 +109,6 @@ public struct RepositoryRecord: Codable, Identifiable, Equatable, Sendable {
   public var credentialID: UUID?
   public var useDefaultCredential: Bool
   public var draft: String
-  public var page: String
   public var layout: PanelLayout
   public init(path: String, name: String? = nil) {
     id = UUID()
@@ -121,7 +120,6 @@ public struct RepositoryRecord: Codable, Identifiable, Equatable, Sendable {
     credentialID = nil
     useDefaultCredential = false
     draft = ""
-    page = "commit"
     layout = PanelLayout()
   }
 }
@@ -132,7 +130,25 @@ public struct PanelLayout: Codable, Equatable, Sendable {
   public var terminalHeight: Double = 260
   public var terminalVisible = false
   public var terminalMaximized = false
+  public var historyDetailHeight: Double = 320
+  public var historyFilesWidth: Double = 280
   public init() {}
+  public init(from decoder: Decoder) throws {
+    self.init()
+    let values = try decoder.container(keyedBy: CodingKeys.self)
+    changesWidth = try values.decodeIfPresent(Double.self, forKey: .changesWidth) ?? changesWidth
+    messageHeight = try values.decodeIfPresent(Double.self, forKey: .messageHeight) ?? messageHeight
+    terminalHeight =
+      try values.decodeIfPresent(Double.self, forKey: .terminalHeight) ?? terminalHeight
+    terminalVisible =
+      try values.decodeIfPresent(Bool.self, forKey: .terminalVisible) ?? terminalVisible
+    terminalMaximized =
+      try values.decodeIfPresent(Bool.self, forKey: .terminalMaximized) ?? terminalMaximized
+    historyDetailHeight =
+      try values.decodeIfPresent(Double.self, forKey: .historyDetailHeight) ?? historyDetailHeight
+    historyFilesWidth =
+      try values.decodeIfPresent(Double.self, forKey: .historyFilesWidth) ?? historyFilesWidth
+  }
 }
 
 public enum AppearanceMode: String, Codable, CaseIterable, Sendable { case system, dark, light }
@@ -173,6 +189,7 @@ public struct AppSettings: Codable, Equatable, Sendable {
   public var recentLimit = 20
   public var launchPage = "dashboard"
   public var editorPath = ""
+  public var customEditorPaths: [String] = []
   public var pullStrategy = "configured"
   public var defaultCredentialID: UUID?
   public init() {}
@@ -230,6 +247,7 @@ public struct AppSettings: Codable, Equatable, Sendable {
     recentLimit = try values.decodeIfPresent(Int.self, forKey: .recentLimit) ?? recentLimit
     launchPage = try values.decodeIfPresent(String.self, forKey: .launchPage) ?? launchPage
     editorPath = try values.decodeIfPresent(String.self, forKey: .editorPath) ?? editorPath
+    customEditorPaths = try values.decodeIfPresent([String].self, forKey: .customEditorPaths) ?? []
     pullStrategy = try values.decodeIfPresent(String.self, forKey: .pullStrategy) ?? pullStrategy
     defaultCredentialID = try values.decodeIfPresent(UUID.self, forKey: .defaultCredentialID)
   }

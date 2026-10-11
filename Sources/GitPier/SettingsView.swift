@@ -39,24 +39,7 @@ struct SettingsView: View {
             store.text(
               "Recent repositories: \(store.settings.recentLimit)",
               "最近仓库：\(store.settings.recentLimit)"), value: setting(\.recentLimit), in: 5...50)
-          TextField(
-            store.text("External Editor (.app path)", "外部编辑器（.app 路径）"), text: setting(\.editorPath)
-          )
-          Text(
-            store.text(
-              "Empty editor path uses the system default application. Repository contents stay on this Mac.",
-              "编辑器路径留空时使用系统默认应用，仓库内容保留在本机。")
-          ).font(.caption).foregroundStyle(.secondary)
-        }
-        Section(store.text("About", "关于")) {
-          Text(localizedUI("GitPier 1.0.1")).font(.headline)
-          Text(localizedUI("Native Git Client for macOS"))
-          Text(localizedUI("All Your Repositories. One Workspace.")).foregroundStyle(.secondary)
-          Text(
-            store.text(
-              "Licensed under the MIT License. Copyright (c) 2026 Heisenberg2024.",
-              "采用 MIT License。版权所有 © 2026 Heisenberg2024。")
-          ).font(.caption).foregroundStyle(.secondary)
+          ExternalEditorPicker()
         }
       }.formStyle(.grouped).tabItem { Label(store.text("General", "常规"), systemImage: "gearshape") }
         .tag(0)
@@ -203,6 +186,9 @@ struct SettingsView: View {
       }.tag(5)
       CredentialsView().tabItem { Label(store.text("Credentials", "凭证"), systemImage: "key") }.tag(
         6)
+      AboutSettingsView().tabItem {
+        Label(store.text("About", "关于"), systemImage: "info.circle")
+      }.tag(7)
     }.padding(10)
   }
   func setting<T>(_ path: WritableKeyPath<AppSettings, T>) -> Binding<T> {
@@ -242,6 +228,55 @@ struct SettingsView: View {
         settings[keyPath: path] = hex
         store.updateSettings(settings)
       })
+  }
+}
+
+struct AboutSettingsView: View {
+  @EnvironmentObject var store: AppStore
+  @Environment(\.colorScheme) var scheme
+  @Environment(\.openWindow) var openWindow
+  var body: some View {
+    ScrollView {
+      VStack(spacing: 22) {
+        VStack(spacing: 10) {
+          if let image = AppResources.applicationIcon {
+            Image(nsImage: image).resizable().frame(width: 80, height: 80)
+          }
+          Text("GitPier").font(.system(size: 26, weight: .semibold))
+          Text(localizedUI("Native Git Client for macOS")).font(.headline)
+          Text(localizedUI("All Your Repositories. One Workspace."))
+            .foregroundStyle(.secondary)
+        }.frame(maxWidth: .infinity).padding(.top, 12)
+        VStack(spacing: 12) {
+          LabeledContent(store.text("Version", "版本")) {
+            Text("\(AppResources.version) (\(AppResources.build))").textSelection(.enabled)
+          }
+          Divider()
+          LabeledContent(store.text("License", "许可证")) { Text("MIT License") }
+          Text(
+            store.text(
+              "Licensed under the MIT License. Copyright © 2026 Heisenberg2024.",
+              "版权所有 © 2026 Heisenberg2024。使用与分发遵循 MIT License。")
+          )
+          .font(.caption).foregroundStyle(.secondary).frame(
+            maxWidth: .infinity, alignment: .leading)
+          Divider()
+          Text(
+            store.text(
+              "Repository contents stay on this Mac. GitPier has no analytics or repository-upload service.",
+              "仓库内容保留在本机。GitPier 不提供分析或仓库上传服务。")
+          )
+          .font(.callout).foregroundStyle(.secondary).frame(
+            maxWidth: .infinity, alignment: .leading)
+        }.padding(18).background(Theme.panel(scheme), in: RoundedRectangle(cornerRadius: 12))
+        HStack(spacing: 18) {
+          Button(store.text("GitPier Help", "GitPier 帮助")) { openWindow(id: "help") }
+          Link(
+            store.text("Source Code", "源代码"),
+            destination: URL(string: "https://github.com/Heisenberg2024/gitpier")!)
+        }
+      }.padding(24).frame(maxWidth: 520).frame(maxWidth: .infinity)
+    }.background(Theme.editor(scheme))
   }
 }
 

@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.0.2 — 2026-10-11
+
+- Move About to the rightmost Settings tab with a centered application identity and structured version, license and privacy information.
+- Detect installed editors in a stable priority order and show their native application icons in one compact dropdown; size the control to its selected title, append custom Apps above Choose Application, and use standard native submenus with application icons for one-time editor choices from repository and commit-file context menus.
+- Open or select repositories on the Commit page without persisting the current page.
+- Share the commit Diff renderer and scrollbar behavior with history, hide empty old sides for additions, and persist history detail height and file-list width per repository.
+- Close history details by clicking the selected commit again, pressing Esc or using the close button; prevent cancelled history reads from replacing newer selections.
+- Make sidebar organizations distinct with stronger headers, count badges, spacing, indented repository rows, tighter group spacing and a stateful Collapse / Expand All Organizations button.
+- Replace the unavailable system help entry with a built-in English / Simplified Chinese guide and an issue-report link.
+- Update the local application and archive to 1.0.2 (build 13).
+
 ## 1.0.1 — 2026-10-11
 
 - Show final Git operation results after transfer progress ends; distinguish completed commit-and-push, missing upstream, push failure, and cancellation while preserving successful local commits.

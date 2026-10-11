@@ -252,7 +252,7 @@ import SwiftUI
             host.displayIfNeeded()
           }
         }
-        // Include all seven system settings tabs, plus organization and credentials views.
+        // Include all eight system settings tabs, plus organization and credentials views.
         let settingsHost = NSHostingView(rootView: AnyView(EmptyView()))
         settingsHost.frame = NSRect(x: 0, y: 0, width: 760, height: 580)
         let settingsWindow = NSWindow(
@@ -260,7 +260,7 @@ import SwiftUI
         settingsWindow.contentView = settingsHost
         settingsWindow.setFrameOrigin(NSPoint(x: -2400, y: -2400))
         settingsWindow.orderFront(nil)
-        for tab in 0...6 {
+        for tab in 0...7 {
           try await measure("settings.tab-\(tab).native-update") {
             settingsHost.rootView = AnyView(
               SettingsView(initialTab: tab).id(tab).environmentObject(store)

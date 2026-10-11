@@ -219,6 +219,7 @@ import UserNotifications
     selectedID = id
     showDashboard = false
     guard let model = models[id] else { return }
+    model.setPage("commit")
     model.record.lastOpened = Date()
     update(model.record)
     Task { await model.activate(refresh: true) }
@@ -357,6 +358,7 @@ struct DiffTab: Identifiable, Equatable {
 
 @MainActor final class RepositoryModel: ObservableObject {
   @Published var record: RepositoryRecord
+  @Published private(set) var page = "commit"
   @Published private(set) var status = RepositoryStatus()
   private var fileIndex = RepositoryFileIndex([])
   private var filteredKey = ""
@@ -400,6 +402,7 @@ struct DiffTab: Identifiable, Equatable {
   private var historyGeneration = 0
   private(set) var historyReadCount = 0
   @Published var historyPath: String?
+  @Published var selectedHistoryCommit: CommitRecord?
   @Published var historyHasMore = true
   @Published var branches: [GitBranch] = []
   @Published var remotes: [GitRemote] = []
@@ -590,10 +593,10 @@ struct DiffTab: Identifiable, Equatable {
       if branches != newBranches { branches = newBranches }
       let newRemotes = try await git.remotes()
       if remotes != newRemotes { remotes = newRemotes }
-      if record.page == "history" {
+      if page == "history" {
         await loadHistory(reset: true)
       } else {
-        await loadPage(record.page)
+        await loadPage(page)
       }
       warmDiffCache()
     } catch is CancellationError {} catch {
@@ -639,9 +642,8 @@ struct DiffTab: Identifiable, Equatable {
     if value != includedPaths { includedPaths = value }
   }
   func setPage(_ value: String) {
-    guard record.page != value else { return }
-    record.page = value
-    store.update(record)
+    guard page != value else { return }
+    page = value
     Task { await loadPage(value) }
   }
   func select(
@@ -1143,14 +1145,16 @@ struct DiffTab: Identifiable, Equatable {
       historyLoading = false
     }
   }
-  func openEditor(_ path: String? = nil) {
+  func openEditor(_ path: String? = nil, application: URL? = nil) {
     let url =
       path.map { URL(fileURLWithPath: record.path).appendingPathComponent($0) }
       ?? URL(fileURLWithPath: record.path)
-    if !store.settings.editorPath.isEmpty {
+    if let application = ExternalEditors.application(
+      settings: store.settings, override: application)
+    {
       let config = NSWorkspace.OpenConfiguration()
       NSWorkspace.shared.open(
-        [url], withApplicationAt: URL(fileURLWithPath: store.settings.editorPath),
+        [url], withApplicationAt: application,
         configuration: config
       ) { [weak self] _, error in
         if let error { Task { @MainActor [weak self] in self?.error = error.localizedDescription } }

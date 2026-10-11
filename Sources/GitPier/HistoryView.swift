@@ -3,11 +3,15 @@ import SwiftUI
 
 struct HistoryView: View {
   @ObservedObject var model: RepositoryModel
+  @ObservedObject var panels: WorkspacePanels
+  init(model: RepositoryModel) {
+    self.model = model
+    panels = model.panels
+  }
   @EnvironmentObject var store: AppStore
   @Environment(\.colorScheme) var scheme
   @FocusState private var searchFocused: Bool
   @State private var search = ""
-  @State private var selected: CommitRecord?
   @State private var branchAt: String?
   @State private var branchName = ""
   var records: [CommitRecord] {
@@ -18,68 +22,88 @@ struct HistoryView: View {
   }
   var graph: [String: GraphRow] { model.historyGraph }
   var body: some View {
-    VSplitView {
+    GeometryReader { geometry in
       VStack(spacing: 0) {
-        HStack {
-          Text(store.text("History", "历史")).font(uiFont(size: 13, weight: .semibold))
-          if let fileFilter = model.historyPath {
-            Badge(text: fileFilter)
-            IconButton("xmark", help: localizedUI("Clear File Filter")) {
-              model.historyPath = nil
-              Task { await model.loadHistory(reset: true) }
+        VStack(spacing: 0) {
+          HStack {
+            Text(store.text("History", "历史")).font(uiFont(size: 13, weight: .semibold))
+            if let fileFilter = model.historyPath {
+              Badge(text: fileFilter)
+              IconButton("xmark", help: localizedUI("Clear File Filter")) {
+                model.historyPath = nil
+                model.selectedHistoryCommit = nil
+                Task { await model.loadHistory(reset: true) }
+              }
+            }
+            Spacer()
+            Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
+            TextField(store.text("Search loaded commits", "搜索已加载提交"), text: $search).textFieldStyle(
+              .plain
+            ).frame(width: 200).focused($searchFocused)
+          }.font(uiFont(size: 11)).padding(12).background(Theme.panel(scheme))
+          Divider()
+          ScrollView {
+            LazyVStack(spacing: 0) {
+              ForEach(records) { commit in
+                Button {
+                  model.selectedHistoryCommit =
+                    model.selectedHistoryCommit?.hash == commit.hash ? nil : commit
+                } label: {
+                  HStack(spacing: 12) {
+                    GraphRowView(row: graph[commit.hash]).frame(width: 92, height: 43)
+                    VStack(alignment: .leading, spacing: 4) {
+                      Text(commit.subject).font(uiFont(size: 12, weight: .medium)).lineLimit(1)
+                      if !commit.decorations.isEmpty {
+                        Text(commit.decorations).font(uiFont(size: 9)).foregroundStyle(.mint)
+                          .lineLimit(1)
+                      }
+                    }.frame(maxWidth: .infinity, alignment: .leading)
+                    Text(commit.author).font(uiFont(size: 11)).foregroundStyle(.secondary).frame(
+                      width: 125, alignment: .leading
+                    ).lineLimit(1)
+                    Text(commit.date, style: .date).font(uiFont(size: 10)).foregroundStyle(
+                      .secondary
+                    )
+                    .frame(width: 92)
+                    Text(String(commit.hash.prefix(8))).font(uiFont(size: 11, design: .monospaced))
+                      .foregroundStyle(.secondary).frame(width: 70)
+                  }.padding(.trailing, 12).frame(height: 43).background(
+                    model.selectedHistoryCommit?.hash == commit.hash
+                      ? Color.accentColor.opacity(0.14) : Color.clear
+                  ).contentShape(Rectangle())
+                }.buttonStyle(.workspace).accessibilityIdentifier("history-" + commit.hash)
+                  .contextMenu { historyMenu(commit) }
+              }
+              if model.historyHasMore {
+                Button(store.text("Load more commits", "加载更多提交")) {
+                  Task { await model.loadHistory(path: model.historyPath) }
+                }.padding(15)
+              }
+              if model.history.isEmpty {
+                EmptyState(symbol: "clock", title: store.text("No commits yet", "尚无提交"), detail: "")
+              }
             }
           }
-          Spacer()
-          Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
-          TextField(store.text("Search loaded commits", "搜索已加载提交"), text: $search).textFieldStyle(
-            .plain
-          ).frame(width: 200)
-        }.font(uiFont(size: 11)).padding(12).background(Theme.panel(scheme))
-        Divider()
-        ScrollView {
-          LazyVStack(spacing: 0) {
-            ForEach(records) { commit in
-              HStack(spacing: 12) {
-                GraphRowView(row: graph[commit.hash]).frame(width: 92, height: 43)
-                VStack(alignment: .leading, spacing: 4) {
-                  Text(commit.subject).font(uiFont(size: 12, weight: .medium)).lineLimit(1)
-                  if !commit.decorations.isEmpty {
-                    Text(commit.decorations).font(uiFont(size: 9)).foregroundStyle(.mint)
-                      .lineLimit(1)
-                  }
-                }.frame(maxWidth: .infinity, alignment: .leading)
-                Text(commit.author).font(uiFont(size: 11)).foregroundStyle(.secondary).frame(
-                  width: 125, alignment: .leading
-                ).lineLimit(1)
-                Text(commit.date, style: .date).font(uiFont(size: 10)).foregroundStyle(.secondary)
-                  .frame(width: 92)
-                Text(String(commit.hash.prefix(8))).font(uiFont(size: 11, design: .monospaced))
-                  .foregroundStyle(.secondary).frame(width: 70)
-              }.padding(.trailing, 12).frame(height: 43).background(
-                selected?.hash == commit.hash ? Color.accentColor.opacity(0.14) : Color.clear
-              ).contentShape(Rectangle())
-                .onTapGesture { selected = commit }.contextMenu { historyMenu(commit) }
-            }
-            if model.historyHasMore {
-              Button(store.text("Load more commits", "加载更多提交")) {
-                Task { await model.loadHistory(path: model.historyPath) }
-              }.padding(15)
-            }
-            if model.history.isEmpty {
-              EmptyState(symbol: "clock", title: store.text("No commits yet", "尚无提交"), detail: "")
-            }
-          }
+        }.frame(maxWidth: .infinity, maxHeight: .infinity)
+        if let selected = model.selectedHistoryCommit {
+          ResizeHandle(
+            vertical: false,
+            onDrag: { delta in
+              var layout = panels.layout
+              let visibleHeight = min(
+                layout.historyDetailHeight, max(160, geometry.size.height - 165))
+              layout.historyDetailHeight = min(
+                max(160, visibleHeight - delta), max(160, geometry.size.height - 165))
+              model.editLayout(layout, persist: false)
+            }, onEnd: { model.persistLayout() }
+          )
+          .accessibilityElement(children: .ignore)
+          .accessibilityLabel(store.text("Resize history details", "调整历史详情高度"))
+          .accessibilityIdentifier("history-height-divider")
+          CommitDetailView(model: model, commit: selected).id(selected.hash)
+            .frame(
+              height: min(panels.layout.historyDetailHeight, max(160, geometry.size.height - 165)))
         }
-      }.frame(minHeight: 160)
-      if let selected {
-        CommitDetailView(model: model, commit: selected).id(selected.hash).frame(minHeight: 220)
-      } else {
-        EmptyState(
-          symbol: "clock", title: store.text("Select a commit", "选择一个提交"),
-          detail: store.text(
-            "Inspect parents, changed files and patches. Context menus provide history operations.",
-            "查看父提交、变更文件和 Diff；右键菜单提供历史操作。")
-        ).frame(minHeight: 220)
       }
     }
     .task { await model.ensureHistory() }.onReceive(
@@ -88,7 +112,7 @@ struct HistoryView: View {
     .onReceive(NotificationCenter.default.publisher(for: .gitpierFileHistory)) { notification in
       if let path = notification.object as? String {
         model.historyPath = path
-        selected = nil
+        model.selectedHistoryCommit = nil
         Task { await model.loadHistory(reset: true, path: path) }
       }
     }
@@ -183,7 +207,15 @@ struct GraphRowView: View {
 
 struct CommitDetailView: View {
   @ObservedObject var model: RepositoryModel
+  @ObservedObject var panels: WorkspacePanels
   let commit: CommitRecord
+  init(model: RepositoryModel, commit: CommitRecord) {
+    self.model = model
+    self.commit = commit
+    panels = model.panels
+    _parent = State(initialValue: commit.parents.first ?? "")
+    _customParent = State(initialValue: commit.parents.first ?? "")
+  }
   @EnvironmentObject var store: AppStore
   @Environment(\.colorScheme) var scheme
   @State private var files: [FileChange] = []
@@ -192,106 +224,152 @@ struct CommitDetailView: View {
   @State private var parent = ""
   @State private var customParent = ""
   @State private var loading = false
-  @State private var generation = 0
+  @State private var filesLoading = false
+  @State private var problem: String?
   var body: some View {
-    HSplitView {
-      VStack(alignment: .leading, spacing: 10) {
-        Text(commit.subject).font(uiFont(size: 13, weight: .semibold)).textSelection(.enabled)
-        Text(commit.author + " <" + commit.email + ">").font(uiFont(size: 11)).foregroundStyle(
-          .secondary
-        ).textSelection(.enabled)
-        Text(commit.date.formatted()).font(uiFont(size: 10)).foregroundStyle(.secondary)
-        if !commit.body.isEmpty {
-          ScrollView {
-            Text(commit.body).font(uiFont(size: 11)).textSelection(.enabled).frame(
-              maxWidth: .infinity, alignment: .leading)
-          }.frame(maxHeight: 85)
-        }
-        HStack {
-          Text(localizedUI("Compare")).font(uiFont(size: 10))
-          TextField(localizedUI("Parent or commit"), text: $customParent).textFieldStyle(
-            .roundedBorder
-          ).font(
-            .system(size: 10))
-          Button(localizedUI("↵")) {
-            parent = customParent
-            Task { await loadFiles() }
-          }.controlSize(.mini)
-        }
-        if commit.parents.count > 1 {
-          Picker(localizedUI("Parent"), selection: $parent) {
-            ForEach(commit.parents, id: \.self) { Text(String($0.prefix(8))).tag($0) }
-          }.onChange(of: parent) { Task { await loadFiles() } }
-        }
-        Divider()
-        List(files, selection: $selected) { file in
-          HStack {
-            Image(systemName: "doc.text").foregroundStyle(.secondary)
-            Text(file.path).font(uiFont(size: 11)).lineLimit(1)
-            Spacer()
-            Badge(
-              text: String(file.index),
-              color: file.kind == .added ? .mint : file.kind == .deleted ? .red : .accentColor)
-          }.tag(file.path)
-        }.listStyle(.plain)
-      }.padding(12).frame(minWidth: 240, idealWidth: 280, maxWidth: 350)
-      VStack(spacing: 0) {
-        HStack {
-          Text(
-            parent.isEmpty
-              ? "Empty tree → " + String(commit.hash.prefix(8))
-              : String(parent.prefix(8)) + " → " + String(commit.hash.prefix(8)))
-          Spacer()
-          if let selected {
-            Button(localizedUI("Copy Patch")) { copyText(diff.raw) }
-            Text(selected).lineLimit(1)
+    GeometryReader { geometry in
+      HStack(spacing: 0) {
+        VStack(alignment: .leading, spacing: 10) {
+          Text(commit.subject).font(uiFont(size: 13, weight: .semibold)).textSelection(.enabled)
+          Text(commit.author + " <" + commit.email + ">").font(uiFont(size: 11)).foregroundStyle(
+            .secondary
+          ).textSelection(.enabled)
+          Text(commit.date.formatted()).font(uiFont(size: 10)).foregroundStyle(.secondary)
+          if !commit.body.isEmpty {
+            ScrollView {
+              Text(commit.body).font(uiFont(size: 11)).textSelection(.enabled).frame(
+                maxWidth: .infinity, alignment: .leading)
+            }.frame(maxHeight: 85)
           }
-        }.font(uiFont(size: 10)).padding(10).background(Theme.panel(scheme))
-        Divider()
-        if loading {
-          ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
-        } else if selected == nil {
-          EmptyState(
-            symbol: "doc.text", title: store.text("Select a changed file", "选择变更文件"), detail: "")
-        } else if diff.binary {
-          EmptyState(
-            symbol: "doc.richtext", title: store.text("Binary changes", "二进制变更"), detail: diff.raw)
-        } else {
-          DiffTable(
-            document: diff, path: selected ?? "",
-            key: model.record.id.uuidString + commit.hash + (selected ?? "") + parent,
-            settings: store.settings, dark: scheme == .dark, selectedHunk: 0)
-        }
-      }.frame(minWidth: 300)
-    }.task {
-      parent = commit.parents.first ?? ""
-      customParent = parent
-      await loadFiles()
-    }.onChange(of: selected) { Task { await loadPatch() } }
+          HStack {
+            Text(localizedUI("Compare")).font(uiFont(size: 10))
+            TextField(localizedUI("Parent or commit"), text: $customParent).textFieldStyle(
+              .roundedBorder
+            ).font(
+              .system(size: 10))
+            Button(localizedUI("↵")) { parent = customParent }.controlSize(.mini)
+          }
+          if commit.parents.count > 1 {
+            Picker(localizedUI("Parent"), selection: $parent) {
+              ForEach(commit.parents, id: \.self) { Text(String($0.prefix(8))).tag($0) }
+            }
+          }
+          Divider()
+          List(files, selection: $selected) { file in
+            HStack {
+              Image(systemName: "doc.text").foregroundStyle(.secondary)
+              Text(file.path).font(uiFont(size: 11)).lineLimit(1)
+              Spacer()
+              Badge(
+                text: String(file.index),
+                color: file.kind == .added ? .mint : file.kind == .deleted ? .red : .accentColor)
+            }.tag(file.path)
+          }.listStyle(.plain)
+        }.padding(12).frame(
+          width: min(max(220, panels.layout.historyFilesWidth), geometry.size.width * 0.45))
+        ResizeHandle(
+          vertical: true,
+          onDrag: { delta in
+            var layout = panels.layout
+            let visibleWidth = min(max(220, layout.historyFilesWidth), geometry.size.width * 0.45)
+            layout.historyFilesWidth = min(
+              max(220, visibleWidth + delta), geometry.size.width * 0.45)
+            model.editLayout(layout, persist: false)
+          }, onEnd: { model.persistLayout() })
+        VStack(spacing: 0) {
+          HStack {
+            Text(
+              parent.isEmpty
+                ? "Empty tree → " + String(commit.hash.prefix(8))
+                : String(parent.prefix(8)) + " → " + String(commit.hash.prefix(8)))
+            Spacer()
+            if let selected {
+              Button(localizedUI("Copy Patch")) { copyText(diff.raw) }.disabled(loading)
+              Text(selected).lineLimit(1)
+            }
+            IconButton("xmark", help: store.text("Close commit details (Esc)", "关闭提交详情（Esc）")) {
+              model.selectedHistoryCommit = nil
+            }
+          }.font(uiFont(size: 10)).padding(10).background(Theme.panel(scheme))
+          Divider()
+          if let problem {
+            EmptyState(
+              symbol: "exclamationmark.triangle",
+              title: store.text("Unable to load Diff", "无法加载 Diff"), detail: problem)
+          } else if loading || filesLoading {
+            ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
+          } else if selected == nil {
+            EmptyState(
+              symbol: "doc.text", title: store.text("Select a changed file", "选择变更文件"), detail: "")
+          } else if diff.binary {
+            EmptyState(
+              symbol: "doc.richtext", title: store.text("Binary changes", "二进制变更"), detail: diff.raw
+            )
+          } else if diff.pairs.count > 20000 || diff.raw.utf8.count > 2 * 1024 * 1024 {
+            EmptyState(
+              symbol: "doc.text", title: store.text("Large Diff", "大型 Diff"),
+              detail: store.text(
+                "This diff exceeds the display limit. Select another file to keep the workspace responsive.",
+                "此 Diff 超过显示上限，请选择其他文件。"))
+          } else if diff.hunks.isEmpty {
+            EmptyState(
+              symbol: "checkmark", title: store.text("No text changes", "没有文本变更"), detail: diff.raw)
+          } else {
+            DiffTable(
+              document: diff, path: selected ?? "",
+              key: model.record.id.uuidString + commit.hash + (selected ?? "") + parent,
+              settings: store.settings, dark: scheme == .dark, selectedHunk: 0,
+              indexSide: 0, afterOnly: !diff.hasOldContent,
+              beforeTitle: parent.isEmpty
+                ? store.text("Empty tree", "空树") : String(parent.prefix(8)),
+              afterTitle: String(commit.hash.prefix(8))
+            )
+            .equatable()
+          }
+        }.frame(maxWidth: .infinity, maxHeight: .infinity)
+      }
+    }.task(id: parent) { await loadFiles() }
+      .task(id: parent + "\0" + (selected ?? "")) { await loadPatch() }
   }
   func loadFiles() async {
+    files = []
+    selected = nil
+    diff = .empty
+    problem = nil
+    filesLoading = true
+    let requestedParent = parent
     do {
-      files = try await model.git().commitFiles(commit.hash, parent: parent.isEmpty ? nil : parent)
+      let result = try await model.git().commitFiles(
+        commit.hash, parent: requestedParent.isEmpty ? nil : requestedParent)
+      try Task.checkCancellation()
+      guard requestedParent == parent else { return }
+      files = result
       selected = files.first?.path
-      await loadPatch()
-    } catch { model.error = error.localizedDescription }
+      filesLoading = false
+    } catch {
+      guard !Task.isCancelled, requestedParent == parent else { return }
+      filesLoading = false
+      problem = error.localizedDescription
+    }
   }
   func loadPatch() async {
-    generation += 1
-    let request = generation
     diff = .empty
+    loading = false
     guard let selected else { return }
+    let requestedParent = parent
+    problem = nil
     loading = true
     do {
       let bytes = try await model.git().commitPatch(
-        commit.hash, path: selected, parent: parent.isEmpty ? nil : parent)
-      guard request == generation else { return }
+        commit.hash, path: selected, parent: requestedParent.isEmpty ? nil : requestedParent)
+      try Task.checkCancellation()
+      guard self.selected == selected, parent == requestedParent else { return }
       diff = DiffParser.parse(bytes)
       loading = false
     } catch {
-      if request == generation {
+      if !Task.isCancelled && self.selected == selected && parent == requestedParent {
         loading = false
-        model.error = error.localizedDescription
+        problem = error.localizedDescription
       }
     }
   }

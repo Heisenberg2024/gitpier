@@ -1,3 +1,4 @@
+import AppKit
 import GitPierCore
 import SwiftUI
 
@@ -148,11 +149,24 @@ struct RootView: View {
         RoundedRectangle(cornerRadius: 5)
       ).padding(10)
       ScrollView {
-        VStack(alignment: .leading, spacing: 3) {
+        VStack(alignment: .leading, spacing: 2) {
           HStack {
             Text(store.text("ORGANIZATIONS", "组织 / 项目合集")).font(.system(size: 9, weight: .semibold))
               .foregroundStyle(.secondary)
             Spacer()
+            IconButton(
+              allOrganizationsCollapsed
+                ? "rectangle.expand.vertical" : "rectangle.compress.vertical",
+              help: allOrganizationsCollapsed
+                ? store.text("Expand All Organizations", "展开全部组织")
+                : store.text("Collapse All Organizations", "收起全部组织")
+            ) {
+              if allOrganizationsCollapsed {
+                collapsedGroups.removeAll()
+              } else {
+                collapsedGroups = Set(groupNames)
+              }
+            }
             IconButton("folder.badge.plus", help: store.text("New Organization", "创建组织")) {
               organizationName = ""
               creatingOrganization = true
@@ -161,89 +175,75 @@ struct RootView: View {
             { store.showOrganizations = true }
           }.padding(.horizontal, 12).padding(.top, 6)
           ForEach(groupNames, id: \.self) { group in
-            HStack(spacing: 3) {
-              IconButton(
-                collapsedGroups.contains(group) ? "chevron.right" : "chevron.down",
-                help: store.text("Expand / Collapse", "展开 / 收起")
-              ) {
-                if collapsedGroups.contains(group) {
-                  collapsedGroups.remove(group)
-                } else {
-                  collapsedGroups.insert(group)
+            VStack(alignment: .leading, spacing: 4) {
+              HStack(spacing: 3) {
+                IconButton(
+                  collapsedGroups.contains(group) ? "chevron.right" : "chevron.down",
+                  help: store.text("Expand / Collapse", "展开 / 收起")
+                ) {
+                  if collapsedGroups.contains(group) {
+                    collapsedGroups.remove(group)
+                  } else {
+                    collapsedGroups.insert(group)
+                  }
                 }
-              }
-              Button {
-                store.dashboardOrganization = group
-                store.showDashboard = true
-              } label: {
-                HStack {
-                  Image(systemName: group.isEmpty ? "tray" : "folder")
-                  Text(group.isEmpty ? store.text("Ungrouped", "未分组") : group).lineLimit(1)
-                  Spacer()
-                  Text("\(store.repositories.filter { $0.group == group }.count)").foregroundStyle(
-                    .secondary)
-                }
-                .font(.system(size: 11, weight: .medium)).frame(
-                  maxWidth: .infinity, alignment: .leading
-                ).padding(.vertical, 6).contentShape(Rectangle())
-              }.buttonStyle(.workspace)
-            }.padding(.horizontal, 9).padding(.top, 7)
-              .contextMenu {
-                Button(store.text("Manage Organization…", "管理组织…")) {
-                  store.showOrganizations = true
-                }
-                Button(store.text("Open Repository…", "打开仓库…")) { store.openRepository(in: group) }
-              }
-            if !collapsedGroups.contains(group) {
-              ForEach(
-                store.repositories.filter {
-                  $0.group == group
-                    && (repositorySearch.isEmpty
-                      || $0.name.localizedCaseInsensitiveContains(repositorySearch)
-                      || $0.path.localizedCaseInsensitiveContains(repositorySearch))
-                }
-              ) { record in
-                sidebarButton(
-                  record.name, icon: record.favorite ? "star.fill" : "shippingbox",
-                  active: !store.showDashboard && store.selectedID == record.id
-                ) { store.select(record.id) }
-                .repositoryReordering(record)
+                Button {
+                  store.dashboardOrganization = group
+                  store.showDashboard = true
+                } label: {
+                  HStack {
+                    Image(systemName: group.isEmpty ? "tray.fill" : "folder.fill")
+                      .foregroundStyle(Color.accentColor).frame(width: 16)
+                    Text(group.isEmpty ? store.text("Ungrouped", "未分组") : group).lineLimit(1)
+                    Spacer()
+                    Text("\(store.repositories.filter { $0.group == group }.count)")
+                      .font(.system(size: 10, weight: .medium)).monospacedDigit()
+                      .foregroundStyle(.secondary).padding(.horizontal, 6).padding(.vertical, 2)
+                      .background(Color.primary.opacity(0.06), in: Capsule())
+                  }
+                  .font(.system(size: 12, weight: .semibold)).frame(
+                    maxWidth: .infinity, alignment: .leading
+                  ).padding(.vertical, 6).contentShape(Rectangle())
+                }.buttonStyle(.workspace)
+              }.padding(.horizontal, 6).padding(.vertical, 3)
+                .background(
+                  store.showDashboard && store.dashboardOrganization == group
+                    ? Color.accentColor.opacity(0.13) : Color.primary.opacity(0.045),
+                  in: RoundedRectangle(cornerRadius: 7)
+                )
                 .contextMenu {
-                  Button(
-                    record.favorite
-                      ? store.text("Unfavorite", "取消收藏") : store.text("Favorite", "收藏")
-                  ) {
-                    if let model = store.models[record.id] {
-                      model.record.favorite.toggle()
-                      store.update(model.record)
-                    }
+                  Button(store.text("Manage Organization…", "管理组织…")) {
+                    store.showOrganizations = true
                   }
-                  Button(store.text("Reveal in Finder", "在 Finder 中显示")) {
-                    store.models[record.id]?.reveal()
-                  }
-                  Button(store.text("Copy Path", "复制路径")) { copyText(record.path) }
-                  Button(store.text("Open in Editor", "在编辑器中打开")) {
-                    store.models[record.id]?.openEditor()
-                  }
-                  Menu(store.text("Move to Organization", "移动到组织")) {
-                    Button(store.text("Ungrouped", "未分组")) {
-                      try? store.moveRepositories([record.id], to: nil)
-                    }
-                    ForEach(store.organizations) { organization in
-                      Button(organization.name) {
-                        do { try store.moveRepositories([record.id], to: organization.id) } catch {
-                          store.error = error.localizedDescription
-                        }
-                      }
-                    }
-                  }
-                  Divider()
-                  Button(store.text("Remove from workspace…", "从工作空间移除…"), role: .destructive) {
-                    removing = record
+                  Button(store.text("Open Repository…", "打开仓库…")) {
+                    store.openRepository(in: group)
                   }
                 }
+              if !collapsedGroups.contains(group) {
+                VStack(alignment: .leading, spacing: 1) {
+                  ForEach(
+                    store.repositories.filter {
+                      $0.group == group
+                        && (repositorySearch.isEmpty
+                          || $0.name.localizedCaseInsensitiveContains(repositorySearch)
+                          || $0.path.localizedCaseInsensitiveContains(repositorySearch))
+                    }
+                  ) { record in
+                    sidebarButton(
+                      record.name, icon: record.favorite ? "star.fill" : "shippingbox",
+                      active: !store.showDashboard && store.selectedID == record.id
+                    ) { store.select(record.id) }
+                    .padding(.leading, 22)
+                    .repositoryReordering(record)
+                    .nativeContextMenu { repositoryMenu(record) }
+                  }
+                }.overlay(alignment: .leading) {
+                  Rectangle().fill(Color.primary.opacity(0.12)).frame(width: 1)
+                    .padding(.leading, 21).padding(.vertical, 4)
+                    .allowsHitTesting(false)
+                }
               }
-            }
+            }.padding(.horizontal, 8).padding(.top, 4)
           }
         }.frame(maxWidth: .infinity, alignment: .leading).padding(.bottom, 14)
       }
@@ -277,7 +277,45 @@ struct RootView: View {
       Button(store.text("Refresh Repositories", "刷新仓库")) { Task { await store.refreshDashboard() } }
     }
   }
+  func repositoryMenu(_ record: RepositoryRecord) -> NSMenu {
+    var items = [
+      NativeMenuItems.action(
+        record.favorite ? store.text("Unfavorite", "取消收藏") : store.text("Favorite", "收藏")
+      ) {
+        if let model = store.models[record.id] {
+          model.record.favorite.toggle()
+          store.update(model.record)
+        }
+      },
+      NativeMenuItems.action(store.text("Reveal in Finder", "在 Finder 中显示")) {
+        store.models[record.id]?.reveal()
+      },
+      NativeMenuItems.action(store.text("Copy Path", "复制路径")) { copyText(record.path) },
+    ]
+    if let model = store.models[record.id] {
+      items.append(NativeMenuItems.editor(model: model))
+    }
+    var groups = [
+      NativeMenuItems.action(store.text("Ungrouped", "未分组")) {
+        try? store.moveRepositories([record.id], to: nil)
+      }
+    ]
+    groups += store.organizations.map { organization in
+      NativeMenuItems.action(organization.name) {
+        do { try store.moveRepositories([record.id], to: organization.id) } catch {
+          store.error = error.localizedDescription
+        }
+      }
+    }
+    items.append(NativeMenuItems.submenu(store.text("Move to Organization", "移动到组织"), groups))
+    items.append(.separator())
+    items.append(
+      NativeMenuItems.action(store.text("Remove from workspace…", "从工作空间移除…")) { removing = record }
+    )
+    return NativeMenuItems.menu(items)
+  }
   var groupNames: [String] { [""] + store.organizations.map(\.name) }
+  var allOrganizationsCollapsed: Bool { Set(groupNames).isSubset(of: collapsedGroups) }
   func sidebarButton(_ title: String, icon: String, active: Bool, action: @escaping () -> Void)
     -> some View
   {
@@ -377,7 +415,7 @@ struct DashboardView: View {
           store.text("\(store.repositories.count) repositories", "\(store.repositories.count) 个仓库"))
         Spacer()
         OperationProgressView(progress: store.cloneActivity) { store.cloneTask?.cancel() }
-        Text(localizedUI("GitPier 1.0.1"))
+        Text("GitPier " + AppResources.version)
       }.font(uiFont(size: 11)).foregroundStyle(.secondary).padding(12).background(
         Theme.panel(scheme))
     }.task { for model in store.models.values where !model.available { await model.activate() } }

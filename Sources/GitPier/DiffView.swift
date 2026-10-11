@@ -81,7 +81,7 @@ struct DiffPanel: View {
           Toggle(store.text("Show Whitespace", "显示空白"), isOn: setting(\.showWhitespace))
           Toggle(store.text("Ignore Whitespace", "忽略空白差异"), isOn: setting(\.ignoreWhitespace))
           Divider()
-          Button(store.text("Open in Editor", "在编辑器中打开")) { model.openEditor(model.selectedPath) }
+          EditorLaunchMenu(model: model, path: model.selectedPath)
         } label: {
           Image(systemName: "gearshape")
         }.menuStyle(.borderlessButton).frame(width: 22)
@@ -115,7 +115,7 @@ struct DiffPanel: View {
               settings: store.settings, dark: scheme == .dark, selectedHunk: model.selectedHunk,
               indexSide: model.comparison == .staged ? 1 : 0,
               afterOnly: model.comparison == .unstaged && !model.diff.hunks.isEmpty
-                && !model.diff.hunks.contains { $0.lines.contains { $0.oldNumber != nil } },
+                && !model.diff.hasOldContent,
               beforeTitle: model.comparison == .staged ? "HEAD" : "Index",
               afterTitle: model.comparison == .staged ? "Index" : store.text("Working Tree", "工作区")
             )
@@ -229,7 +229,7 @@ struct BinaryDiffView: View {
           "Binary contents cannot be staged by hunk. Use the file checkbox to stage the exact file.",
           "二进制文件不能按差异块暂存，请使用文件复选框。")
       ).font(.callout).foregroundStyle(.secondary)
-      Button(store.text("Open in Editor", "在编辑器中打开")) { model.openEditor(model.selectedPath) }
+      EditorLaunchMenu(model: model, path: model.selectedPath)
     }.padding(24).frame(maxWidth: .infinity, maxHeight: .infinity)
       .task(id: (model.selectedPath ?? "") + model.comparison.rawValue) {
         before = nil

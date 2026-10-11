@@ -38,6 +38,9 @@ public struct DiffDocument: Sendable {
   public let complexMetadata: Bool
   public var additions: Int { hunks.reduce(0) { $0 + $1.additions } }
   public var deletions: Int { hunks.reduce(0) { $0 + $1.deletions } }
+  public var hasOldContent: Bool {
+    hunks.contains { $0.lines.contains { $0.oldNumber != nil } }
+  }
   public static let empty = DiffParser.parse(Data())
 }
 

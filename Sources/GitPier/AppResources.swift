@@ -1,6 +1,9 @@
 import AppKit
 
 enum AppResources {
+  static let version =
+    Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "1.0.2"
+  static let build = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "13"
   static let bundle: Bundle = {
     if let resources = Bundle.main.resourceURL,
       let packaged = Bundle(url: resources.appendingPathComponent("GitPier_GitPier.bundle"))

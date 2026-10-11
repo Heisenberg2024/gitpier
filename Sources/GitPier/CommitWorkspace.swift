@@ -110,12 +110,12 @@ struct RepositoryWorkspace: View {
     .task { await model.activate() }
     .background {
       if PerformanceAcceptance.enabled {
-        PerformancePageProbe(page: model.record.page, repositoryID: model.record.id)
+        PerformancePageProbe(page: model.page, repositoryID: model.record.id)
       }
     }
   }
   @ViewBuilder func pageContent(height: Double) -> some View {
-    switch model.record.page {
+    switch model.page {
     case "history": HistoryView(model: model)
     case "branches": BranchesView(model: model)
     case "remotes": RemotesView(model: model)
@@ -165,8 +165,8 @@ struct RepositoryWorkspace: View {
           model.setPage(page.0)
         } label: {
           Text(store.text(page.1, page.2)).font(
-            .system(size: 12, weight: model.record.page == page.0 ? .semibold : .regular)
-          ).foregroundStyle(model.record.page == page.0 ? Color.accentColor : Color.secondary)
+            .system(size: 12, weight: model.page == page.0 ? .semibold : .regular)
+          ).foregroundStyle(model.page == page.0 ? Color.accentColor : Color.secondary)
         }.buttonStyle(.workspace)
       }
       Menu {
@@ -490,10 +490,8 @@ struct ChangesPanel: View {
     )
     .background(
       model.selectedPaths.contains(file.path) ? Color.accentColor.opacity(0.18) : Color.clear
-    ).background {
-      ImmediateFileContext { model.select(file) }
-    }.contentShape(Rectangle())
-    .contextMenu { fileMenu(file) }.help(
+    ).contentShape(Rectangle())
+    .nativeContextMenu { fileMenu(file) }.help(
       file.originalPath.map { "\($0) → \(file.path)" } ?? file.path)
   }
   func moveFileSelection(_ delta: Int, modifiers: NSEvent.ModifierFlags) -> String? {
@@ -506,32 +504,52 @@ struct ChangesPanel: View {
     NotificationCenter.default.post(name: .gitpierRevealSelected, object: model.record.id)
     return files[next].path
   }
-  @ViewBuilder func fileMenu(_ file: FileChange) -> some View {
-    Button(store.text("View Diff", "查看 Diff")) { model.select(file, permanent: true) }
-    Button(store.text("Stage", "暂存")) { model.stageGroup(selected(file), unstage: false) }
-    Button(store.text("Unstage", "取消暂存")) { model.stageGroup(selected(file), unstage: true) }
-      .disabled(!selected(file).contains(where: \.isStaged))
-    Button(store.text("Discard Changes…", "丢弃修改…"), role: .destructive) { model.discard(file) }
-      .disabled(!file.isUnstaged)
-    Divider()
-    Button(store.text("Open in Editor", "在编辑器中打开")) { model.openEditor(file.path) }
-    Button(store.text("Reveal in Finder", "在 Finder 中显示")) { model.reveal(file.path) }
-    Button(store.text("Copy Path", "复制路径")) { copyText(file.path) }
-    Button(store.text("File History", "文件历史")) {
-      model.setPage("history")
-      model.historyPath = file.path
-      Task { await model.loadHistory(reset: true, path: file.path) }
-    }
-    Button(store.text("Add to .gitignore", "添加至 .gitignore")) {
-      model.run { git in try await git.ignore(file.path) }
-    }.disabled(!file.isUntracked)
+  func fileMenu(_ file: FileChange) -> NSMenu {
+    model.select(file)
+    var items = [
+      NativeMenuItems.action(store.text("View Diff", "查看 Diff")) {
+        model.select(file, permanent: true)
+      },
+      NativeMenuItems.action(store.text("Stage", "暂存")) {
+        model.stageGroup(selected(file), unstage: false)
+      },
+      NativeMenuItems.action(
+        store.text("Unstage", "取消暂存"), enabled: selected(file).contains(where: \.isStaged)
+      ) {
+        model.stageGroup(selected(file), unstage: true)
+      },
+      NativeMenuItems.action(store.text("Discard Changes…", "丢弃修改…"), enabled: file.isUnstaged) {
+        model.discard(file)
+      },
+      .separator(),
+      NativeMenuItems.editor(model: model, path: file.path),
+      NativeMenuItems.action(store.text("Reveal in Finder", "在 Finder 中显示")) {
+        model.reveal(file.path)
+      },
+      NativeMenuItems.action(store.text("Copy Path", "复制路径")) { copyText(file.path) },
+      NativeMenuItems.action(store.text("File History", "文件历史")) {
+        model.setPage("history")
+        model.historyPath = file.path
+        Task { await model.loadHistory(reset: true, path: file.path) }
+      },
+      NativeMenuItems.action(
+        store.text("Add to .gitignore", "添加至 .gitignore"), enabled: file.isUntracked
+      ) {
+        model.run { git in try await git.ignore(file.path) }
+      },
+    ]
     if file.isUntracked {
-      Button(store.text("Ignore Locally (.git/info/exclude)", "添加到本地忽略 (.git/info/exclude)")) {
-        model.run(label: store.text("Ignoring locally", "添加本地忽略")) { git in
-          try await git.excludeLocally(file.path)
-        }
-      }.disabled(model.busy || !model.available)
+      items.append(
+        NativeMenuItems.action(
+          store.text("Ignore Locally (.git/info/exclude)", "添加到本地忽略 (.git/info/exclude)"),
+          enabled: !model.busy && model.available
+        ) {
+          model.run(label: store.text("Ignoring locally", "添加本地忽略")) { git in
+            try await git.excludeLocally(file.path)
+          }
+        })
     }
+    return NativeMenuItems.menu(items)
   }
   var messagePanel: some View {
     VStack(spacing: 0) {
