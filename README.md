@@ -14,14 +14,14 @@ GitPier brings repository management, change review, commits, and an integrated 
 
 ## Features
 
-- **Multi-repository management.** Switch between repositories and worktrees, organize projects into collections, and see branch and change counts in the workspace dashboard.
+- **Multi-repository management.** Switch between repositories and worktrees, organize projects into collections, and drag repositories to save their order in the sidebar and organization pages. Opening a repository from an organization adds it to that organization.
 - **Focused commits.** Choose changes with independent file checkboxes, review the selected content, and commit or commit and push. Preserve existing partial staging and changes staged by other tools.
-- **Side-by-side Diff.** Compare changes with line numbers, syntax colors, and synchronized vertical scrolling. Stage, unstage, or discard supported hunks, and keep files open in Diff tabs.
+- **Side-by-side Diff.** Compare changes with line numbers, syntax colors, synchronized vertical scrolling, and subtle scrollbars. An empty Index side gives the working tree the full width. Stage, unstage, or discard supported hunks, and keep files open in Diff tabs.
 - **Integrated terminal.** Run your installed shell in a real PTY, with multiple tabs, splits, and search. Each repository keeps its own sessions and working directory.
 - **History and branches.** Browse the commit graph and manage branches, remotes, stashes, and tags. Fetch, pull, push, merge, and rebase using Git.
 - **Managed credentials.** Store HTTPS tokens in macOS Keychain and select SSH identity profiles. Existing Git helpers, SSH configuration, hooks, and commit signing remain available.
 
-English and Simplified Chinese interfaces, light and dark themes, and system appearance are included. Refresh explicitly with **⌘R**; optional file watching indicates external changes.
+English and Simplified Chinese interfaces, light and dark themes, and system appearance are included. Repository clicks and returning to the foreground refresh current data; **⌘R** remains available. Optional file watching indicates external changes. Completion notices show the final operation result after transfer progress finishes.
 
 ## Screenshots
 

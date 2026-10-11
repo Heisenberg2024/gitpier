@@ -113,6 +113,9 @@ struct DiffPanel: View {
               document: model.diff, path: path,
               key: model.record.id.uuidString + path + model.comparison.rawValue,
               settings: store.settings, dark: scheme == .dark, selectedHunk: model.selectedHunk,
+              indexSide: model.comparison == .staged ? 1 : 0,
+              afterOnly: model.comparison == .unstaged && !model.diff.hunks.isEmpty
+                && !model.diff.hunks.contains { $0.lines.contains { $0.oldNumber != nil } },
               beforeTitle: model.comparison == .staged ? "HEAD" : "Index",
               afterTitle: model.comparison == .staged ? "Index" : store.text("Working Tree", "工作区")
             )
@@ -272,13 +275,16 @@ struct DiffTable: NSViewRepresentable, Equatable {
   let settings: AppSettings
   let dark: Bool
   let selectedHunk: Int
+  var indexSide: Int? = nil
+  var afterOnly = false
   var beforeTitle = "Before"
   var afterTitle = "After"
   nonisolated static func == (lhs: DiffTable, rhs: DiffTable) -> Bool {
     lhs.document.revision == rhs.document.revision && lhs.path == rhs.path && lhs.key == rhs.key
       && lhs.styleIdentity == rhs.styleIdentity && lhs.dark == rhs.dark
       && lhs.selectedHunk == rhs.selectedHunk && lhs.beforeTitle == rhs.beforeTitle
-      && lhs.afterTitle == rhs.afterTitle
+      && lhs.afterTitle == rhs.afterTitle && lhs.afterOnly == rhs.afterOnly
+      && lhs.indexSide == rhs.indexSide
   }
   func makeCoordinator() -> Coordinator { Coordinator() }
   func makeNSView(context: Context) -> DiffSplitContainer {
@@ -308,7 +314,7 @@ struct DiffTable: NSViewRepresentable, Equatable {
     let c = context.coordinator
     let changed =
       c.document.revision != document.revision || c.key != key || c.dark != dark
-      || c.style != styleIdentity
+      || c.style != styleIdentity || host.afterOnly != afterOnly
     let previousKey = c.key
     c.document = document
     c.path = path
@@ -317,6 +323,7 @@ struct DiffTable: NSViewRepresentable, Equatable {
     c.settings = settings
     c.style = styleIdentity
     host.unified = settings.unifiedDiff
+    host.afterOnly = afterOnly
     if changed {
       c.rows =
         settings.unifiedDiff
@@ -343,6 +350,7 @@ struct DiffTable: NSViewRepresentable, Equatable {
       c.lastWidths = [-1, -1]
     }
     for (side, table) in host.tables.enumerated() {
+      host.scrolls[side].verticalThumbOnLeft = !settings.unifiedDiff && side == indexSide
       table.backgroundColor = NSColor(hex: dark ? 0x191B1F : 0xFAFBFC)
       table.tableColumns[0].title =
         settings.unifiedDiff ? localizedUI("Changes") : side == 0 ? beforeTitle : afterTitle
@@ -399,6 +407,7 @@ struct DiffTable: NSViewRepresentable, Equatable {
       var wrappedWidthChanged = false
       for side in 0...1 {
         let scroll = host.scrolls[side]
+        guard !scroll.isHidden else { continue }
         let table = host.tables[side]
         let available = max(80, scroll.contentSize.width)
         guard abs(lastWidths[side] - available) > 0.5 else { continue }
@@ -436,7 +445,7 @@ struct DiffTable: NSViewRepresentable, Equatable {
       let source = host.scrolls[side]
       let other = host.scrolls[1 - side]
       ScrollMemory.positions[key + "-side\(side)"] = source.contentView.bounds.origin
-      guard !settings.unifiedDiff,
+      guard !settings.unifiedDiff, !host.afterOnly,
         abs(source.contentView.bounds.origin.y - other.contentView.bounds.origin.y) > 0.5
       else { return }
       synchronizing = true
@@ -450,7 +459,9 @@ struct DiffTable: NSViewRepresentable, Equatable {
     func tableView(_ tableView: NSTableView, heightOfRow row: Int) -> CGFloat {
       let minimum = ceil(settings.diffFontSize * 1.65)
       guard settings.wrapDiff, row < rowCount, let host else { return minimum }
-      let width = max(40, host.scrolls[0].contentSize.width - (settings.showLineNumbers ? 64 : 20))
+      let side = host.afterOnly && !settings.unifiedDiff ? 1 : 0
+      let width = max(
+        40, host.scrolls[side].contentSize.width - (settings.showLineNumbers ? 64 : 20))
       let strings =
         settings.unifiedDiff
         ? [rows[row].text]
@@ -517,9 +528,10 @@ struct DiffTable: NSViewRepresentable, Equatable {
 
 @MainActor final class DiffSplitContainer: NSView {
   var renderedPath = ""
-  let scrolls = [NSScrollView(), NSScrollView()]
+  let scrolls = [DiffScrollView(), DiffScrollView()]
   let tables = [NSTableView(), NSTableView()]
   var unified = false { didSet { if oldValue != unified { needsLayout = true } } }
+  var afterOnly = false { didSet { if oldValue != afterOnly { needsLayout = true } } }
   var resized: (() -> Void)?
   private(set) var layoutSize = CGSize.zero
   var reloadCount = 0
@@ -529,9 +541,6 @@ struct DiffTable: NSViewRepresentable, Equatable {
     for side in 0...1 {
       let scroll = scrolls[side]
       let table = tables[side]
-      scroll.hasVerticalScroller = true
-      scroll.hasHorizontalScroller = true
-      scroll.autohidesScrollers = true
       table.headerView = NSTableHeaderView()
       table.intercellSpacing = .zero
       table.selectionHighlightStyle = .none
@@ -551,10 +560,16 @@ struct DiffTable: NSViewRepresentable, Equatable {
     super.layout()
     if unified {
       scrolls[0].frame = bounds
+      scrolls[0].isHidden = false
       scrolls[1].isHidden = true
+    } else if afterOnly {
+      scrolls[0].isHidden = true
+      scrolls[1].isHidden = false
+      scrolls[1].frame = bounds
     } else {
       let width = floor(bounds.width / 2)
       scrolls[0].frame = NSRect(x: 0, y: 0, width: width, height: bounds.height)
+      scrolls[0].isHidden = false
       scrolls[1].frame = NSRect(
         x: width + 1, y: 0, width: max(0, bounds.width - width - 1), height: bounds.height)
       scrolls[1].isHidden = false

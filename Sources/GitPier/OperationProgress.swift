@@ -2,7 +2,7 @@ import AppKit
 import GitPierCore
 import SwiftUI
 
-enum OperationResult: Equatable { case running, succeeded, failed, cancelled }
+enum OperationResult: Equatable { case running, succeeded, needsAttention, failed, cancelled }
 struct OperationTicket: Sendable, Equatable {
   let id: UUID
   let stage: Int
@@ -48,6 +48,7 @@ struct OperationState {
     guard id == expected.id else { return }
     state?.title = originalTitle
     state?.result = result
+    state?.transfer = nil
     canCancel = false
     let completed = id
     dismissal = Task { [weak self] in
@@ -77,7 +78,8 @@ struct OperationProgressView: View {
             .help(store.text("Cancel operation", "取消操作"))
         }
       }.font(.system(size: 10)).foregroundStyle(
-        state.result == .failed ? Color.red : Color.secondary
+        state.result == .failed
+          ? Color.red : state.result == .needsAttention ? Color.orange : Color.secondary
       )
       .accessibilityElement(children: .contain).accessibilityIdentifier(
         "gitpier.operation.progress")
@@ -86,6 +88,7 @@ struct OperationProgressView: View {
   func label(_ state: OperationState) -> String {
     switch state.result {
     case .succeeded: return state.title + store.text(" · Completed", " · 已完成")
+    case .needsAttention: return state.title + store.text(" · Needs attention", " · 需要处理")
     case .failed: return state.title + store.text(" · Failed", " · 失败")
     case .cancelled: return state.title + store.text(" · Cancelled", " · 已取消")
     case .running:

@@ -34,8 +34,16 @@ struct RepositoryWorkspace: View {
       }
       if let output = model.output {
         HStack(alignment: .center, spacing: 10) {
-          Image(systemName: "checkmark.circle").font(.system(size: 14)).foregroundStyle(.mint)
-            .frame(width: 20, height: 20)
+          Image(
+            systemName: model.outputResult == .needsAttention
+              ? "exclamationmark.triangle"
+              : model.outputResult == .cancelled ? "stop.circle" : "checkmark.circle"
+          )
+          .font(.system(size: 14)).foregroundStyle(
+            model.outputResult == .needsAttention
+              ? Color.orange : model.outputResult == .cancelled ? Color.secondary : Color.mint
+          )
+          .frame(width: 20, height: 20)
           Text(output.trimmingCharacters(in: .whitespacesAndNewlines)).font(uiFont(size: 11))
             .lineLimit(3).textSelection(.enabled)
             .fixedSize(horizontal: false, vertical: true)

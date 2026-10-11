@@ -3,6 +3,32 @@ import XCTest
 @testable import GitPierCore
 
 final class OrganizationTests: XCTestCase {
+  func testManualOrderMovesInBothDirectionsAndPersistsWithoutChangingRecords() throws {
+    var config = WorkspaceConfiguration()
+    var a = RepositoryRecord(path: "/project/a")
+    a.group = "Project"
+    a.draft = "keep draft"
+    a.credentialID = UUID()
+    a.favorite = true
+    var b = RepositoryRecord(path: "/project/b")
+    b.group = "Project"
+    var c = RepositoryRecord(path: "/project/c")
+    c.group = "Project"
+    let other = RepositoryRecord(path: "/other/repository")
+    config.repositories = [a, other, b, c]
+    XCTAssertTrue(config.reorderRepository(a.id, relativeTo: c.id))
+    XCTAssertEqual(config.repositories, [other, b, c, a])
+    XCTAssertTrue(config.reorderRepository(a.id, relativeTo: b.id))
+    XCTAssertEqual(config.repositories, [other, a, b, c])
+    XCTAssertFalse(config.reorderRepository(a.id, relativeTo: other.id))
+    XCTAssertFalse(config.reorderRepository(a.id, relativeTo: a.id))
+    XCTAssertFalse(config.reorderRepository(UUID(), relativeTo: a.id))
+    let restored = try JSONDecoder().decode(
+      WorkspaceConfiguration.self, from: JSONEncoder().encode(config))
+    XCTAssertEqual(restored.repositories, [other, a, b, c])
+    config.repositories[1].lastOpened = Date().addingTimeInterval(100)
+    XCTAssertEqual(config.repositories.map(\.id), [other.id, a.id, b.id, c.id])
+  }
   func testFirstReleaseConfigurationMigratesGroupsAndManualRefresh() throws {
     var old = WorkspaceConfiguration()
     var a = RepositoryRecord(path: "/project/client")

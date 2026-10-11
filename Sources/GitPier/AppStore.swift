@@ -24,6 +24,7 @@ import UserNotifications
   @Published private(set) var systemColorScheme: ColorScheme = .light
   private var pendingSave: Task<Void, Never>?
   nonisolated(unsafe) private var appearanceObserver: NSObjectProtocol?
+  nonisolated(unsafe) private var foregroundObserver: NSObjectProtocol?
   @Published var models: [UUID: RepositoryModel] = [:]
   let persistence: ConfigurationStore
   private var canSave = true
@@ -63,6 +64,11 @@ import UserNotifications
       queue: .main
     ) { [weak self] _ in
       MainActor.assumeIsolated { self?.updateSystemAppearance() }
+    }
+    foregroundObserver = NotificationCenter.default.addObserver(
+      forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main
+    ) { [weak self] _ in
+      Task { @MainActor [weak self] in await self?.refreshVisibleRepositories() }
     }
     selectedID = configuration.selectedRepository
     showDashboard = settings.launchPage == "dashboard" || selectedID == nil
@@ -194,33 +200,58 @@ import UserNotifications
     }
   }
   func refreshDashboard() async { for model in models.values { await model.refresh() } }
+  func refreshVisibleRepositories() async {
+    if showDashboard {
+      for record in repositories
+      where dashboardOrganization == nil || record.group == dashboardOrganization {
+        await models[record.id]?.activate(refresh: true)
+      }
+    } else {
+      await current?.activate(refresh: true)
+    }
+  }
+  @discardableResult func reorderRepository(_ id: UUID, relativeTo target: UUID) -> Bool {
+    guard configuration.reorderRepository(id, relativeTo: target) else { return false }
+    save()
+    return true
+  }
   func select(_ id: UUID) {
     selectedID = id
     showDashboard = false
     guard let model = models[id] else { return }
     model.record.lastOpened = Date()
     update(model.record)
-    Task { await model.activate() }
+    Task { await model.activate(refresh: true) }
   }
-  func openRepository() {
+  func openRepository(in group: String? = nil) {
     let panel = NSOpenPanel()
     panel.canChooseDirectories = true
     panel.canChooseFiles = false
     panel.allowsMultipleSelection = true
     panel.message = text("Choose a local Git repository or worktree", "选择本地 Git 仓库或工作树")
-    if panel.runModal() == .OK { for url in panel.urls { Task { await addRepository(url) } } }
+    if panel.runModal() == .OK {
+      let urls = panel.urls
+      Task { for url in urls { await addRepository(url, group: group) } }
+    }
   }
-  func addRepository(_ url: URL) async {
+  func addRepository(_ url: URL, group: String? = nil) async {
     do {
       let initial = await GitServiceRegistry.shared.service(for: url, gitPath: settings.gitPath)
       let root = try await initial.validate()
+      if let group, !group.isEmpty, !organizations.contains(where: { $0.name == group }) {
+        throw GitPierError.invalidInput(text("Organization no longer exists.", "组织已不存在。"))
+      }
       if let existing = repositories.first(where: {
         URL(fileURLWithPath: $0.path).resolvingSymlinksInPath() == root
       }) {
+        if let group {
+          try moveRepositories([existing.id], to: organizations.first { $0.name == group }?.id)
+        }
         select(existing.id)
         return
       }
-      let record = RepositoryRecord(path: root.path)
+      var record = RepositoryRecord(path: root.path)
+      record.group = group ?? ""
       configuration.repositories.append(record)
       let model = RepositoryModel(record: record, store: self)
       models[record.id] = model
@@ -241,6 +272,7 @@ import UserNotifications
   func clone(url: String, destination: URL, credential: UUID?) {
     guard !cloning else { return }
     cloning = true
+    notice = nil
     let progressTicket = cloneActivity.begin(text("Cloning", "克隆仓库"))
     let progress = cloneActivity.receiver()
     cloneTask = Task {
@@ -265,6 +297,8 @@ import UserNotifications
           update(current.record)
           await current.configure()
         }
+        notice = text("Clone completed.", "克隆已完成。")
+        notifyCompletion(notice!)
       } catch is CancellationError {
         result = .cancelled
         notice = text(
@@ -306,6 +340,12 @@ import UserNotifications
     cloneTask?.cancel()
     save()
   }
+  deinit {
+    if let foregroundObserver { NotificationCenter.default.removeObserver(foregroundObserver) }
+    if let appearanceObserver {
+      DistributedNotificationCenter.default().removeObserver(appearanceObserver)
+    }
+  }
 }
 
 struct DiffTab: Identifiable, Equatable {
@@ -345,6 +385,7 @@ struct DiffTab: Identifiable, Equatable {
   @Published var available = false
   @Published var error: String?
   @Published var output: String?
+  @Published var outputResult: OperationResult = .succeeded
   @Published var pushFailed = false
   @Published var needsUpstream = false
   @Published var lastCommit: String?
@@ -372,6 +413,7 @@ struct DiffTab: Identifiable, Equatable {
   private var watcher: RepositoryWatcher?
   private var refreshTask: Task<Void, Never>?
   private var activationTask: Task<Void, Never>?
+  private var activationRefreshRequested = false
   private(set) var refreshCount = 0
   @Published var hasExternalChanges = false
   @Published private(set) var stagedAdditions = 0
@@ -438,7 +480,8 @@ struct DiffTab: Identifiable, Equatable {
       terminal.configure(authentication: auth)
     } catch { self.error = error.localizedDescription }
   }
-  func activate() async {
+  func activate(refresh: Bool = false) async {
+    activationRefreshRequested = activationRefreshRequested || refresh
     if let activationTask {
       await activationTask.value
       return
@@ -446,8 +489,12 @@ struct DiffTab: Identifiable, Equatable {
     let task = Task { [weak self] in
       guard let self else { return }
       await self.configure()
-      if !self.available { await self.refresh() }
       await self.configureWatcher()
+      // Writes already refresh their final result. Never race an activation read with a write.
+      if (!self.available || self.activationRefreshRequested) && !self.busy {
+        await self.refresh()
+      }
+      self.activationRefreshRequested = false
     }
     activationTask = task
     await task.value
@@ -815,10 +862,15 @@ struct DiffTab: Identifiable, Equatable {
     }
     run { git in if unstage { try await git.unstage(files) } else { try await git.stage(files) } }
   }
-  func run(label: String? = nil, _ action: @escaping (GitService) async throws -> Void) {
+  func run(
+    label: String? = nil, completion: String? = nil, notify: Bool = false,
+    _ action: @escaping (GitService) async throws -> Void
+  ) {
     guard !busy else { return }
     busy = true
     error = nil
+    output = nil
+    outputResult = .succeeded
     let progressTicket = activity.begin(label ?? store.text("Git operation", "Git 操作"))
     activeTask = Task {
       defer {
@@ -831,17 +883,30 @@ struct DiffTab: Identifiable, Equatable {
       do {
         try Task.checkCancellation()
         try await action(await git())
-        if error != nil { result = .failed }
+        if error != nil {
+          result = .failed
+        } else if outputResult == .needsAttention {
+          result = .needsAttention
+        }
+        let details = GitOutputSummary.details(output ?? "")
+        let summary =
+          completion ?? (label ?? store.text("Git operation", "Git 操作"))
+          + store.text(" · Completed", " · 已完成")
+        output = [summary, details].filter { !$0.isEmpty }.joined(separator: "\n")
+        if result == .failed { outputResult = .needsAttention }
       } catch is CancellationError {
         result = .cancelled
+        outputResult = .cancelled
         output = store.text("Operation cancelled.", "操作已取消。")
       } catch {
         result = .failed
+        if output != nil { outputResult = .needsAttention }
         self.error = error.localizedDescription
       }
       activity.advance(store.text("Refreshing", "刷新仓库"), cancellable: false)
       await refresh()
       activity.finish(result, ticket: progressTicket)
+      if notify, let output { store.notifyCompletion(output) }
     }
   }
   func cancel() {
@@ -878,7 +943,10 @@ struct DiffTab: Identifiable, Equatable {
       if let cached = diffCache[key] { reviewedPatches[file.path] = cached.bytes }
     }
     let reviewed = reviewedPatches
-    run(label: store.text(push ? "Commit & Push" : "Committing", push ? "提交并推送" : "提交")) {
+    run(
+      label: store.text(push ? "Commit & Push" : "Committing", push ? "提交并推送" : "提交"),
+      completion: "", notify: true
+    ) {
       [weak self] git in
       guard let self else { return }
       committing = true
@@ -895,29 +963,50 @@ struct DiffTab: Identifiable, Equatable {
       self.amend = false
       requiresIndexReview = false
       committing = false
-      output = store.text("Local commit succeeded: ", "本地提交成功：") + String(result.hash.prefix(8))
-      store.notifyCompletion(store.text("Local commit completed.", "本地提交已完成。"))
-      if result.indexChangedDuringCommit {
-        output! += store.text(
-          "\nIndex changes made during the commit remain staged.", "\n提交过程中发生的暂存修改已保留。")
-      }
+      let localOutput =
+        store.text("Local commit succeeded: ", "本地提交成功：")
+        + String(result.hash.prefix(8))
+      let indexNote =
+        result.indexChangedDuringCommit
+        ? store.text("\nIndex changes made during the commit remain staged.", "\n提交过程中发生的暂存修改已保留。")
+        : ""
       pushFailed = false
       if push {
         let status = try await git.status()
         if status.upstream == nil {
           needsUpstream = true
-          output! += store.text("\nChoose a remote and branch to push.", "\n请选择 Remote 和分支推送。")
+          outputResult = .needsAttention
+          output =
+            localOutput + store.text("\nChoose a remote and branch to push.", "\n请选择 Remote 和分支推送。")
+            + indexNote
         } else {
           activity.advance(store.text("Pushing", "推送"), cancellable: true)
           let progress = activity.receiver()
-          do { output! += "\n" + (try await git.network("push", progress: progress)) } catch {
+          do {
+            let details = GitOutputSummary.details(
+              try await git.network("push", progress: progress))
+            output =
+              store.text("Commit & push completed: ", "提交并推送已完成：")
+              + String(result.hash.prefix(8)) + indexNote
+            if !details.isEmpty { output! += "\n" + details }
+          } catch is CancellationError {
+            outputResult = .needsAttention
+            output =
+              store.text("Local commit succeeded; push cancelled: ", "本地提交成功，推送已取消：")
+              + String(result.hash.prefix(8)) + indexNote
+          } catch {
             pushFailed = true
+            output =
+              store.text("Local commit succeeded; push failed: ", "本地提交成功，推送失败：")
+              + String(result.hash.prefix(8)) + indexNote
             self.error =
               store.text(
                 "Local commit succeeded. Push failed; retrying will only push.\n",
                 "本地提交成功，推送失败；重试只会推送。\n") + error.localizedDescription
           }
         }
+      } else {
+        output = localOutput + indexNote
       }
     }
   }
@@ -928,7 +1017,13 @@ struct DiffTab: Identifiable, Equatable {
       operation == "push"
       ? store.text("Pushing", "推送")
       : operation == "pull" ? store.text("Pulling", "拉取") : store.text("Fetching", "获取")
-    run(label: title) { [weak self] git in
+    let completed =
+      operation == "push"
+      ? store.text("Push completed.", "推送已完成。")
+      : operation == "pull"
+        ? store.text("Pull completed.", "拉取已完成。")
+        : store.text("Fetch completed.", "获取已完成。")
+    run(label: title, completion: completed, notify: true) { [weak self] git in
       guard let self else { return }
       let progress = activity.receiver()
       do {

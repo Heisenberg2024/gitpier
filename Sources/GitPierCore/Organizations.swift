@@ -10,6 +10,20 @@ public struct RepositoryOrganization: Codable, Equatable, Identifiable, Sendable
 }
 
 extension WorkspaceConfiguration {
+  /// Array order is the persistent manual order, independent of recent-use timestamps.
+  @discardableResult public mutating func reorderRepository(_ id: UUID, relativeTo target: UUID)
+    -> Bool
+  {
+    guard id != target,
+      let sourceIndex = repositories.firstIndex(where: { $0.id == id }),
+      let targetIndex = repositories.firstIndex(where: { $0.id == target }),
+      repositories[sourceIndex].group == repositories[targetIndex].group
+    else { return false }
+    let record = repositories.remove(at: sourceIndex)
+    repositories.insert(record, at: targetIndex)
+    return true
+  }
+
   /// Registers existing free-text groups without changing repository identity, paths or drafts.
   public mutating func reconcileOrganizations() {
     for repository in repositories where !repository.group.isEmpty {

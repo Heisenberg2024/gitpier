@@ -14,9 +14,7 @@ struct OrganizationsView: View {
   @State private var problem: String?
   var current: RepositoryOrganization? { store.organizations.first { $0.id == selectedID } }
   var members: [RepositoryRecord] {
-    store.repositories.filter { $0.group == (current?.name ?? "") }.sorted {
-      $0.name.localizedStandardCompare($1.name) == .orderedAscending
-    }
+    store.repositories.filter { $0.group == (current?.name ?? "") }
   }
   var body: some View {
     VStack(spacing: 0) {
@@ -59,6 +57,9 @@ struct OrganizationsView: View {
           HStack {
             Text(current?.name ?? store.text("Ungrouped", "未分组")).font(.headline)
             Spacer()
+            Button(store.text("Open Repository…", "打开仓库…")) {
+              store.openRepository(in: current?.name ?? "")
+            }
             Text(store.text("\(members.count) repositories", "\(members.count) 个仓库"))
               .foregroundStyle(.secondary)
           }
@@ -73,7 +74,7 @@ struct OrganizationsView: View {
               Text(record.path).font(.system(size: 10, design: .monospaced)).foregroundStyle(
                 .secondary
               ).lineLimit(1)
-            }.padding(.vertical, 4).tag(record.id)
+            }.padding(.vertical, 4).tag(record.id).repositoryReordering(record)
           }.listStyle(.inset)
           HStack {
             Picker(store.text("Move to", "移动到"), selection: $destinationID) {

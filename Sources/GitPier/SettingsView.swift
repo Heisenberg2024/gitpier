@@ -49,13 +49,13 @@ struct SettingsView: View {
           ).font(.caption).foregroundStyle(.secondary)
         }
         Section(store.text("About", "关于")) {
-          Text(localizedUI("GitPier 1.0.0")).font(.headline)
+          Text(localizedUI("GitPier 1.0.1")).font(.headline)
           Text(localizedUI("Native Git Client for macOS"))
           Text(localizedUI("All Your Repositories. One Workspace.")).foregroundStyle(.secondary)
           Text(
             store.text(
-              "Licensed under the MIT License. Copyright (c) 2026 Heisenberg2024. Local development build; no Developer ID signature or notarization.",
-              "采用 MIT License。版权所有 © 2026 Heisenberg2024。当前为本地开发构建，未进行 Developer ID 签名与公证。")
+              "Licensed under the MIT License. Copyright (c) 2026 Heisenberg2024.",
+              "采用 MIT License。版权所有 © 2026 Heisenberg2024。")
           ).font(.caption).foregroundStyle(.secondary)
         }
       }.formStyle(.grouped).tabItem { Label(store.text("General", "常规"), systemImage: "gearshape") }

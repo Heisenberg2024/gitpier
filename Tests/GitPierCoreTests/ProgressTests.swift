@@ -17,6 +17,19 @@ private final class ProgressCapture: @unchecked Sendable {
   }
 }
 final class ProgressTests: XCTestCase {
+  func testCompletionSummaryRemovesTransientCountersAndKeepsFinalResults() {
+    let output =
+      "Enumerating objects: 22, done.\nCounting objects: 4% (1/22)\r"
+      + "Counting objects: 100% (22/22), done.\rWriting objects: 100% (22/22), done.\n"
+      + "remote: Total 22 (delta 0), reused 0 (delta 0)\nTo /temporary/remote.git\n"
+      + "   old..new  main -> main\nwarning: useful diagnostic\n"
+    XCTAssertEqual(
+      GitOutputSummary.details(output),
+      "To /temporary/remote.git\nold..new  main -> main\nwarning: useful diagnostic")
+    XCTAssertEqual(GitOutputSummary.details(""), "")
+    XCTAssertEqual(GitOutputSummary.details("Already up to date.\n"), "Already up to date.")
+    XCTAssertEqual(GitOutputSummary.details("remote: Counting objects: 2, done.\n"), "")
+  }
   func testChunkedCountersAndUnknownOutput() {
     let capture = ProgressCapture()
     let decoder = GitProgressDecoder { capture.add($0) }

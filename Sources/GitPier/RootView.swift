@@ -11,18 +11,28 @@ struct RootView: View {
   @State private var organizationName = ""
   @State private var collapsedGroups: Set<String> = []
   var body: some View {
-    HStack(spacing: 0) {
-      if sidebarVisible {
-        sidebar.frame(width: 202)
+    VStack(spacing: 0) {
+      if let notice = store.notice {
+        HStack(spacing: 10) {
+          Text(notice).font(uiFont(size: 11)).textSelection(.enabled)
+          Spacer()
+          IconButton("xmark", help: localizedUI("Dismiss")) { store.notice = nil }
+        }.padding(10).background(Color.accentColor.opacity(0.05))
         Divider()
       }
-      VStack(spacing: 0) {
-        if store.showDashboard || store.current == nil {
-          DashboardView()
-        } else if let model = store.current {
-          RepositoryWorkspace(model: model)
+      HStack(spacing: 0) {
+        if sidebarVisible {
+          sidebar.frame(width: 202)
+          Divider()
         }
-      }.frame(maxWidth: .infinity, maxHeight: .infinity)
+        VStack(spacing: 0) {
+          if store.showDashboard || store.current == nil {
+            DashboardView()
+          } else if let model = store.current {
+            RepositoryWorkspace(model: model)
+          }
+        }.frame(maxWidth: .infinity, maxHeight: .infinity)
+      }
     }
     .background(Theme.editor(scheme))
     .toolbar {
@@ -182,7 +192,7 @@ struct RootView: View {
                 Button(store.text("Manage Organization…", "管理组织…")) {
                   store.showOrganizations = true
                 }
-                Button(store.text("Open Repository…", "打开仓库…")) { store.openRepository() }
+                Button(store.text("Open Repository…", "打开仓库…")) { store.openRepository(in: group) }
               }
             if !collapsedGroups.contains(group) {
               ForEach(
@@ -191,14 +201,13 @@ struct RootView: View {
                     && (repositorySearch.isEmpty
                       || $0.name.localizedCaseInsensitiveContains(repositorySearch)
                       || $0.path.localizedCaseInsensitiveContains(repositorySearch))
-                }.sorted {
-                  $0.favorite != $1.favorite ? $0.favorite : $0.lastOpened > $1.lastOpened
                 }
               ) { record in
                 sidebarButton(
                   record.name, icon: record.favorite ? "star.fill" : "shippingbox",
                   active: !store.showDashboard && store.selectedID == record.id
                 ) { store.select(record.id) }
+                .repositoryReordering(record)
                 .contextMenu {
                   Button(
                     record.favorite
@@ -291,14 +300,16 @@ struct DashboardView: View {
   @EnvironmentObject var store: AppStore
   @Environment(\.colorScheme) var scheme
   @State private var search = ""
-  @State private var sort = "recent"
+  @State private var sort = "manual"
   var filtered: [RepositoryRecord] {
-    store.repositories.filter {
+    let records = store.repositories.filter {
       (store.dashboardOrganization == nil || $0.group == store.dashboardOrganization)
         && (search.isEmpty || $0.name.localizedCaseInsensitiveContains(search)
           || $0.path.localizedCaseInsensitiveContains(search)
           || $0.group.localizedCaseInsensitiveContains(search))
-    }.sorted {
+    }
+    guard sort != "manual" else { return records }
+    return records.sorted {
       if sort == "name" { return $0.name.localizedStandardCompare($1.name) == .orderedAscending }
       if sort == "path" { return $0.path.localizedStandardCompare($1.path) == .orderedAscending }
       return $0.lastOpened > $1.lastOpened
@@ -320,7 +331,9 @@ struct DashboardView: View {
         Button(store.text("Organizations…", "组织管理…")) { store.showOrganizations = true }
         Button(store.text("Refresh", "刷新")) { Task { await store.refreshDashboard() } }
         Button(store.text("Clone…", "克隆…")) { store.showClone = true }
-        Button(store.text("Open Repository…", "打开仓库…")) { store.openRepository() }.buttonStyle(
+        Button(store.text("Open Repository…", "打开仓库…")) {
+          store.openRepository(in: store.dashboardOrganization)
+        }.buttonStyle(
           .borderedProminent)
       }.padding(28)
       HStack {
@@ -329,6 +342,7 @@ struct DashboardView: View {
           .textFieldStyle(.plain)
         Spacer()
         Picker(store.text("Sort", "排序"), selection: $sort) {
+          Text(store.text("Manual", "手动排序")).tag("manual")
           Text(store.text("Recent", "最近使用")).tag("recent")
           Text(store.text("Name", "名称")).tag("name")
           Text(store.text("Path", "路径")).tag("path")
@@ -351,6 +365,7 @@ struct DashboardView: View {
                 } label: {
                   RepositoryRow(model: model).frame(maxWidth: .infinity).contentShape(Rectangle())
                 }.buttonStyle(.workspace)
+                  .repositoryReordering(record) { sort = "manual" }
                 Divider().padding(.leading, 28)
               }
             }
@@ -362,7 +377,7 @@ struct DashboardView: View {
           store.text("\(store.repositories.count) repositories", "\(store.repositories.count) 个仓库"))
         Spacer()
         OperationProgressView(progress: store.cloneActivity) { store.cloneTask?.cancel() }
-        Text(localizedUI("GitPier 1.0.0"))
+        Text(localizedUI("GitPier 1.0.1"))
       }.font(uiFont(size: 11)).foregroundStyle(.secondary).padding(12).background(
         Theme.panel(scheme))
     }.task { for model in store.models.values where !model.available { await model.activate() } }

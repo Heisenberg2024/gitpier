@@ -529,6 +529,9 @@ import SwiftUI
           throw GitPierError.invalidInput(
             "Organization removal did not preserve ungrouped repository")
         }
+        try await verifyWorkspaceImprovements(
+          store: store, model: model, root: root, host: host, window: window, output: output)
+        try await verifyDiffScrollBounds(settings: store.settings, output: output)
         session.view.acceptanceOutput = nil
         store.shutdown()
         window.close()
@@ -546,6 +549,345 @@ import SwiftUI
     }
     NSApp.run()
   }
+  static func verifyWorkspaceImprovements(
+    store: AppStore, model: RepositoryModel, root: URL, host: NSView, window: NSWindow,
+    output: URL
+  ) async throws {
+    let organization = try store.createOrganization("Ordering Acceptance")
+    for name in ["ordered-one", "ordered-two", "ordered-three"] {
+      await store.addRepository(
+        root.deletingLastPathComponent().appendingPathComponent(name),
+        group: organization.name)
+    }
+    let members = store.repositories.filter { $0.group == organization.name }
+    guard members.count == 3 else {
+      throw GitPierError.invalidInput("Organization-scoped open did not assign new repositories")
+    }
+    let memberOrder = members.map(\.id)
+    store.select(memberOrder[0])
+    try await waitFor { store.current?.available == true && store.current?.refreshing == false }
+    guard store.repositories.filter({ $0.group == organization.name }).map(\.id) == memberOrder,
+      store.reorderRepository(memberOrder[0], relativeTo: memberOrder[2]),
+      store.repositories.filter({ $0.group == organization.name }).map(\.id)
+        == [memberOrder[1], memberOrder[2], memberOrder[0]],
+      try store.persistence.load().repositories.map(\.id) == store.repositories.map(\.id)
+    else {
+      throw GitPierError.invalidInput("Click order changed or manual reorder was not persisted")
+    }
+    await store.addRepository(root, group: organization.name)
+    guard model.record.group == organization.name, store.selectedID == model.record.id else {
+      throw GitPierError.invalidInput(
+        "Organization-scoped open did not move the existing repository")
+    }
+    try await waitFor { !model.refreshing }
+    let beforeClick = model.refreshCount
+    store.select(model.record.id)
+    try await waitFor { model.refreshCount > beforeClick && !model.refreshing }
+    let path = "Sources/workspace.swift"
+    guard let file = model.status.files.first(where: { $0.path == path }) else {
+      throw GitPierError.invalidInput("Missing active-refresh fixture")
+    }
+    model.select(file)
+    try await waitFor { !model.diffLoading }
+    let contents = try Data(contentsOf: root.appendingPathComponent(path))
+    var edited = contents
+    edited.append(Data("\n// GITPIER_FOREGROUND_REFRESH\n".utf8))
+    try edited.write(to: root.appendingPathComponent(path))
+    NotificationCenter.default.post(name: NSApplication.didBecomeActiveNotification, object: NSApp)
+    try await waitFor { !model.refreshing && model.diff.raw.contains("GITPIER_FOREGROUND_REFRESH") }
+    try contents.write(to: root.appendingPathComponent(path))
+    await model.refresh()
+    try await waitFor { !model.diffLoading }
+    let beforeWrite = model.refreshCount
+    model.run(label: "Busy refresh acceptance") { _ in
+      try await Task.sleep(for: .milliseconds(450))
+    }
+    NotificationCenter.default.post(name: NSApplication.didBecomeActiveNotification, object: NSApp)
+    try await Task.sleep(for: .milliseconds(150))
+    guard model.busy, model.refreshCount == beforeWrite else {
+      throw GitPierError.invalidInput("Foreground refresh raced an active write")
+    }
+    try await waitFor { !model.busy }
+    guard model.refreshCount > beforeWrite, model.output?.contains("已完成") == true else {
+      throw GitPierError.invalidInput("Silent Git operations did not report their final completion")
+    }
+    let probePath = "scroll-probe.swift"
+    let probe =
+      (0..<260).map {
+        "// line \($0): " + String(repeating: "long-content ", count: 28)
+      }.joined(separator: "\n") + "\n"
+    try probe.write(to: root.appendingPathComponent(probePath), atomically: true, encoding: .utf8)
+    await model.refresh()
+    guard let probeFile = model.status.files.first(where: { $0.path == probePath }) else {
+      throw GitPierError.invalidInput("Missing scroll fixture")
+    }
+    model.comparison = .unstaged
+    model.select(probeFile)
+    var settings = store.settings
+    settings.appearance = .dark
+    settings.wrapDiff = false
+    settings.unifiedDiff = false
+    store.updateSettings(settings)
+    try await settle()
+    try await waitFor { !model.diffLoading }
+    guard let diff = descendants(host).compactMap({ $0 as? DiffSplitContainer }).first,
+      diff.afterOnly, diff.scrolls[0].isHidden, !diff.scrolls[1].isHidden,
+      abs(diff.scrolls[1].frame.width - diff.bounds.width) < 1
+    else { throw GitPierError.invalidInput("Empty Index did not give the working tree full width") }
+    let scroll = diff.scrolls[1]
+    guard !scroll.horizontalThumb.isHidden, !scroll.verticalThumb.isHidden,
+      scroll.horizontalThumb.knobRect.width == 56, scroll.horizontalThumb.knobRect.height == 6,
+      scroll.verticalThumb.knobRect.width == 6
+    else {
+      throw GitPierError.invalidInput("Diff scrollbar geometry does not match the compact design")
+    }
+    guard
+      let wheel = CGEvent(
+        scrollWheelEvent2Source: nil, units: .pixel, wheelCount: 2,
+        wheel1: -180, wheel2: -260, wheel3: 0
+      ).flatMap({ NSEvent(cgEvent: $0) })
+    else {
+      throw GitPierError.invalidInput("Cannot construct native scrolling event")
+    }
+    scroll.scrollWheel(with: wheel)
+    try await Task.sleep(for: .milliseconds(180))
+    guard scroll.contentView.bounds.minY > 0, scroll.contentView.bounds.minX > 0,
+      scroll.horizontalThumb.knobOpacity > 0.35, scroll.verticalThumb.knobOpacity > 0.35
+    else {
+      throw GitPierError.invalidInput("Native wheel scrolling or active thumb visibility failed")
+    }
+    try capture(host, to: output.appendingPathComponent("diff-scroll-active-dark.png"))
+    try await Task.sleep(for: .milliseconds(1100))
+    guard scroll.horizontalThumb.knobOpacity < 0.25, scroll.verticalThumb.knobOpacity < 0.25 else {
+      throw GitPierError.invalidInput("Diff scrollbars did not fade after scrolling stopped")
+    }
+    try capture(host, to: output.appendingPathComponent("diff-scroll-idle-dark.png"))
+    let thumb = scroll.horizontalThumb
+    let start = thumb.convert(NSPoint(x: thumb.knobRect.midX, y: thumb.knobRect.midY), to: nil)
+    let end = NSPoint(x: start.x + 70, y: start.y)
+    let oldX = scroll.contentView.bounds.minX
+    func mouse(_ type: NSEvent.EventType, at point: NSPoint) -> NSEvent {
+      NSEvent.mouseEvent(
+        with: type, location: point, modifierFlags: [],
+        timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber,
+        context: nil, eventNumber: 3, clickCount: 1, pressure: 1)!
+    }
+    thumb.mouseDown(with: mouse(.leftMouseDown, at: start))
+    thumb.mouseDragged(with: mouse(.leftMouseDragged, at: end))
+    thumb.mouseUp(with: mouse(.leftMouseUp, at: end))
+    guard scroll.contentView.bounds.minX > oldX, thumb.knobRect.width == 56 else {
+      throw GitPierError.invalidInput("Fixed-width horizontal thumb dragging did not scroll")
+    }
+    settings.appearance = .light
+    store.updateSettings(settings)
+    try await settle()
+    try capture(host, to: output.appendingPathComponent("diff-empty-index-light.png"))
+    model.comparison = .staged
+    model.loadDiff()
+    try await settle()
+    guard !diff.afterOnly, !diff.scrolls[0].isHidden, !diff.scrolls[1].isHidden else {
+      throw GitPierError.invalidInput("Staged comparison lost its two-sided layout")
+    }
+    model.comparison = .unstaged
+    model.loadDiff()
+    if !model.includedPaths.isEmpty {
+      model.toggleIncluded(model.status.files.filter { model.includedPaths.contains($0.path) })
+    }
+    model.toggleIncluded([probeFile])
+    model.editDraft("test: verify final commit and push notice")
+    model.requiresIndexReview = false
+    model.commit(push: true)
+    try await waitFor { !model.busy }
+    guard model.lastCommit != nil, model.error == nil,
+      model.output?.hasPrefix("提交并推送已完成：") == true,
+      model.output?.contains("Counting objects") == false,
+      model.output?.contains("Enumerating objects") == false,
+      model.output?.contains("%") == false, model.activity.state?.result == .succeeded,
+      model.activity.state?.transfer == nil
+    else { throw GitPierError.invalidInput("Commit-and-push notice did not show its final result") }
+    model.network("fetch")
+    try await waitFor { !model.busy }
+    guard model.output?.hasPrefix("获取已完成。") == true else {
+      throw GitPierError.invalidInput("Fetch did not report final completion")
+    }
+    model.network("pull")
+    try await waitFor { !model.busy }
+    guard model.output?.hasPrefix("拉取已完成。") == true else {
+      throw GitPierError.invalidInput("Pull did not report final completion")
+    }
+    model.run(label: "Cancellation acceptance") { _ in
+      try await Task.sleep(for: .seconds(2))
+    }
+    model.cancel()
+    try await waitFor { !model.busy }
+    guard model.output == "操作已取消。", model.outputResult == .cancelled,
+      model.activity.state?.result == .cancelled
+    else {
+      throw GitPierError.invalidInput("Cancelled operation retained a success notice")
+    }
+    _ = try await model.git().perform(["branch", "--unset-upstream"])
+    try (probe + "// no upstream\n").write(
+      to: root.appendingPathComponent(probePath),
+      atomically: true, encoding: .utf8)
+    await model.refresh()
+    guard let pendingFile = model.status.files.first(where: { $0.path == probePath }) else {
+      throw GitPierError.invalidInput("Missing pending-push fixture")
+    }
+    model.toggleIncluded([pendingFile])
+    model.editDraft("test: report pending push")
+    model.requiresIndexReview = false
+    model.commit(push: true)
+    try await waitFor { !model.busy }
+    guard model.needsUpstream, model.outputResult == .needsAttention,
+      model.output?.contains("请选择 Remote 和分支推送") == true,
+      model.activity.state?.result == .needsAttention
+    else {
+      throw GitPierError.invalidInput("Missing upstream was reported as completed push")
+    }
+    model.needsUpstream = false
+    model.network("push", remote: "origin", branch: "main")
+    try await waitFor { !model.busy }
+    guard model.output?.hasPrefix("推送已完成。") == true, !model.pushFailed else {
+      throw GitPierError.invalidInput("Pending local commit could not be pushed")
+    }
+    _ = try await model.git().perform([
+      "remote", "set-url", "origin",
+      root.deletingLastPathComponent().appendingPathComponent("missing-remote.git").path,
+    ])
+    try (probe + "// failed push\n").write(
+      to: root.appendingPathComponent(probePath),
+      atomically: true, encoding: .utf8)
+    await model.refresh()
+    model.toggleIncluded([pendingFile])
+    model.editDraft("test: preserve commit on failed push")
+    model.requiresIndexReview = false
+    model.commit(push: true)
+    try await waitFor { !model.busy }
+    guard model.pushFailed, model.error != nil, model.outputResult == .needsAttention,
+      model.output?.hasPrefix("本地提交成功，推送失败：") == true,
+      model.lastCommit == model.status.head, model.activity.state?.result == .failed
+    else {
+      throw GitPierError.invalidInput("Failed push lost its local commit or showed success")
+    }
+    model.error = nil
+    _ = try await model.git().perform([
+      "remote", "set-url", "origin",
+      root.deletingLastPathComponent().appendingPathComponent("remote.git").path,
+    ])
+    model.network("push")
+    try await waitFor { !model.busy }
+    guard !model.pushFailed, model.output?.hasPrefix("推送已完成。") == true else {
+      throw GitPierError.invalidInput("Retrying failed push did not report completion")
+    }
+    store.removeOrganization(organization.id)
+    try
+      "Final command notifications, commit-and-push over a temporary local remote, explicit fetch/pull results, cancellation, missing-upstream attention, local-commit preservation on failed push and retry, repository click and application foreground refresh, write-safe refresh, persisted repository order, organization-scoped new/existing opens, full-width empty Index, 6pt active/idle scrollbars, 56pt horizontal thumb and native wheel/drag scrolling passed.\n"
+      .write(
+        to: output.appendingPathComponent("workspace-improvements.txt"), atomically: true,
+        encoding: .utf8)
+  }
+
+  static func verifyDiffScrollBounds(settings: AppSettings, output: URL) async throws {
+    let old = (1...240).map { "-old line \($0) " + String(repeating: "content ", count: 50) }
+    let new = (1...240).map { "+new line \($0) " + String(repeating: "content ", count: 50) }
+    let patch =
+      ([
+        "diff --git a/example.swift b/example.swift", "--- a/example.swift",
+        "+++ b/example.swift", "@@ -1,240 +1,240 @@",
+      ] + old + new).joined(separator: "\n") + "\n"
+    let document = DiffParser.parse(Data(patch.utf8))
+    var preferences = settings
+    preferences.wrapDiff = false
+    preferences.unifiedDiff = false
+    let view = NSHostingView(
+      rootView: DiffTable(
+        document: document, path: "example.swift",
+        key: "scroll-bounds", settings: preferences, dark: true, selectedHunk: 0,
+        indexSide: 0, beforeTitle: "Index", afterTitle: "Working Tree"))
+    let window = NSWindow(
+      contentRect: NSRect(x: -2400, y: -2400, width: 640, height: 360),
+      styleMask: [.titled, .closable, .resizable], backing: .buffered, defer: false)
+    window.appearance = NSAppearance(named: .darkAqua)
+    window.contentView = view
+    window.orderFront(nil)
+    defer { window.close() }
+    try await settle()
+    guard let diff = descendants(view).compactMap({ $0 as? DiffSplitContainer }).first else {
+      throw GitPierError.invalidInput("Missing native scrollbar layout fixture")
+    }
+    for size in [
+      NSSize(width: 640, height: 360), NSSize(width: 480, height: 120),
+      NSSize(width: 820, height: 520),
+    ] {
+      window.setContentSize(size)
+      try await settle()
+      for (side, scroll) in diff.scrolls.enumerated() {
+        let documentBounds = scroll.documentView!.bounds
+        let lastPoint = NSPoint(
+          x: max(0, documentBounds.width - scroll.contentView.bounds.width),
+          y: max(0, documentBounds.height - scroll.contentView.bounds.height))
+        for point in [NSPoint.zero, lastPoint] {
+          scroll.contentView.scroll(to: point)
+          scroll.reflectScrolledClipView(scroll.contentView)
+          let vertical = scroll.verticalThumb
+          let horizontal = scroll.horizontalThumb
+          let verticalRect = scroll.convert(vertical.bounds, from: vertical)
+          let horizontalRect = scroll.convert(horizontal.bounds, from: horizontal)
+          guard let overlay = vertical.superview,
+            let header = (scroll.documentView as? NSTableView)?.headerView?.superview
+          else {
+            throw GitPierError.invalidInput("Missing native header or scrollbar overlay")
+          }
+          let codeRect = scroll.convert(overlay.bounds, from: overlay)
+          let headerRect = scroll.convert(header.bounds, from: header)
+          guard scroll.bounds.contains(verticalRect), scroll.bounds.contains(horizontalRect),
+            codeRect.contains(verticalRect), codeRect.contains(horizontalRect),
+            verticalRect.intersection(headerRect).height == 0,
+            horizontalRect.intersection(headerRect).height == 0,
+            vertical.bounds.contains(vertical.knobRect),
+            horizontal.bounds.contains(horizontal.knobRect),
+            side == 0 ? verticalRect.minX == codeRect.minX : verticalRect.maxX == codeRect.maxX,
+            horizontal.knobRect.width == 56,
+            size.height > 200
+              ? vertical.knobRect.height == 150
+              : vertical.knobRect.height < 150 && vertical.knobRect.height < vertical.bounds.height
+          else {
+            throw GitPierError.invalidInput(
+              "Scrollbar crossed its code viewport/header or fixed length changed: size=\(size), side=\(side), code=\(codeRect), header=\(headerRect), vertical=\(verticalRect), horizontal=\(horizontalRect)"
+            )
+          }
+          let knobPoint = NSPoint(x: vertical.knobRect.midX, y: vertical.knobRect.midY)
+          let target = view.superview!.convert(knobPoint, from: vertical)
+          guard view.hitTest(target) === vertical else {
+            throw GitPierError.invalidInput("Clipped scrollbar cannot receive native mouse events")
+          }
+          let contentPoint = NSPoint(x: codeRect.midX, y: codeRect.midY)
+          let contentTarget = view.superview!.convert(contentPoint, from: scroll)
+          guard let hit = view.hitTest(contentTarget), hit !== overlay else {
+            throw GitPierError.invalidInput("Scrollbar overlay intercepted native code selection")
+          }
+        }
+      }
+      if size.height == 360 {
+        try capture(view, to: output.appendingPathComponent("diff-fixed-scrollbars-dark.png"))
+      } else if size.height == 120 {
+        try capture(view, to: output.appendingPathComponent("diff-scrollbars-small-viewport.png"))
+      }
+    }
+    window.appearance = NSAppearance(named: .aqua)
+    view.rootView = DiffTable(
+      document: document, path: "example.swift", key: "scroll-bounds",
+      settings: preferences, dark: false, selectedHunk: 0, indexSide: 0,
+      beforeTitle: "Index", afterTitle: "Working Tree")
+    try await settle()
+    try capture(view, to: output.appendingPathComponent("diff-fixed-scrollbars-light.png"))
+    try
+      "Fixed 150pt vertical / 56pt horizontal thumbs, Index-left / working-tree-right placement, header exclusion, viewport clipping, scroll endpoints, compact-window resizing, native thumb hit testing and code-selection pass-through passed.\n"
+      .write(
+        to: output.appendingPathComponent("diff-scroll-bounds.txt"), atomically: true,
+        encoding: .utf8)
+  }
+
   static func descendants(_ view: NSView) -> [NSView] {
     view.subviews.flatMap { [$0] + descendants($0) }
   }

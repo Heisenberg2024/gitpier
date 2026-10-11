@@ -38,6 +38,13 @@ SWIFT
 printf '# Workspace\n\nAll Your Repositories. One Workspace.\n' > "$task_repo/README.md"
 git -C "$task_repo" add -- Sources/workspace.swift README.md
 git -C "$task_repo" commit -m "feat: create repository workspace"
+git init --bare "$task_temp/remote.git"
+git -C "$task_repo" remote add origin "$task_temp/remote.git"
+git -C "$task_repo" push -u origin main
+for task_name in ordered-one ordered-two ordered-three; do
+  mkdir -p "$task_temp/$task_name"
+  git -C "$task_temp/$task_name" init -b main
+done
 git -C "$task_repo" branch feature/terminal
 python3 - "$task_repo/Sources/workspace.swift" <<'PY'
 from pathlib import Path

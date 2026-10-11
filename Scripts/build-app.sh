@@ -55,8 +55,8 @@ cat > "$task_app/Contents/Info.plist" <<PLIST
 <key>CFBundleExecutable</key><string>GitPier</string>
 <key>CFBundleIdentifier</key><string>$bundle_id</string>
 <key>CFBundlePackageType</key><string>APPL</string>
-<key>CFBundleShortVersionString</key><string>1.0.0</string>
-<key>CFBundleVersion</key><string>8</string>
+<key>CFBundleShortVersionString</key><string>1.0.1</string>
+<key>CFBundleVersion</key><string>9</string>
 <key>CFBundleIconFile</key><string>$task_icon_name</string>
 <key>LSMinimumSystemVersion</key><string>14.0</string>
 <key>NSHighResolutionCapable</key><true/>

@@ -1,5 +1,27 @@
 import Foundation
 
+/// Completed commands retain diagnostics and final results, never transient transfer counters.
+public enum GitOutputSummary {
+  public static func details(_ output: String) -> String {
+    output.split(whereSeparator: { $0 == "\n" || $0 == "\r" }).compactMap { fragment in
+      let line = fragment.trimmingCharacters(in: .whitespaces)
+      let counter = line.hasPrefix("remote: ") ? String(line.dropFirst(8)) : line
+      guard !line.isEmpty, GitProgressDecoder.parse(line) == nil,
+        !counter.hasPrefix("Enumerating objects:"),
+        !counter.hasPrefix("Counting objects:"),
+        !counter.hasPrefix("Compressing objects:"),
+        !counter.hasPrefix("Receiving objects:"),
+        !counter.hasPrefix("Resolving deltas:"),
+        !counter.hasPrefix("Writing objects:"),
+        !counter.hasPrefix("Updating files:"),
+        !counter.hasPrefix("Checking out files:"),
+        !counter.hasPrefix("Total ")
+      else { return nil }
+      return line
+    }.joined(separator: "\n")
+  }
+}
+
 public enum GitTransferPhase: String, Codable, Sendable {
   case counting, compressing, receiving, resolving, writing, checkout
 }
