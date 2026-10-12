@@ -22,7 +22,7 @@ GitPier brings repository management, change review, commits, and an integrated 
 - **Consistent scrolling.** Lists, settings, help, commit messages, tabs, and terminal scrollback share the Diff's compact overlay scrollbars, which brighten while scrolling and fade when idle.
 - **Integrated terminal.** Run your installed shell in a real PTY, with multiple tabs, splits, and search. Each repository keeps its own sessions and working directory.
 - **History and branches.** Browse the commit graph and manage branches, remotes, stashes, and tags. Fetch, pull, push, merge, and rebase using Git.
-- **v1.1.0 development.** Native paged full-history queries add message, hash, author, date and branch filters. Stash previews reuse the file list and side-by-side Diff.
+- **Full history and stash previews.** Native paged full-history queries add message, hash, author, date and branch filters. Stash previews reuse the file list and side-by-side Diff.
 - **Persistent history review.** History uses the same Diff renderer and scrollbars as the commit workspace. Resize the detail pane once per repository; click the selected commit again or press Esc to close it.
 - **Editors and help.** Select your default editor from a priority-sorted list with application icons, or add custom Apps from the dropdown. The repository and commit-file context menus provide an Open in Editor submenu with application icons for one-time editor choices. The Help menu opens an offline English / Simplified Chinese guide.
 - **Managed credentials.** Store HTTPS tokens in macOS Keychain and select SSH identity profiles. Existing Git helpers, SSH configuration, hooks, and commit signing remain available.
@@ -50,7 +50,7 @@ Opening or selecting a repository always shows the Commit page; the current page
 
 GitPier requires **macOS 14 or later**.
 
-Download the current stable version from [GitHub Releases](https://github.com/Heisenberg2024/gitpier/releases/latest). **v1.1.0 is in development**: after release, its primary installer will be `GitPier-1.1.0-macos-universal.dmg`. Open the DMG, drag the real GitPier icon to Applications, and launch GitPier from Applications.
+Download the current stable version from [GitHub Releases](https://github.com/Heisenberg2024/gitpier/releases/latest). Starting with v1.1.0, the primary installer is `GitPier-1.1.0-macos-universal.dmg`. Open the DMG, drag the real GitPier icon to Applications, and launch GitPier from Applications.
 
 The v1.1.0 updater uses Sparkle 2, GitHub Releases, and EdDSA-signed DMGs. Automatic checks default to off; downloads and installation require confirmation. The production public key is configured; release assets must be signed and verified before publication. v1.0.3 requires a one-time manual upgrade.
 

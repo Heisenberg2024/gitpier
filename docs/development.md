@@ -52,7 +52,7 @@ Before publishing, inspect both current files and Git history with a local secre
 
 ## DMG and Sparkle release preparation
 
-The v1.1.0 work is unreleased. Maintain production versions only in `Sources/GitPier/Resources/ReleaseConfiguration.json`; increase `build` for every distributed build. Keep the production bundle identifier stable. Empty `publicEDKey` means updates are disabled and production release signing refuses to run.
+Maintain production versions only in `Sources/GitPier/Resources/ReleaseConfiguration.json`; increase `build` for every distributed build. Keep the production bundle identifier stable. Empty `publicEDKey` means updates are disabled and production release signing refuses to run.
 
 ```bash
 Scripts/test.sh

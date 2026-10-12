@@ -242,7 +242,10 @@ struct UpdateSettingsView: View {
       }
       Toggle(
         store.text("Automatically check for updates", "自动检查更新"),
-        isOn: Binding(get: { manager.automaticChecks }, set: manager.setAutomaticChecks)
+        // An explicit setter avoids Swift 6.1's isolated method-reference IRGen crash.
+        isOn: Binding(
+          get: { manager.automaticChecks },
+          set: { enabled in manager.setAutomaticChecks(enabled) })
       )
       .disabled(!manager.configured)
       Text(manager.statusText).font(.callout).foregroundStyle(.secondary).textSelection(.enabled)

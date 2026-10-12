@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased — v1.1.0 development
+## 1.1.0 — 2026-10-12
 
 - Fix clearing explicit Push URLs, retain additional fetch/push destinations and credentials, and reject stale remote edits.
 - Add native paged full-history queries for message, hash, author, date, current branch or all local/remote branches, alongside loaded-commit filtering.
