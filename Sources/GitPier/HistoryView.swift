@@ -4,19 +4,23 @@ import SwiftUI
 struct HistoryView: View {
   @ObservedObject var model: RepositoryModel
   @ObservedObject var panels: WorkspacePanels
-  init(model: RepositoryModel) {
+  init(model: RepositoryModel, fullHistory: Bool = false, query: HistoryQuery = HistoryQuery()) {
     self.model = model
     panels = model.panels
+    _fullHistory = State(initialValue: fullHistory)
+    _query = State(initialValue: query)
   }
   @EnvironmentObject var store: AppStore
   @Environment(\.colorScheme) var scheme
   @FocusState private var searchFocused: Bool
   @State private var search = ""
+  @State private var fullHistory = false
+  @State private var query = HistoryQuery()
   @State private var branchAt: String?
   @State private var branchName = ""
   var records: [CommitRecord] {
     model.history.filter {
-      search.isEmpty || $0.subject.localizedCaseInsensitiveContains(search)
+      fullHistory || search.isEmpty || $0.subject.localizedCaseInsensitiveContains(search)
         || $0.author.localizedCaseInsensitiveContains(search) || $0.hash.hasPrefix(search)
     }
   }
@@ -36,11 +40,26 @@ struct HistoryView: View {
               }
             }
             Spacer()
+            Toggle(store.text("Full history", "全部历史"), isOn: $fullHistory)
+              .toggleStyle(.checkbox)
             Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
-            TextField(store.text("Search loaded commits", "搜索已加载提交"), text: $search).textFieldStyle(
+            TextField(store.text(fullHistory ? "Commit message" : "Search loaded commits", fullHistory ? "提交消息" : "搜索已加载提交"),
+                      text: fullHistory ? $query.message : $search).textFieldStyle(
               .plain
             ).frame(width: 200).focused($searchFocused)
           }.font(uiFont(size: 11)).padding(12).background(Theme.panel(scheme))
+          if fullHistory {
+            HStack(spacing: 8) {
+              Picker(store.text("Scope", "范围"), selection: $query.scope) {
+                Text(store.text("Current branch", "当前分支")).tag(HistoryQuery.Scope.currentBranch)
+                Text(store.text("All local & remote refs", "全部本地与远程引用")).tag(HistoryQuery.Scope.allReferences)
+              }.labelsHidden().frame(width: 180)
+              TextField(store.text("Author", "作者"), text: $query.author)
+              TextField("Hash", text: $query.hash)
+              TextField(store.text("From YYYY-MM-DD", "从 YYYY-MM-DD"), text: $query.after)
+              TextField(store.text("To YYYY-MM-DD", "至 YYYY-MM-DD"), text: $query.before)
+            }.font(uiFont(size: 11)).textFieldStyle(.roundedBorder).padding(.horizontal, 12).padding(.bottom, 10)
+          }
           Divider()
           ScrollView {
             LazyVStack(spacing: 0) {
@@ -77,10 +96,13 @@ struct HistoryView: View {
               if model.historyHasMore {
                 Button(store.text("Load more commits", "加载更多提交")) {
                   Task { await model.loadHistory(path: model.historyPath) }
-                }.padding(15)
+                }.padding(15).disabled(model.historyLoading)
               }
-              if model.history.isEmpty {
-                EmptyState(symbol: "clock", title: store.text("No commits yet", "尚无提交"), detail: "")
+              if model.historyLoading { ProgressView().padding(15) }
+              if let problem = model.historyError {
+                EmptyState(symbol: "exclamationmark.triangle", title: store.text("Unable to query history", "无法查询历史"), detail: problem)
+              } else if records.isEmpty && !model.historyLoading {
+                EmptyState(symbol: "clock", title: store.text("No matching commits", "没有匹配的提交"), detail: "")
               }
             }
           }
@@ -106,7 +128,10 @@ struct HistoryView: View {
         }
       }
     }
-    .task { await model.ensureHistory() }.onReceive(
+    .task(id: (fullHistory ? query.identity : "loaded") + (model.historyPath ?? "")) {
+      model.historyQuery = fullHistory ? query : nil
+      await model.ensureHistory()
+    }.onDisappear { model.cancelHistoryLoading() }.onReceive(
       NotificationCenter.default.publisher(for: .gitpierSearch)
     ) { event in if event.object == nil { searchFocused = true } }
     .onReceive(NotificationCenter.default.publisher(for: .gitpierFileHistory)) { notification in
@@ -221,6 +246,7 @@ struct CommitDetailView: View {
   @State private var files: [FileChange] = []
   @State private var selected: String?
   @State private var diff = DiffDocument.empty
+  @State private var oversized = false
   @State private var parent = ""
   @State private var customParent = ""
   @State private var loading = false
@@ -305,7 +331,7 @@ struct CommitDetailView: View {
             EmptyState(
               symbol: "doc.richtext", title: store.text("Binary changes", "二进制变更"), detail: diff.raw
             )
-          } else if diff.pairs.count > 20000 || diff.raw.utf8.count > 2 * 1024 * 1024 {
+          } else if oversized || diff.pairs.count > 20000 || diff.raw.utf8.count > 2 * 1024 * 1024 {
             EmptyState(
               symbol: "doc.text", title: store.text("Large Diff", "大型 Diff"),
               detail: store.text(
@@ -354,6 +380,7 @@ struct CommitDetailView: View {
   }
   func loadPatch() async {
     diff = .empty
+    oversized = false
     loading = false
     guard let selected else { return }
     let requestedParent = parent
@@ -364,7 +391,12 @@ struct CommitDetailView: View {
         commit.hash, path: selected, parent: requestedParent.isEmpty ? nil : requestedParent)
       try Task.checkCancellation()
       guard self.selected == selected, parent == requestedParent else { return }
-      diff = DiffParser.parse(bytes)
+      oversized = bytes.count > 2 * 1024 * 1024 || bytes.reduce(into: 0) { if $1 == 10 { $0 += 1 } } > 40000
+      let large = oversized
+      let parsed = await Task.detached(priority: .userInitiated) { large ? DiffDocument.empty : DiffParser.parse(bytes) }.value
+      try Task.checkCancellation()
+      guard self.selected == selected, parent == requestedParent else { return }
+      diff = parsed
       loading = false
     } catch {
       if !Task.isCancelled && self.selected == selected && parent == requestedParent {

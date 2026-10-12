@@ -3,7 +3,8 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 task_root="$PWD"
 configuration="${CONFIGURATION:-release}"
-bundle_id="${BUNDLE_IDENTIFIER:-com.example.gitpier}"
+task_config="${GITPIER_TEST_RELEASE_CONFIG:-Sources/GitPier/Resources/ReleaseConfiguration.json}"
+bundle_id="${BUNDLE_IDENTIFIER:-$(python3 Scripts/release_metadata.py --config "$task_config" --field bundleIdentifier)}"
 if [[ ! "$bundle_id" =~ ^[a-zA-Z][a-zA-Z0-9-]*(\.[a-zA-Z][a-zA-Z0-9-]*)+$ ]]; then
   echo "Invalid BUNDLE_IDENTIFIER" >&2; exit 1
 fi
@@ -13,7 +14,10 @@ export SWIFTPM_MODULECACHE_OVERRIDE="$task_root/.cache/swift"
 swift Scripts/generate-branding.swift
 swift build --build-system native --disable-sandbox --cache-path "$task_root/.cache/swiftpm" -c "$configuration" --product GitPier
 task_bin="$(swift build --build-system native --disable-sandbox --cache-path "$task_root/.cache/swiftpm" -c "$configuration" --show-bin-path)"
-task_app="$task_root/dist/GitPier.app"
+mkdir -p "$task_root/dist"
+task_stage="$(mktemp -d "$task_root/.cache/app-build.XXXXXX")"
+trap 'rm -rf "$task_stage"' EXIT
+task_app="$task_stage/GitPier.app"
 mkdir -p "$task_app/Contents/MacOS" "$task_app/Contents/Resources"
 cp "$task_bin/GitPier" "$task_app/Contents/MacOS/GitPier"
 if [[ "${UNIVERSAL:-0}" == 1 ]]; then
@@ -32,6 +36,7 @@ for task_bundle in "$task_bin"/*.bundle; do
   cp -R "$task_bundle" "$task_app/Contents/Resources/$task_name"
   rm -rf "$task_app/$task_name"
 done
+cp "$task_config" "$task_app/Contents/Resources/GitPier_GitPier.bundle/ReleaseConfiguration.json"
 task_icons="$task_root/.cache/GitPier.iconset"
 rm -rf "$task_icons"
 mkdir -p "$task_icons"
@@ -46,31 +51,24 @@ for task_old_icon in "$task_app/Contents/Resources"/GitPier*.icns; do
   rm "$task_old_icon"
 done
 iconutil -c icns "$task_icons" -o "$task_app/Contents/Resources/$task_icon_name"
-cat > "$task_app/Contents/Info.plist" <<PLIST
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0"><dict>
-<key>CFBundleName</key><string>GitPier</string>
-<key>CFBundleDisplayName</key><string>GitPier</string>
-<key>CFBundleExecutable</key><string>GitPier</string>
-<key>CFBundleIdentifier</key><string>$bundle_id</string>
-<key>CFBundlePackageType</key><string>APPL</string>
-<key>CFBundleShortVersionString</key><string>1.0.3</string>
-<key>CFBundleVersion</key><string>16</string>
-<key>CFBundleIconFile</key><string>$task_icon_name</string>
-<key>LSMinimumSystemVersion</key><string>14.0</string>
-<key>NSHighResolutionCapable</key><true/>
-<key>NSHumanReadableCopyright</key><string>Copyright (c) 2026 Heisenberg2024. MIT License.</string>
-<key>CFBundleDevelopmentRegion</key><string>en</string>
-<key>CFBundleLocalizations</key><array><string>en</string><string>zh-Hans</string></array>
-</dict></plist>
-PLIST
+BUNDLE_IDENTIFIER="$bundle_id" python3 Scripts/release_metadata.py --config "$task_config" --plist "$task_app/Contents/Info.plist" --icon "$task_icon_name"
+# ditto preserves Sparkle's versioned links, helpers, XPC executables and permissions.
+task_framework="$task_root/.build/artifacts/sparkle/Sparkle/Sparkle.xcframework/macos-arm64_x86_64/Sparkle.framework"
+[[ -d "$task_framework" ]] || { echo "Sparkle framework was not resolved" >&2; exit 1; }
+mkdir -p "$task_app/Contents/Frameworks"
+ditto "$task_framework" "$task_app/Contents/Frameworks/Sparkle.framework"
+python3 Scripts/sign-bundle.py "$task_app" "${CODE_SIGN_IDENTITY:--}"
+
 cp Resources/Branding/branding-guide.md "$task_app/Contents/Resources/"
 cp THIRD_PARTY_NOTICES.md "$task_app/Contents/Resources/"
 cp LICENSE "$task_app/Contents/Resources/"
 rm -rf "$task_app/Contents/Resources/Licenses"
 cp -R Resources/Licenses "$task_app/Contents/Resources/Licenses"
 codesign --force --sign "${CODE_SIGN_IDENTITY:--}" "$task_app"
-codesign --verify --strict "$task_app"
+codesign --verify --deep --strict "$task_app"
+python3 Scripts/verify-bundle.py "$task_app" --config "$task_config" "${UNIVERSAL:-0}"
 touch "$task_app"
+rm -rf "$task_root/dist/GitPier.app"
+mv "$task_app" "$task_root/dist/GitPier.app"
+task_app="$task_root/dist/GitPier.app"
 printf 'Built %s\n' "$task_app"

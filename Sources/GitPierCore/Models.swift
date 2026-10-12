@@ -57,6 +57,28 @@ public struct IndexSnapshot: Equatable, Sendable {
   public var identity: String { "\(head ?? "unborn"):\(branch):\(tree)" }
 }
 
+public struct GitOperationReview: Equatable, Sendable {
+  public let head: String?
+  public let branch: String
+  public let indexFingerprint: Data
+  public let operationIdentity: Data
+}
+
+public struct ForcePushReview: Sendable {
+  public let remote: String
+  public let branch: String
+  public let localBranch: String
+  public let localHead: String
+  public let remoteHead: String
+  public let destinationIdentity: String
+}
+public struct RemoteDeletionReview: Sendable {
+  public let remote: String
+  public let reference: String
+  public let expectedHash: String
+  public let destinationIdentity: String
+}
+
 public struct CommitResult: Sendable {
   public let hash: String
   public let output: String
@@ -103,6 +125,16 @@ public struct GitRemote: Identifiable, Equatable, Sendable {
   public let name: String
   public let fetchURL: String
   public let pushURL: String
+  public let configuredFetchURLs: [String]
+  public let configuredPushURLs: [String]
+  public let configurationID: String
+}
+
+public struct StashFile: Identifiable, Sendable {
+  public var id: String { change.path }
+  public let change: FileChange
+  public let commit: String
+  public let parent: String?
 }
 
 public struct GitStash: Identifiable, Equatable, Sendable {

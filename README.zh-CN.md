@@ -22,6 +22,7 @@ GitPier 将仓库管理、变更审查、提交和集成终端汇集在一个专
 - **统一滚动体验。** 列表、设置、帮助、提交说明、标签栏和终端缓冲区统一使用 Diff 的短覆盖滑块，滚动时加深，停顿后淡化。
 - **集成终端。** 在真实 PTY 中运行已安装的 Shell，支持多标签、分屏和搜索。每个仓库保留自己的会话和工作目录。
 - **历史与分支。** 浏览提交图，管理分支、远程、Stash 和标签，通过 Git 执行获取、拉取、推送、合并和变基。
+- **v1.1.0 开发中。** Git 原生全历史分页查询支持消息、Hash、作者、日期与分支过滤；Stash 预览复用文件列表与双栏 Diff。
 - **历史审查与布局。** 历史页复用提交页的 Diff 渲染和滚动条，按仓库保存详情高度与文件列表宽度；再次点击选中记录或按 Esc 关闭详情。
 - **编辑器与帮助。** 按优先级从带应用图标的下拉列表选择默认编辑器，并添加自定义 App。仓库和提交文件的右键菜单通过“在编辑器中打开”子菜单选择本次使用的编辑器，并保留应用图标。帮助菜单提供内置的中英文离线使用指南。
 - **凭证管理。** 使用 macOS Keychain 保存 HTTPS Token，并选择 SSH 身份配置。支持既有 Git 凭证助手、SSH 配置、Hooks 和提交签名。
@@ -49,6 +50,13 @@ GitPier 将仓库管理、变更审查、提交和集成终端汇集在一个专
 
 GitPier 要求 **macOS 14 或更高版本**。
 
+从 [GitHub Releases](https://github.com/Heisenberg2024/gitpier/releases/latest) 下载当前正式版。v1.1.0 仍在开发：发布后主要安装包将为 `GitPier-1.1.0-macos-universal.dmg`。打开 DMG，将真实的 GitPier 图标拖入 Applications，然后从 Applications 启动。
+
+v1.1.0 的内置更新采用 Sparkle 2、GitHub Releases 和 EdDSA 签名 DMG；自动检查默认关闭，下载与安装需要确认。生产公钥已配置，发行资产必须在发布前完成签名和验证。v1.0.3 没有内置更新，需要手动升级一次。
+
+当前采用 ad-hoc 签名，未使用 Apple Developer ID，也未完成 Apple 公证。首次安装可能遇到 Gatekeeper 提示；请核实来源并遵循 macOS 提供的安全选项，不要关闭 Gatekeeper 或移除隔离属性。
+
+
 ## 从源码构建
 
 需要 macOS、**Xcode 16 或更高版本**及其命令行工具、**Swift 6.0 或更高版本**和 Git。依赖通过 Swift Package Manager 管理，并由 `Package.resolved` 锁定。可在 Xcode 中打开 `Package.swift` 浏览工程，或在仓库根目录构建应用：
@@ -58,10 +66,10 @@ Scripts/build-app.sh
 open dist/GitPier.app
 ```
 
-脚本为当前架构构建 Release 应用、打包资源并执行本地 ad-hoc 签名。生成包含 Apple silicon 和 Intel 二进制的本地通用压缩包：
+脚本为当前架构构建 Release 应用、打包资源并执行本地 ad-hoc 签名。生成包含 Apple silicon 和 Intel 二进制的本地通用 DMG 候选包（需要 Finder 图形会话）：
 
 ```bash
-UNIVERSAL=1 Scripts/package-release.sh
+Scripts/package-release.sh --unsigned-candidate
 ```
 
 测试与构建选项见[开发说明](docs/development.md)，实现细节见[架构说明](docs/architecture.md)。
@@ -74,7 +82,7 @@ Git 操作在本机执行。受管理的 HTTPS Token 保存在 macOS Keychain �
 
 ## 参与贡献
 
-仓库公开后欢迎提交问题报告与 Pull Request。请先阅读[贡献指南](CONTRIBUTING.md)，使用临时仓库复现 Git 问题，并移除附件中的私人数据。
+欢迎提交问题报告与 Pull Request。请先阅读[贡献指南](CONTRIBUTING.md)，使用临时仓库复现 Git 问题，并移除附件中的私人数据。
 
 ## 许可证
 

@@ -22,6 +22,7 @@ GitPier brings repository management, change review, commits, and an integrated 
 - **Consistent scrolling.** Lists, settings, help, commit messages, tabs, and terminal scrollback share the Diff's compact overlay scrollbars, which brighten while scrolling and fade when idle.
 - **Integrated terminal.** Run your installed shell in a real PTY, with multiple tabs, splits, and search. Each repository keeps its own sessions and working directory.
 - **History and branches.** Browse the commit graph and manage branches, remotes, stashes, and tags. Fetch, pull, push, merge, and rebase using Git.
+- **v1.1.0 development.** Native paged full-history queries add message, hash, author, date and branch filters. Stash previews reuse the file list and side-by-side Diff.
 - **Persistent history review.** History uses the same Diff renderer and scrollbars as the commit workspace. Resize the detail pane once per repository; click the selected commit again or press Esc to close it.
 - **Editors and help.** Select your default editor from a priority-sorted list with application icons, or add custom Apps from the dropdown. The repository and commit-file context menus provide an Open in Editor submenu with application icons for one-time editor choices. The Help menu opens an offline English / Simplified Chinese guide.
 - **Managed credentials.** Store HTTPS tokens in macOS Keychain and select SSH identity profiles. Existing Git helpers, SSH configuration, hooks, and commit signing remain available.
@@ -49,6 +50,13 @@ Opening or selecting a repository always shows the Commit page; the current page
 
 GitPier requires **macOS 14 or later**.
 
+Download the current stable version from [GitHub Releases](https://github.com/Heisenberg2024/gitpier/releases/latest). **v1.1.0 is in development**: after release, its primary installer will be `GitPier-1.1.0-macos-universal.dmg`. Open the DMG, drag the real GitPier icon to Applications, and launch GitPier from Applications.
+
+The v1.1.0 updater uses Sparkle 2, GitHub Releases, and EdDSA-signed DMGs. Automatic checks default to off; downloads and installation require confirmation. The production public key is configured; release assets must be signed and verified before publication. v1.0.3 requires a one-time manual upgrade.
+
+Current builds use ad-hoc signing without Apple Developer ID or Apple notarization. Gatekeeper may show a warning on first installation. Verify the source and follow macOS's available security choices; do not disable Gatekeeper or remove quarantine attributes.
+
+
 ## Build from source
 
 Use macOS with **Xcode 16 or later**, its command-line tools, **Swift 6.0 or later**, and Git. Dependencies are managed by Swift Package Manager and locked in `Package.resolved`. Open `Package.swift` in Xcode to browse the project, or build the application from the repository root:
@@ -58,10 +66,10 @@ Scripts/build-app.sh
 open dist/GitPier.app
 ```
 
-The script builds a Release application for the current architecture, packages resources, and applies a local ad-hoc signature. For a local universal archive containing Apple silicon and Intel binaries:
+The script builds a Release application for the current architecture, packages resources, and applies a local ad-hoc signature. For a local universal DMG candidate containing Apple silicon and Intel binaries (requires a Finder GUI session):
 
 ```bash
-UNIVERSAL=1 Scripts/package-release.sh
+Scripts/package-release.sh --unsigned-candidate
 ```
 
 See [development](docs/development.md) for tests and build options, and [architecture](docs/architecture.md) for implementation details.
@@ -74,7 +82,7 @@ Commit review preserves the external Index and partial staging. Destructive oper
 
 ## Contributing
 
-Bug reports and pull requests are welcome when the repository is published. Please read [CONTRIBUTING.md](CONTRIBUTING.md), use a disposable repository to reproduce Git issues, and remove private data from attachments.
+Bug reports and pull requests are welcome in the public repository. Please read [CONTRIBUTING.md](CONTRIBUTING.md), use a disposable repository to reproduce Git issues, and remove private data from attachments.
 
 ## License
 

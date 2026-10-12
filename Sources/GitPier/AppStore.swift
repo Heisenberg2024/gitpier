@@ -4,16 +4,27 @@ import SwiftUI
 import UserNotifications
 
 @MainActor final class AppStore: ObservableObject {
-  static let shared = AppStore(
-    persistence: ConfigurationStore(
-      url: ProcessInfo.processInfo.environment["GITPIER_WORKSPACE_FILE"].map {
-        URL(fileURLWithPath: $0)
-      }))
+  static let shared: AppStore = {
+    let info = Bundle.main
+    let testing = info.object(forInfoDictionaryKey: "GitPierTestingUpdates") as? Bool == true
+      && (info.bundleIdentifier ?? "").hasPrefix("com.heisenberg2024.gitpier.update-test.")
+    if testing {
+      guard let path = info.object(forInfoDictionaryKey: "GitPierTestWorkspacePath") as? String,
+            path.contains("/.cache/update-acceptance/") || path.hasPrefix("/private/tmp/GitPier-update-acceptance-") else {
+        fatalError("Update tests require persistent isolated workspace metadata")
+      }
+      return AppStore(persistence: ConfigurationStore(url: URL(fileURLWithPath: path)))
+    }
+    return AppStore(persistence: ConfigurationStore(
+      url: ProcessInfo.processInfo.environment["GITPIER_WORKSPACE_FILE"].map { URL(fileURLWithPath: $0) }))
+  }()
   @Published var configuration: WorkspaceConfiguration
   @Published var selectedID: UUID?
   @Published var showDashboard = true
   @Published var error: String?
   @Published var notice: String?
+  lazy var updates = UpdateManager(store: self)
+  var hasRunningGitOperations: Bool { cloning || models.values.contains { $0.busy || $0.committing } }
   let cloneActivity = OperationProgress()
   @Published var cloning = false
   @Published var cloneTask: Task<Void, Never>?
@@ -58,6 +69,7 @@ import UserNotifications
       (NSFont(name: configuration.settings.diffFont, size: configuration.settings.diffFontSize)
       ?? NSFont.monospacedSystemFont(ofSize: configuration.settings.diffFontSize, weight: .regular))
       .fontName
+    applyNativeAppearance()
     updateSystemAppearance()
     appearanceObserver = DistributedNotificationCenter.default().addObserver(
       forName: Notification.Name("AppleInterfaceThemeChangedNotification"), object: nil,
@@ -70,12 +82,19 @@ import UserNotifications
     ) { [weak self] _ in
       Task { @MainActor [weak self] in await self?.refreshVisibleRepositories() }
     }
+    configureFrameworkLanguage()
     selectedID = configuration.selectedRepository
     showDashboard = settings.launchPage == "dashboard" || selectedID == nil
     for record in configuration.repositories {
       models[record.id] = RepositoryModel(record: record, store: self)
     }
     if let selectedID, let model = models[selectedID] { Task { await model.activate() } }
+  }
+  private func configureFrameworkLanguage() {
+    guard Bundle.main.bundlePath.hasSuffix(".app"),
+          (Bundle.main.bundleIdentifier ?? "").hasPrefix("com.heisenberg2024.gitpier") else { return }
+    // App-owned preferences only. Sparkle/AppKit read their language at process startup.
+    UserDefaults.standard.set([settings.language == .english ? "en" : "zh-Hans"], forKey: "AppleLanguages")
   }
   func text(_ english: String, _ chinese: String) -> String {
     settings.language == .english ? english : chinese
@@ -115,6 +134,10 @@ import UserNotifications
       ? .dark : .light
     if systemColorScheme != scheme { systemColorScheme = scheme }
   }
+  private func applyNativeAppearance() {
+    NSApplication.shared.appearance = settings.appearance == .system
+      ? nil : NSAppearance(named: settings.appearance == .dark ? .darkAqua : .aqua)
+  }
   func save() {
     pendingSave?.cancel()
     pendingSave = nil
@@ -143,7 +166,14 @@ import UserNotifications
     let previous = configuration.settings
     guard previous != settings else { return }
     configuration.settings = settings
-    if previous.appearance != settings.appearance { updateSystemAppearance() }
+    if previous.language != settings.language {
+      configureFrameworkLanguage()
+      notice = text("Restart GitPier for update dialogs to use the selected language.", "重新启动 GitPier 后，更新对话框会使用所选语言。")
+    }
+    if previous.appearance != settings.appearance {
+      applyNativeAppearance()
+      updateSystemAppearance()
+    }
     save()
     for model in models.values {
       if previous.gitPath != settings.gitPath
@@ -416,7 +446,9 @@ struct DiffTab: Identifiable, Equatable {
   @Published var filter = "all"
   @Published var treeMode = false
   @Published var expandedDirectories: Set<String> = []
-  @Published var busy = false
+  @Published var busy = false {
+    didSet { if busy != oldValue { store.objectWillChange.send() } }
+  }
   @Published var committing = false
   @Published var refreshing = false
   @Published var available = false
@@ -442,6 +474,8 @@ struct DiffTab: Identifiable, Equatable {
   private var historyGeneration = 0
   private(set) var historyReadCount = 0
   @Published var historyPath: String?
+  @Published var historyQuery: HistoryQuery?
+  @Published private(set) var historyError: String?
   @Published var selectedHistoryCommit: CommitRecord?
   @Published var historyHasMore = true
   @Published var branches: [GitBranch] = []
@@ -462,6 +496,8 @@ struct DiffTab: Identifiable, Equatable {
   @Published private(set) var stagedAdditions = 0
   @Published private(set) var stagedDeletions = 0
   private var activeTask: Task<Void, Never>?
+  private var confirmationReviewTask: Task<Void, Never>?
+  private var confirmationReviewID = UUID()
   private var diffTask: Task<Void, Never>?
   private var diffGeneration = 0
   private var diffCache: [DiffCacheKey: CachedDiff] = [:]
@@ -907,6 +943,9 @@ struct DiffTab: Identifiable, Equatable {
     _ action: @escaping (GitService) async throws -> Void
   ) {
     guard !busy else { return }
+    confirmationReviewID = UUID()
+    confirmationReviewTask?.cancel()
+    confirmationReviewTask = nil
     busy = true
     error = nil
     output = nil
@@ -963,6 +1002,7 @@ struct DiffTab: Identifiable, Equatable {
             "存在需要解决的冲突。请在“解决冲突”中审查文件、保存结果，再继续 Git 操作。") + diagnosis
         outputResult = .needsAttention
         error = nil
+        result = .needsAttention
       }
       activity.finish(result, ticket: progressTicket)
       if notify, let output { store.notifyCompletion(output) }
@@ -1075,7 +1115,7 @@ struct DiffTab: Identifiable, Equatable {
     }
   }
   func network(
-    _ operation: String, remote: String? = nil, branch: String? = nil, force: Bool = false
+    _ operation: String, remote: String? = nil, branch: String? = nil, force: Bool = false, forceReview: ForcePushReview? = nil
   ) {
     let title =
       operation == "push"
@@ -1093,7 +1133,7 @@ struct DiffTab: Identifiable, Equatable {
       do {
         output = try await git.network(
           operation, remote: remote, branch: branch, strategy: store.settings.pullStrategy,
-          forceWithLease: force, progress: progress)
+          forceWithLease: force, forceReview: forceReview, progress: progress)
         if operation == "push" {
           pushFailed = false
           rejectedPush = nil
@@ -1338,28 +1378,115 @@ struct DiffTab: Identifiable, Equatable {
         "将移除未暂存修改、删除未跟踪文件，保留暂存内容。") + "\n\n" + files.map(\.path).joined(separator: "\n")
     ) { [weak self] in self?.run { git in for file in files { try await git.discard(file) } } }
   }
+  func confirmForcePush(remote: String) {
+    guard !busy else { return }
+    let id = UUID()
+    confirmationReviewID = id
+    confirmationReviewTask?.cancel()
+    let branch = status.branch
+    confirmationReviewTask = Task { [weak self] in
+      guard let self else { return }
+      do {
+        let review = try await git().reviewForcePush(remote: remote, branch: branch)
+        try Task.checkCancellation()
+        guard confirmationReviewID == id, store.current === self, !store.showDashboard,
+              page == "remotes", !busy else { return }
+        guard status.head == review.localHead, status.branch == review.localBranch else {
+          error = store.text("The repository changed. Refresh before reviewing Force with Lease.", "仓库已改变，请刷新后重新审查强制推送。")
+          return
+        }
+        confirmation = PendingAction(
+          title: store.text("Force Push with Lease?", "使用固定租约强制推送？"),
+          detail: store.text("This rewrites remote history. Only the reviewed commit and remote lease will be used.",
+                             "这会重写远程历史，仅使用已审查的本地提交与远程租约。")
+            + "\n" + String(review.localHead.prefix(8)) + " → " + remote + "/" + branch
+            + "\n" + store.text("Expected remote: ", "预期远程提交：")
+            + (review.remoteHead.isEmpty ? store.text("branch must not exist", "分支必须不存在") : String(review.remoteHead.prefix(8)))) { [weak self] in
+              self?.network("push", remote: remote, branch: branch, force: true, forceReview: review)
+            }
+      } catch {
+        if !Task.isCancelled, confirmationReviewID == id { self.error = GitService.redact(error.localizedDescription) }
+      }
+    }
+  }
+  func confirmRemoteDeletion(remote: String, reference: String, expectedHash: String? = nil) {
+    guard !busy else { return }
+    let id = UUID()
+    confirmationReviewID = id
+    confirmationReviewTask?.cancel()
+    let requestedPage = page
+    confirmationReviewTask = Task { [weak self] in
+      guard let self else { return }
+      do {
+        let review = try await git().reviewRemoteDeletion(remote: remote, reference: reference, expectedHash: expectedHash)
+        try Task.checkCancellation()
+        guard confirmationReviewID == id, store.current === self, !store.showDashboard,
+          page == requestedPage, !busy else { return }
+        confirmation = PendingAction(title: store.text("Delete remote reference?", "删除远程引用？"),
+          detail: store.text("This removes the selected branch or tag from the reviewed server and affects collaborators. A fixed lease protects a changed remote version.",
+                             "这会从已审查的服务器删除所选分支或标签，并影响协作者；固定租约将保护发生变化的远程版本。")
+            + "\n\n" + remote + " · " + reference + " · " + String(review.expectedHash.prefix(8))) { [weak self] in
+              self?.run { [weak self] git in self?.output = try await git.deleteRemoteReference(review) }
+            }
+      } catch {
+        if !Task.isCancelled, confirmationReviewID == id { self.error = GitService.redact(error.localizedDescription) }
+      }
+    }
+  }
   func perform(_ args: [String], confirmation detail: String? = nil) {
-    let action: () -> Void = { [weak self] in
+    guard !busy else { return }
+    confirmationReviewID = UUID()
+    confirmationReviewTask?.cancel()
+    let action: (GitOperationReview?) -> Void = { [weak self] review in
       self?.run { [weak self] git in
-        self?.output = try await git.perform(args)
+        self?.output = try await git.perform(args, expected: review)
         if args == ["merge", "--abort"] { self?.conflictPush = nil }
       }
     }
-    if let detail {
-      confirmation = PendingAction(
-        title: store.text("Confirm Git operation", "确认 Git 操作"), detail: detail, action: action)
-    } else {
-      action()
+    guard let detail else { action(nil); return }
+    let localRewrite = ["reset", "switch", "merge", "rebase", "cherry-pick", "revert"].contains(args.first ?? "")
+    if !localRewrite {
+      confirmation = PendingAction(title: store.text("Confirm Git operation", "确认 Git 操作"), detail: detail) { action(nil) }
+      return
+    }
+    let id = UUID()
+    confirmationReviewID = id
+    confirmationReviewTask?.cancel()
+    let requestedPage = page
+    let expectedIndex = snapshot
+    confirmationReviewTask = Task { [weak self] in
+      guard let self else { return }
+      do {
+        let review = try await git().reviewOperation(expectedIndex: expectedIndex)
+        try Task.checkCancellation()
+        guard confirmationReviewID == id, store.current === self, !store.showDashboard,
+              page == requestedPage, !busy else { return }
+        guard status.head == review.head, status.branch == review.branch else {
+          error = store.text("The repository changed. Refresh before confirming this operation.", "仓库已改变，请刷新后重新确认操作。")
+          return
+        }
+        confirmation = PendingAction(title: store.text("Confirm Git operation", "确认 Git 操作"),
+          detail: detail + "\n\n" + review.branch + " · " + String((review.head ?? "unborn").prefix(8))) { action(review) }
+      } catch {
+        if !Task.isCancelled, confirmationReviewID == id { self.error = GitService.redact(error.localizedDescription) }
+      }
     }
   }
   func ensureHistory() async {
-    let key = (status.head ?? "") + "\0" + (historyPath ?? "")
+    let key = (status.head ?? "") + "\0" + (historyPath ?? "") + "\0" + (historyQuery?.identity ?? "")
     guard historyReadyKey != key else { return }
     await loadHistory(reset: true)
   }
+  func cancelHistoryLoading() {
+    historyGeneration += 1
+    historyTask?.cancel()
+    historyTask = nil
+    historyLoading = false
+  }
   func loadHistory(reset: Bool = false, path: String? = nil) async {
     let filter = path ?? historyPath
-    let headKey = (status.head ?? "") + "\0" + (filter ?? "")
+    let requestedQuery = historyQuery
+    let headKey = (status.head ?? "") + "\0" + (filter ?? "") + "\0" + (requestedQuery?.identity ?? "")
     let offset = reset ? 0 : history.count
     let key = headKey + ":\(offset)"
     if let task = historyTask, historyTaskKey == key {
@@ -1371,12 +1498,20 @@ struct DiffTab: Identifiable, Equatable {
     let generation = historyGeneration
     historyTaskKey = key
     historyLoading = true
+    historyError = nil
+    if reset {
+      historyReadyKey = nil
+      history = []
+      historyGraph = [:]
+      selectedHistoryCommit = nil
+      historyHasMore = false
+    }
     historyReadCount += 1
     let previous = reset ? [] : history
     let task = Task { [weak self] in
       guard let self else { return }
       do {
-        let records = try await git().history(skip: offset, path: filter)
+        let records = try await git().history(skip: offset, path: filter, query: requestedQuery)
         let presentation = await Task.detached(priority: .userInitiated) {
           var seen: Set<String> = []
           let combined = (previous + records).filter { seen.insert($0.hash).inserted }
@@ -1392,7 +1527,7 @@ struct DiffTab: Identifiable, Equatable {
         historyHasMore = records.count == 100
         historyReadyKey = headKey
       } catch is CancellationError {} catch {
-        if generation == historyGeneration { self.error = error.localizedDescription }
+        if generation == historyGeneration, !Task.isCancelled { historyError = GitService.redact(error.localizedDescription) }
       }
     }
     historyTask = task
@@ -1432,6 +1567,7 @@ struct DiffTab: Identifiable, Equatable {
     activationTask?.cancel()
     refreshTask?.cancel()
     activeTask?.cancel()
+    confirmationReviewTask?.cancel()
     historyTask?.cancel()
     diffTask?.cancel()
     invalidateDiffCache()

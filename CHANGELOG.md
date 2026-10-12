@@ -1,21 +1,31 @@
 # Changelog
 
-## Unreleased
+## Unreleased — v1.1.0 development
+
+- Fix clearing explicit Push URLs, retain additional fetch/push destinations and credentials, and reject stale remote edits.
+- Add native paged full-history queries for message, hash, author, date, current branch or all local/remote branches, alongside loaded-commit filtering.
+- Preview stash files and untracked changes in the shared side-by-side Diff; cancel stale reads and reject removed stash entries.
+- Report conflict operations as requiring attention and protect all ongoing Git/clone work from quit or update restart.
+- Bind local rewrite/abort confirmations to reviewed HEAD, Index and operation state; use a fixed remote lease and immutable local commit for force-push. Reject stale untracked deletion after external staging.
+- Add a 720 × 420-point Retina DMG installer background, real Applications symlink and verified Finder layout; package HFS+ / LZFSE images and validate the mounted bundle/signatures.
+- Share one Sparkle standard updater between About and the menu, with opt-in checks, user-confirmed installation, signed feeds and archive validation before extraction. Preserve workspace/drafts through relaunch and protect Git/terminal/conflict lifecycles.
+- Add Keychain key-initialization/backup, DMG signing, public-key signature/Appcast validation and isolated update acceptance tools. Complete a disposable-key self-update and reject altered feeds/packages and failed downloads; production signing uses the owner's dedicated Keychain account.
+- Update bilingual installation/development/security documentation, retain historical releases, include Sparkle's full licenses, and add CI metadata/temporary-image checks with permission-preserving development archives.
+- Centralize version/build/release identity; build and verify the embedded Sparkle 2.10.0 framework, helpers, links and universal slices. Configure the production update public key and provide encrypted private-key backup verification; candidates with missing keys still disable updates.
+
+## 1.0.3 — 2026-10-12
 
 - Add a native conflict-resolution page with Current/Incoming/Base previews, editable results, per-block Current/Incoming/Both choices, file-owned drafts and explicit save/stage confirmation.
 - Warn before discarding unsaved conflict drafts on last-window close or quit; retain the approved push destination and offer another merge if the remote advances during recovery.
 - Match the discard-draft alert to the application theme and icon, use readable neutral buttons and make Cancel the default Return action.
 - Protect external file, Index, branch and operation changes; retain partial staging, file permissions and CRLF. Offer whole-version/deletion choices for binary or large regular files, and preserve unsupported file-type/submodule conflicts for external resolution.
 - Review and complete merge commits through the existing private Index, hooks and signing checks, then continue the original merge-and-push destination. Open new conflicts in the editor and disable continuation/push until files are resolved.
-- Update the local development bundle to build 16.
-
-## 1.0.3 — 2026-10-12
 
 - Offer Merge & Push after a single current-branch push is rejected because remote commits are missing locally. Fetch the actual push destination, explicitly merge after confirmation, and push only after success; preserve local commits, partial staging and conflict state.
 - Keep authentication and server-policy failures in the existing error flow, and distinguish pending merge or failed recovery from completed operations in English and Simplified Chinese.
 - Share the Diff's 6-point overlay scrollbars across lists, settings forms, help, commit messages, tab strips and terminal scrollback; retain fixed 150-point vertical / 56-point horizontal thumbs, small-viewport clipping, native dragging and idle fading.
 - Preserve native SwiftUI scrolling, list virtualization, per-repository scroll positions, Diff vertical synchronization and Index-left placement; hide thumbs when content fits and keep operating-system file choosers unchanged.
-- Update the local application and universal archive to 1.0.3 (build 15).
+- Update the local application and universal archive to 1.0.3 (build 16).
 
 ## 1.0.2 — 2026-10-11
 

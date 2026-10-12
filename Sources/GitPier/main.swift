@@ -78,6 +78,9 @@ struct GitPierApp: App {
             NSApp.orderFrontStandardAboutPanel(options: options)
           }
         }
+        CommandGroup(after: .appInfo) {
+          UpdateCheckMenu(manager: store.updates).environmentObject(store)
+        }
         CommandGroup(replacing: .newItem) {
           Button(store.text("Open Repository…", "打开仓库…")) { store.openRepository() }
             .keyboardShortcut("o")
@@ -154,6 +157,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     NSApp.setActivationPolicy(.regular)
     if let icon = AppResources.applicationIcon { NSApp.applicationIconImage = icon }
     NSApp.activate(ignoringOtherApps: true)
+    AppStore.shared.updates.start()
     if let index = CommandLine.arguments.firstIndex(of: "--repository"),
       CommandLine.arguments.count > index + 1
     {
@@ -164,16 +168,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
   }
   func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
     let store = AppStore.shared
-    if store.models.values.contains(where: \.committing) {
+    if store.hasRunningGitOperations {
       let alert = NSAlert()
-      alert.messageText = store.text("A commit is finishing", "提交正在完成")
+      alert.messageText = store.text("A Git operation is running", "Git 操作正在运行")
       alert.informativeText = store.text(
-        "Wait for the atomic commit to finish before quitting.", "请等待原子提交完成后再退出。 ")
+        "Wait for Git operations to finish before quitting or installing an update.", "请等待 Git 操作完成后再退出或安装更新。")
       alert.runModal()
+      store.updates.terminationWasCancelled()
       return .terminateCancel
     }
     if !store.unsavedConflictDrafts.isEmpty {
-      if !store.confirmDiscardConflictDrafts(quitting: true) { return .terminateCancel }
+      if !store.confirmDiscardConflictDrafts(quitting: true) {
+        store.updates.terminationWasCancelled()
+        return .terminateCancel
+      }
     } else if store.models.values.contains(where: { $0.terminal.sessions.contains { !$0.exited } })
     {
       let alert = NSAlert()
@@ -183,7 +191,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         "将停止终端会话及其作业，提交草稿已保存。")
       alert.addButton(withTitle: store.text("Quit", "退出"))
       alert.addButton(withTitle: store.text("Cancel", "取消"))
-      if alert.runModal() != .alertFirstButtonReturn { return .terminateCancel }
+      if alert.runModal() != .alertFirstButtonReturn {
+        store.updates.terminationWasCancelled()
+        return .terminateCancel
+      }
     }
     store.shutdown()
     return .terminateNow

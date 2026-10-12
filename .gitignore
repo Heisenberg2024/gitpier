@@ -21,6 +21,9 @@ xcuserdata/
 /Build/
 /dist/
 /.cache/
+__pycache__/
+*.pyc
+*.pyo
 /tmp/
 *.app/
 *.dmg

@@ -381,6 +381,9 @@ public actor GitService {
     try InputValidation.repositoryPath(file.path)
     try await writing {
       if file.isUntracked {
+        guard try await status().untracked.contains(where: { $0.path == file.path }) else {
+          throw GitPierError.indexChanged
+        }
         // Resolving parent components prevents a symlink directory escaping the working tree.
         let target = root.appendingPathComponent(file.path)
         let parent = target.deletingLastPathComponent().resolvingSymlinksInPath().path
@@ -711,14 +714,35 @@ public actor GitService {
       try await read(args + ["-"], input: patch)
     }
   }
-  public func history(skip: Int = 0, count: Int = 100, path: String? = nil) async throws
+  public func history(skip: Int = 0, count: Int = 100, path: String? = nil, query: HistoryQuery? = nil) async throws
     -> [CommitRecord]
   {
     var args = [
-      "log", "--topo-order", "--date-order", "--skip=\(max(0, skip))",
+      "--literal-pathspecs", "log", "--topo-order", "--date-order", "--skip=\(max(0, skip))",
       "-\(max(1, min(count, 500)))", "--format=%H%x00%P%x00%an%x00%ae%x00%at%x00%s%x00%b%x00%D%x00",
       "-z",
     ]
+    if let query {
+      try query.validate()
+      args += ["--fixed-strings", "--regexp-ignore-case"]
+      if !query.message.isEmpty { args.append("--grep=" + query.message) }
+      if !query.author.isEmpty { args.append("--author=" + query.author) }
+      if !query.after.isEmpty { args.append("--since=" + query.after + "T00:00:00") }
+      if !query.before.isEmpty { args.append("--until=" + query.before + "T23:59:59") }
+      if !query.hash.isEmpty {
+        let resolved = try await read(["rev-parse", "--verify", query.hash + "^{commit}"], allowFailure: true)
+        guard resolved.code == 0 else { return [] }
+        let hash = resolved.text.trimmingCharacters(in: .whitespacesAndNewlines)
+        if query.scope == .currentBranch {
+          guard try await read(["merge-base", "--is-ancestor", hash, "HEAD"], allowFailure: true).code == 0 else { return [] }
+        } else {
+          guard !(try await read(["for-each-ref", "--format=%(objectname)", "--contains=" + hash, "refs/heads", "refs/remotes", "refs/tags"]).stdout).isEmpty else { return [] }
+        }
+        args += ["--no-walk", hash]
+      } else if query.scope == .allReferences {
+        args += ["--branches", "--remotes", "--tags"]
+      } else { args.append("HEAD") }
+    }
     if let path {
       try InputValidation.repositoryPath(path)
       args += ["--", path]
@@ -823,13 +847,91 @@ public actor GitService {
         in: .whitespacesAndNewlines)
       let push = try await read(["remote", "get-url", "--push", "--", name]).text
         .trimmingCharacters(in: .whitespacesAndNewlines)
-      result.append(GitRemote(name: name, fetchURL: Self.redact(fetch), pushURL: Self.redact(push)))
+      let urls = try await remoteConfiguration(name)
+      result.append(GitRemote(
+        name: name, fetchURL: Self.redact(fetch), pushURL: Self.redact(push),
+        configuredFetchURLs: urls.0.map(Self.redact), configuredPushURLs: urls.1.map(Self.redact),
+        configurationID: Self.remoteConfigurationID(urls)))
     }
     return result
+  }
+  private func remoteConfiguration(_ name: String, local: Bool = false) async throws -> ([String], [String]) {
+    var values: [[String]] = []
+    for suffix in ["url", "pushurl"] {
+      let result = try await read(
+        ["config"] + (local ? ["--local"] : []) + ["--null", "--get-all", "remote.\(name).\(suffix)"],
+        allowFailure: true)
+      guard result.code == 0 || result.code == 1 else {
+        throw GitPierError.command("config", result.code, Self.redact(result.errorText))
+      }
+      values.append(result.stdout.split(separator: 0).map { String(decoding: $0, as: UTF8.self) })
+    }
+    return (values[0], values[1])
+  }
+  private static func remoteConfigurationID(_ values: ([String], [String])) -> String {
+    let data = (try? JSONEncoder().encode([values.0, values.1])) ?? Data()
+    return SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+  }
+  /// Edit the first fetch URL while retaining additional destinations. Multiple push URLs are
+  /// intentionally read-only in this compact editor; Git's full configuration remains intact.
+  public func saveRemote(name: String, fetchURL: String, pushURL: String, expected: GitRemote?) async throws {
+    try InputValidation.reference(name)
+    try await writing {
+      if let expected {
+        guard expected.name == name else { throw GitPierError.invalidInput("Refresh the remote before editing.") }
+        let values = try await remoteConfiguration(name)
+        guard Self.remoteConfigurationID(values) == expected.configurationID else {
+          throw GitPierError.invalidInput("The remote configuration changed. Refresh and review it again.")
+        }
+        let local = try await remoteConfiguration(name, local: true)
+        guard values.0 == local.0, values.1 == local.1, let oldFetch = values.0.first else {
+          throw GitPierError.invalidInput("This remote inherits configuration. Edit it using Git in the terminal.")
+        }
+        let oldPush = values.1.first ?? ""
+        let changeFetch = fetchURL != Self.redact(oldFetch)
+        let changePush = pushURL != Self.redact(oldPush)
+        if changeFetch {
+          try InputValidation.remoteURL(fetchURL)
+          guard !values.0.dropFirst().contains(oldFetch) else {
+            throw GitPierError.invalidInput("Duplicate fetch URLs are preserved. Edit them using Git in the terminal.")
+          }
+        }
+        if changePush {
+          guard values.1.count <= 1 else {
+            throw GitPierError.invalidInput("Multiple push URLs are preserved. Edit them using Git in the terminal.")
+          }
+          if !pushURL.isEmpty { try InputValidation.remoteURL(pushURL) }
+        }
+        // Validate every input before the first write. Unchanged redacted URLs retain secrets.
+        if changeFetch {
+          try await read(["config", "--local", "--fixed-value", "--replace-all", "remote.\(name).url", fetchURL, oldFetch])
+        }
+        if changePush {
+          if pushURL.isEmpty {
+            if !values.1.isEmpty {
+              try await read(["config", "--local", "--fixed-value", "--unset-all", "remote.\(name).pushurl", oldPush])
+            }
+          } else {
+            if values.1.isEmpty {
+              try await read(["config", "--local", "--add", "remote.\(name).pushurl", pushURL])
+            } else {
+              try await read(["config", "--local", "--fixed-value", "--replace-all", "remote.\(name).pushurl", pushURL, oldPush])
+            }
+          }
+        }
+      } else {
+        try InputValidation.remoteURL(fetchURL)
+        if !pushURL.isEmpty { try InputValidation.remoteURL(pushURL) }
+        try await read(["remote", "add", "--", name, fetchURL])
+        if !pushURL.isEmpty { try await read(["remote", "set-url", "--push", "--", name, pushURL]) }
+      }
+      _ = try await remotes()
+    }
   }
   public func network(
     _ operation: String, remote: String? = nil, branch: String? = nil,
     strategy: String = "configured", forceWithLease: Bool = false,
+    forceReview: ForcePushReview? = nil,
     progress: (@Sendable (GitTransferProgress) -> Void)? = nil
   ) async throws -> String {
     guard ["fetch", "pull", "push"].contains(operation) else {
@@ -846,17 +948,24 @@ public actor GitService {
         if strategy == "merge" { args.append("--no-rebase") }
       }
       if forceWithLease {
-        guard operation == "push" else {
-          throw GitPierError.invalidInput("Force is only available for push")
+        guard operation == "push", let forceReview, remote == forceReview.remote,
+          branch == forceReview.branch else {
+          throw GitPierError.invalidInput("Review the force-push destination and lease before pushing.")
         }
-        args.append("--force-with-lease")
+        let current = try await status()
+        guard current.head == forceReview.localHead, current.branch == forceReview.localBranch,
+          current.operation == nil,
+          try await forceDestinationIdentity(forceReview.remote) == forceReview.destinationIdentity else {
+          throw GitPierError.invalidInput("The branch, HEAD or push destination changed. Review Force with Lease again.")
+        }
+        args.append("--force-with-lease=refs/heads/" + forceReview.branch + ":" + forceReview.remoteHead)
       }
-      if operation == "push", remote != nil, branch != nil { args.append("--set-upstream") }
+      if operation == "push", remote != nil, branch != nil, !forceWithLease { args.append("--set-upstream") }
       if let remote { args.append(remote) }
       if let branch {
         if operation == "push", remote != nil {
           try await read(["check-ref-format", "refs/heads/" + branch])
-          args.append("HEAD:refs/heads/" + branch)
+          args.append((forceWithLease ? forceReview!.localHead : "HEAD") + ":refs/heads/" + branch)
         } else {
           args.append(branch)
         }
@@ -879,6 +988,27 @@ public actor GitService {
       }
       return Self.redact(result.text + result.errorText)
     }
+  }
+  private func forceDestinationIdentity(_ remote: String) async throws -> String {
+    let configured = try await remoteConfiguration(remote)
+    let effective = try await read(["remote", "get-url", "--push", "--all", "--", remote]).stdout
+    guard effective.split(separator: 10).count == 1 else {
+      throw GitPierError.invalidInput("Review multiple push destinations in the terminal before changing remote references.")
+    }
+    return Self.remoteConfigurationID(configured) + ":" + SHA256.hash(data: effective).map { String(format: "%02x", $0) }.joined()
+  }
+  public func reviewForcePush(remote: String, branch: String) async throws -> ForcePushReview {
+    try InputValidation.reference(remote)
+    try InputValidation.reference(branch)
+    try await read(["check-ref-format", "refs/heads/" + branch])
+    let state = try await status()
+    guard let head = state.head, state.operation == nil else {
+      throw GitPierError.invalidInput("Finish the Git operation before reviewing Force with Lease.")
+    }
+    let remoteHead = try await read(["rev-parse", "--verify", "refs/remotes/" + remote + "/" + branch], allowFailure: true)
+    return ForcePushReview(remote: remote, branch: branch, localBranch: state.branch, localHead: head,
+                          remoteHead: remoteHead.code == 0 ? remoteHead.text.trimmingCharacters(in: .whitespacesAndNewlines) : "",
+                          destinationIdentity: try await forceDestinationIdentity(remote))
   }
   private static func pushRejection(
     _ result: CommandResult, localReference: String, localHead: String, upstreamRemote: String?
@@ -1033,8 +1163,21 @@ public actor GitService {
     }
   }
   /// Arguments are constructed by typed UI actions, never from a shell command field.
-  @discardableResult public func perform(_ arguments: [String]) async throws -> String {
+  public func reviewOperation(expectedIndex: IndexSnapshot? = nil) async throws -> GitOperationReview {
+    if let expectedIndex, try await snapshot().identity != expectedIndex.identity { throw GitPierError.indexChanged }
+    let state = try await status()
+    let entries = try await read(["ls-files", "--stage", "-z"]).stdout
+    let operation = try await conflictOperationIdentity()
+    let after = try await status()
+    guard state.head == after.head, state.branch == after.branch, state.operation == after.operation else {
+      throw GitPierError.indexChanged
+    }
+    return GitOperationReview(head: state.head, branch: state.branch,
+                              indexFingerprint: Data(SHA256.hash(data: entries)), operationIdentity: operation)
+  }
+  @discardableResult public func perform(_ arguments: [String], expected: GitOperationReview? = nil) async throws -> String {
     try await writing {
+      if let expected, try await reviewOperation() != expected { throw GitPierError.indexChanged }
       let result = try await read(arguments)
       return Self.redact(result.text + result.errorText)
     }
@@ -1066,6 +1209,9 @@ public actor GitService {
       throw GitPierError.invalidInput("Invalid stash action")
     }
     return try await writing {
+      guard try await stashes().contains(where: { $0.hash == stash.hash }) else {
+        throw GitPierError.invalidInput("The stash was removed. Refresh and review the stash list again.")
+      }
       if action != "apply" {
         let actual = try await read(["rev-parse", "--verify", stash.reference]).text
           .trimmingCharacters(in: .whitespacesAndNewlines)
@@ -1080,16 +1226,53 @@ public actor GitService {
       return result.text + result.errorText
     }
   }
+  public func stashFiles(_ stash: GitStash) async throws -> [StashFile] {
+    try InputValidation.reference(stash.hash)
+    guard try await stashes().contains(where: { $0.hash == stash.hash }) else {
+      throw GitPierError.invalidInput("The stash was removed. Refresh the stash list.")
+    }
+    let tracked = try await commitFiles(stash.hash, parent: stash.hash + "^1")
+      .map { StashFile(change: $0, commit: stash.hash, parent: stash.hash + "^1") }
+    let untracked = try await read(["rev-parse", "--verify", stash.hash + "^3"], allowFailure: true)
+    if untracked.code != 0 { return tracked }
+    let hash = untracked.text.trimmingCharacters(in: .whitespacesAndNewlines)
+    return tracked + (try await commitFiles(hash)).map { StashFile(change: $0, commit: hash, parent: nil) }
+  }
+  public func stashPatch(_ stash: GitStash, file: StashFile) async throws -> Data {
+    guard try await stashes().contains(where: { $0.hash == stash.hash }) else {
+      throw GitPierError.invalidInput("The stash was removed. Refresh the stash list.")
+    }
+    return try await commitPatch(file.commit, path: file.change.path, parent: file.parent)
+  }
   public func deleteRemoteTag(_ name: String, remote: String) async throws -> String {
     try InputValidation.reference(name)
     try InputValidation.reference(remote)
-    return try await writing {
-      let hash = try await read(["rev-parse", "--verify", "refs/tags/" + name]).text
-        .trimmingCharacters(in: .whitespacesAndNewlines)
-      let result = try await read([
-        "push", "--force-with-lease=refs/tags/" + name + ":" + hash, remote, ":refs/tags/" + name,
-      ])
-      return result.text + result.errorText
+    let review = try await reviewRemoteDeletion(remote: remote, reference: "refs/tags/" + name)
+    return try await deleteRemoteReference(review)
+  }
+  public func reviewRemoteDeletion(remote: String, reference: String, expectedHash: String? = nil) async throws -> RemoteDeletionReview {
+    try InputValidation.reference(remote)
+    guard reference.hasPrefix("refs/heads/") || reference.hasPrefix("refs/tags/") else {
+      throw GitPierError.invalidInput("Only reviewed remote branches and tags can be deleted.")
+    }
+    try await read(["check-ref-format", reference])
+    let hash: String
+    if let expectedHash { hash = expectedHash }
+    else { hash = try await read(["rev-parse", "--verify", reference]).text.trimmingCharacters(in: .whitespacesAndNewlines) }
+    guard [40, 64].contains(hash.count), hash.allSatisfy(\.isHexDigit) else {
+      throw GitPierError.invalidInput("Invalid reviewed reference hash.")
+    }
+    return RemoteDeletionReview(remote: remote, reference: reference, expectedHash: hash,
+                               destinationIdentity: try await forceDestinationIdentity(remote))
+  }
+  public func deleteRemoteReference(_ review: RemoteDeletionReview) async throws -> String {
+    try await writing {
+      guard try await forceDestinationIdentity(review.remote) == review.destinationIdentity else {
+        throw GitPierError.invalidInput("The remote destination changed. Review the deletion again.")
+      }
+      let result = try await read(["push", "--force-with-lease=" + review.reference + ":" + review.expectedHash,
+                                   review.remote, ":" + review.reference])
+      return Self.redact(result.text + result.errorText)
     }
   }
   public func tags() async throws -> [String] {

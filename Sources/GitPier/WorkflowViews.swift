@@ -126,7 +126,7 @@ struct BranchesView: View {
           }
         }
         Divider()
-        Button("Merge into " + model.status.branch + "…") {
+        Button(store.text("Merge into ", "合并至 ") + model.status.branch + "…") {
           model.perform(
             ["merge", "--no-edit", branch.name],
             confirmation: store.text(
@@ -152,14 +152,7 @@ struct BranchesView: View {
           let parts = branch.name.split(separator: "/", maxSplits: 1).map(String.init)
           if parts.count == 2 {
             Button(store.text("Delete Remote Branch…", "删除远程分支…"), role: .destructive) {
-              model.perform(
-                [
-                  "push", "--force-with-lease=refs/heads/" + parts[1] + ":" + branch.hash, parts[0],
-                  ":refs/heads/" + parts[1],
-                ],
-                confirmation: store.text(
-                  "Delete the branch on the remote server? This affects other collaborators.",
-                  "删除服务器上的分支？此操作会影响其他协作者。"))
+              model.confirmRemoteDeletion(remote: parts[0], reference: "refs/heads/" + parts[1], expectedHash: branch.hash)
             }
           }
         }
@@ -171,7 +164,7 @@ struct RemotesView: View {
   @ObservedObject var model: RepositoryModel
   @EnvironmentObject var store: AppStore
   @State private var editing = false
-  @State private var original: String?
+  @State private var original: GitRemote?
   @State private var name = ""
   @State private var fetchURL = ""
   @State private var pushURL = ""
@@ -197,10 +190,10 @@ struct RemotesView: View {
             Spacer()
             Button(localizedUI("Fetch")) { model.network("fetch", remote: remote.name) }
             Button(localizedUI("Edit…")) {
-              original = remote.name
+              original = remote
               name = remote.name
-              fetchURL = remote.fetchURL
-              pushURL = remote.pushURL
+              fetchURL = remote.configuredFetchURLs.first ?? remote.fetchURL
+              pushURL = remote.configuredPushURLs.first ?? ""
               editing = true
             }
           }
@@ -212,14 +205,7 @@ struct RemotesView: View {
             Button(localizedUI("Push Tags")) { model.perform(["push", remote.name, "--tags"]) }
             Button(localizedUI("Set Upstream…")) { model.needsUpstream = true }
             Button(localizedUI("Force with Lease…")) {
-              model.confirmation = PendingAction(
-                title: "Force Push with Lease?",
-                detail: store.text(
-                  "This rewrites remote history. The lease protects against newer remote commits.",
-                  "这会重写远程历史，Lease 可保护远程较新的提交。")
-              ) {
-                model.network("push", remote: remote.name, branch: model.status.branch, force: true)
-              }
+              model.confirmForcePush(remote: remote.name)
             }
             Spacer()
             Button(store.text("Remove…", "移除…"), role: .destructive) {
@@ -238,6 +224,15 @@ struct RemotesView: View {
         TextField(localizedUI("Name"), text: $name).disabled(original != nil)
         TextField(localizedUI("Fetch URL"), text: $fetchURL)
         TextField(localizedUI("Push URL (optional)"), text: $pushURL)
+          .disabled((original?.configuredPushURLs.count ?? 0) > 1)
+        if let original, original.configuredPushURLs.count > 1 {
+          Text(store.text("Multiple push URLs are preserved. Use the terminal to edit them.",
+                          "保留全部 Push URL；请在终端编辑多个推送地址。"))
+            .font(.caption).foregroundStyle(.secondary)
+        } else {
+          Text(store.text("Leave Push URL empty to use the fetch URL.", "Push URL 留空时使用 Fetch URL。"))
+            .font(.caption).foregroundStyle(.secondary)
+        }
         Text(
           store.text("Secrets belong in Credentials, not remote URLs.", "请在凭证中保存秘密，不要将其写入 URL。 ")
         ).font(.callout).foregroundStyle(.secondary)
@@ -250,20 +245,10 @@ struct RemotesView: View {
             let push = pushURL
             let original = original
             model.run { git in
-              try InputValidation.reference(name)
-              try InputValidation.remoteURL(fetch)
-              if !push.isEmpty { try InputValidation.remoteURL(push) }
-              if original == nil {
-                try await git.perform(["remote", "add", name, fetch])
-              } else {
-                try await git.perform(["remote", "set-url", name, fetch])
-              }
-              if !push.isEmpty {
-                try await git.perform(["remote", "set-url", "--push", name, push])
-              }
+              try await git.saveRemote(name: name, fetchURL: fetch, pushURL: push, expected: original)
             }
             editing = false
-          }.buttonStyle(.borderedProminent).disabled(name.isEmpty || fetchURL.isEmpty)
+          }.buttonStyle(.borderedProminent).disabled(name.isEmpty || fetchURL.isEmpty || model.busy)
         }
       }.textFieldStyle(.roundedBorder).padding(24).frame(width: 550)
     }
@@ -278,7 +263,6 @@ struct StashView: View {
   @State private var message = ""
   @State private var includeUntracked = false
   @State private var selected: GitStash?
-  @State private var patch = DiffDocument.empty
   var body: some View {
     VSplitView {
       VStack(spacing: 0) {
@@ -323,22 +307,12 @@ struct StashView: View {
             }
           }.padding(.vertical, 8).contentShape(Rectangle()).onTapGesture {
             selected = stash
-            Task {
-              do {
-                patch = DiffParser.parse(
-                  try await model.git().read([
-                    "stash", "show", "--include-untracked", "--patch", "--no-ext-diff", stash.hash,
-                  ]).stdout)
-              } catch { model.error = error.localizedDescription }
-            }
-          }
+          }.listRowBackground(selected?.hash == stash.hash ? Color.accentColor.opacity(0.12) : Color.clear)
         }.listStyle(.inset).disabled(model.busy)
       }.frame(minHeight: 180)
-      if selected != nil {
-        ScrollView {
-          Text(patch.raw).font(.system(size: 12, design: .monospaced))
-            .textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading).padding(16)
-        }.frame(minHeight: 200)
+      if let selected {
+        StashPreviewView(model: model, stash: selected).id(selected.hash)
+          .frame(minHeight: 240)
       } else {
         EmptyState(
           symbol: "tray", title: store.text("Select a stash", "选择一个 Stash"),
@@ -347,6 +321,8 @@ struct StashView: View {
           )
         ).frame(minHeight: 200)
       }
+    }.onChange(of: model.stashes) { _, stashes in
+      if let selected, !stashes.contains(where: { $0.hash == selected.hash }) { self.selected = nil }
     }.sheet(isPresented: $creating) {
       VStack(alignment: .leading, spacing: 16) {
         Text(localizedUI("Create Stash")).font(.title2)
@@ -403,16 +379,7 @@ struct TagsView: View {
               Button(
                 store.text("Delete from ", "从此 Remote 删除：") + remote.name + "…", role: .destructive
               ) {
-                model.confirmation = PendingAction(
-                  title: store.text("Delete Remote Tag?", "删除远程标签？"),
-                  detail: store.text(
-                    "Delete this tag on the remote server? A lease protects against a different remote tag version.",
-                    "删除服务器上的标签？Lease 将保护与本地不同的远程标签版本。") + "\n" + tag + " → " + remote.name
-                ) {
-                  model.run { git in
-                    model.output = try await git.deleteRemoteTag(tag, remote: remote.name)
-                  }
-                }
+                model.confirmRemoteDeletion(remote: remote.name, reference: "refs/tags/" + tag)
               }
             }
           }
@@ -442,7 +409,7 @@ struct TagsView: View {
                   + (ref.isEmpty ? [] : [ref]))
             }
             creating = false
-          }.buttonStyle(.borderedProminent).disabled(name.isEmpty || annotated && message.isEmpty)
+          }.buttonStyle(.borderedProminent).disabled(model.busy || name.isEmpty || annotated && message.isEmpty)
         }
       }.textFieldStyle(.roundedBorder).padding(24).frame(width: 460)
     }

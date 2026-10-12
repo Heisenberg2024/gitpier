@@ -14,9 +14,15 @@ jobs:
         run: swift --version
       - name: Real Git repository tests
         run: Scripts/test.sh
+      - name: Release metadata and signing gates
+        run: python3 Scripts/test-release-tools.py
       - name: Build application
         run: Scripts/build-app.sh
+      - name: Temporary DMG structure (no Finder visual claim)
+        run: Scripts/test-dmg-structure.sh
+      - name: Archive development app preserving signatures and permissions
+        run: ditto -c -k --sequesterRsrc --keepParent dist/GitPier.app dist/GitPier-development.zip
       - uses: actions/upload-artifact@v4
         with:
           name: GitPier-development-app
-          path: dist/GitPier.app
+          path: dist/GitPier-development.zip

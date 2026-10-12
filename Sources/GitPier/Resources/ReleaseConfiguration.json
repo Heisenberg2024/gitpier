@@ -1,0 +1,8 @@
+{
+  "version": "1.1.0",
+  "build": "17",
+  "bundleIdentifier": "com.heisenberg2024.gitpier",
+  "minimumSystemVersion": "14.0",
+  "feedURL": "https://github.com/Heisenberg2024/gitpier/releases/latest/download/appcast.xml",
+  "publicEDKey": "41EPEX/VCT5ZVjGrQtdDxOTcWed5L1WQ/II9o1TUoN0="
+}

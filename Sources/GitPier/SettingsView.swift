@@ -252,6 +252,8 @@ struct AboutSettingsView: View {
             Text("\(AppResources.version) (\(AppResources.build))").textSelection(.enabled)
           }
           Divider()
+          UpdateSettingsView(manager: store.updates)
+          Divider()
           LabeledContent(store.text("License", "许可证")) { Text("MIT License") }
           Text(
             store.text(

@@ -1,11 +1,21 @@
 #!/bin/bash
 set -euo pipefail
 cd "$(dirname "$0")/.."
-Scripts/build-app.sh
-task_archive="dist/GitPier-1.0.3-macos.zip"
-if [[ "${UNIVERSAL:-0}" == 1 ]]; then
-  task_archive="dist/GitPier-1.0.3-macos-universal.zip"
+task_version="$(python3 Scripts/release_metadata.py --field version)"
+task_candidate=0
+if [[ "${1:-}" == --unsigned-candidate ]]; then
+  task_candidate=1
+else
+  [[ -n "$(python3 Scripts/release_metadata.py --field publicEDKey)" ]] || {
+    echo 'Configure the production key first, or explicitly use --unsigned-candidate for local acceptance.' >&2; exit 1;
+  }
+  [[ -f "${1:-}" ]] || { echo 'Usage: package-release.sh reviewed-release-notes.md | --unsigned-candidate' >&2; exit 1; }
 fi
-ditto -c -k --sequesterRsrc --keepParent dist/GitPier.app "$task_archive"
-shasum -a 256 "$task_archive" > "$task_archive.sha256"
-printf 'Local archive: %s/%s\n' "$PWD" "$task_archive"
+Scripts/test.sh
+UNIVERSAL=1 Scripts/build-app.sh
+Scripts/package-dmg.sh
+if [[ "$task_candidate" == 0 ]]; then
+  Scripts/sign-release.sh "dist/GitPier-$task_version-macos-universal.dmg" "$1"
+else
+  printf 'Local DMG candidate without a signed appcast. Do not publish this asset as a signed update.\n'
+fi
