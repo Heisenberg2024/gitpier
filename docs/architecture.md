@@ -72,7 +72,7 @@ HistoryQuery executes bounded native Git log queries; per-query generations disc
 
 Destructive local confirmations obtain a read-only GitOperationReview and recheck HEAD, branch, staged entries and merge/rebase operation identity inside the write queue. An external Index change since the visible snapshot requires refresh before confirming. ForcePushReview freezes a single effective push destination, reviewed local commit and exact remote-tracking lease; a later fetch cannot weaken the lease. Force push preserves existing upstream configuration. Untracked deletion first confirms that the path remains untracked, preserving external staging. Cancelled or superseded confirmation preparation cannot publish an old alert.
 
-## Professional workflows (Unreleased v1.2.0)
+## Professional workflows (v1.2.0)
 
 `ProfessionalWorkflow.swift` contains Sendable Reflog/Worktree/comparison/Blame models and NUL/porcelain parsers. All Git commands remain in `GitService.swift`. `ReflogView`, `WorktreesView`, `BranchComparisonView` and `BlameView` use existing navigation, CommitDetailView, DiffTable, code fonts, SyntaxHighlighter and scrollbars. `WorkflowRequest` cancels superseded tasks and rejects late results with generation tickets.
 

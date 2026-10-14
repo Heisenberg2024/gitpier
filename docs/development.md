@@ -116,9 +116,9 @@ gh release create "v${task_version}" --draft --target "$APPROVED_COMMIT_SHA" --t
 
 `APPROVED_COMMIT_SHA` and `REVIEWED_NOTES_FILE` must identify the owner's approved commit and final notes. This command is documentation, not an automatic publishing step; verify draft assets and CI before separately approving publication.
 
-## v1.2.0 professional workflows (Unreleased)
+## v1.2.0 professional workflows
 
-The development target is 1.2.0, build 18, based on released v1.1.0 (1827818). The original 98 Core tests and six release-tool gates remain intact. Worktree identification/opening, commit details, DiffTable, literal paths, reviewed destructive actions and per-working-tree state already existed; the new pages reuse them.
+Released v1.2.0, build 18, is based on v1.1.0 (1827818). The original 98 Core tests and six release-tool gates remain intact. Worktree identification/opening, commit details, DiffTable, literal paths, reviewed destructive actions and per-working-tree state already existed; the new pages reuse them.
 
 | Capability | v1.1.0 baseline | v1.2.0 implementation |
 | --- | --- | --- |
@@ -129,7 +129,7 @@ The development target is 1.2.0, build 18, based on released v1.1.0 (1827818). T
 
 Run the complete suite with `Scripts/test.sh`, `python3 Scripts/test-release-tools.py`, and `Scripts/ui-acceptance.sh .cache/ui-acceptance/v120`. The workflow-only GUI entry is `GITPIER_UI_ACCEPTANCE_SCOPE=version120 Scripts/ui-acceptance.sh .cache/ui-acceptance/v120-workflows`. All writes and resets in these workflows use disposable repositories. The visible GUI mode sets `GITPIER_UI_ACCEPTANCE_INTERACTIVE_WORKFLOWS=1`, uses an independently identified application through `GITPIER_UI_ACCEPTANCE_EXECUTABLE`, supports `GITPIER_UI_ACCEPTANCE_LANGUAGE=zh-Hans` / `GITPIER_UI_ACCEPTANCE_APPEARANCE=light` for isolated initial settings, and waits for a `finish-gui` marker in its output directory after manual interactions. Use an isolated workspace and application identity; never launch this mode with a normal user's workspace. Offscreen view bitmaps do not prove full SwiftUI visuals or mouse interaction.
 
-Local builds are development candidates. Do not sign a production appcast, upload assets, modify v1.1.0, create a tag or publish without separate authorization. The production Bundle ID, Sparkle 2, feed and public key are retained; never replace or regenerate the production key. Keep v1.2.0 changes in Unreleased until an approved release. Universal compilation does not establish Intel/macOS 14 device acceptance or notarization.
+Local builds remain development candidates until an approved release. Production signing, asset uploads, tags and publication require owner authorization; preserve historical releases. The production Bundle ID, Sparkle 2, feed and public key are retained; never replace or regenerate the production key. Keep future changes in Unreleased until an approved release. Universal compilation does not establish Intel/macOS 14 device acceptance or notarization.
 
 ### Local validation — 2026-10-14
 
@@ -139,4 +139,10 @@ The final `Scripts/ui-acceptance.sh .cache/ui-acceptance/v120-full` run passed t
 
 Visible acceptance used a separate application identity, isolated configuration and disposable repositories. Native interactions checked recovery-branch creation, worktree creation/registration/lock/unlock/removal with the affected path, independent state, both comparison semantics, Blame → commit file Diff → return, English/Chinese, light/dark and 960×640 layouts. Hosted/offscreen component snapshots are separate evidence and do not prove complete SwiftUI pixels.
 
-Blame refuses single lines longer than 20,000 UTF-16 characters as well as files over 4 MiB, to keep native text layout bounded. Removal of external worktrees is intentionally unavailable; repair does not grant deletion ownership. Repair supports moved linked trees within the same common directory, not an automatic relocation of the whole main repository. Intel/macOS 14 device runs, Swift 6.1.2 remote CI, Developer ID/notarization and a new production-key self-update are outside this local validation. No commit, push, tag, release publication or production-key change was performed.
+Blame refuses single lines longer than 20,000 UTF-16 characters as well as files over 4 MiB, to keep native text layout bounded. Removal of external worktrees is intentionally unavailable; repair does not grant deletion ownership. Repair supports moved linked trees within the same common directory, not an automatic relocation of the whole main repository. This local validation preceded the release checks below.
+
+### Release validation — 2026-10-14
+
+[v1.2.0](https://github.com/Heisenberg2024/gitpier/releases/tag/v1.2.0) was published as Latest after owner approval of the bilingual notes. Its tag and Universal DMG correspond to commit `c08d64bf81f58b8a45daaae3a71be83524180f84`. [Same-commit CI](https://github.com/Heisenberg2024/gitpier/actions/runs/38490929602) passed 128 Core tests and six release-tool gates on Swift 6.1.2 / macOS 15, plus application build, temporary DMG structure and archive/upload checks. Local packaging verified arm64/x86_64, the embedded Sparkle helpers, deep signatures, HFS+/ULFO DMG structure and the visible Finder installer layout.
+
+The final DMG and Appcast were signed with the existing production EdDSA key. Altered archive/feed copies were rejected. Draft and public downloads of the DMG, checksum and Appcast matched the local hashes; the Latest feed served the same signed 1.2.0 (18) item. Historical release bodies, tags and attachments were preserved. Intel/macOS 14 device runs, an actual new-DMG mouse drag/install, downloaded quarantine/App Translocation, Developer ID/notarization and an end-to-end v1.1.0 → v1.2.0 production update remain unverified.
