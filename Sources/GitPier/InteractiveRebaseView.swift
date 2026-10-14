@@ -70,8 +70,7 @@ struct InteractiveRebaseView: View {
                 }
                 VStack(alignment: .leading, spacing: 4) {
                   Text(step.commit.subject).lineLimit(2)
-                  Text(String(step.id.prefix(12)) + " · " + step.commit.author + " · " + step.commit.date.formatted(date: .abbreviated, time: .omitted)
-                    + " · #" + String((candidate.commits.firstIndex { $0.hash == step.id } ?? 0) + 1))
+                  Text(commitMetadata(step, candidate: candidate))
                     .font(.caption).foregroundStyle(.secondary)
                 }.frame(maxWidth: .infinity, alignment: .leading)
               }
@@ -109,11 +108,23 @@ struct InteractiveRebaseView: View {
         Button(store.text("Rewrite History", "改写历史")) { execute() }
         Button(store.text("Cancel", "取消"), role: .cancel) {}.keyboardShortcut(.defaultAction)
       } message: {
-        Text((candidate?.review.branch ?? "") + " · " + String((candidate?.review.head ?? "").prefix(12))
-          + "\n" + store.text("Rewrite \(steps.count) commits in the displayed order. Shared history may require a separately reviewed Force with Lease push.",
-                              "按显示顺序改写 \(steps.count) 个提交。已共享历史后续可能需要单独审查固定租约强制推送。")
-          + "\n\n" + steps.map { $0.action.rawValue + " " + String($0.id.prefix(8)) + " " + $0.commit.subject }.joined(separator: "\n"))
+        Text(rewriteDetail)
       }
+  }
+  private func commitMetadata(_ step: RebaseStep, candidate: InteractiveRebaseCandidate) -> String {
+    let number = (candidate.commits.firstIndex { $0.hash == step.id } ?? 0) + 1
+    let date = step.commit.date.formatted(date: .abbreviated, time: .omitted)
+    return [String(step.id.prefix(12)), step.commit.author, date, "#" + String(number)].joined(separator: " · ")
+  }
+  private var rewriteDetail: String {
+    let branch = candidate?.review.branch ?? ""
+    let head = String((candidate?.review.head ?? "").prefix(12))
+    let warning = store.text("Rewrite \(steps.count) commits in the displayed order. Shared history may require a separately reviewed Force with Lease push.",
+                             "按显示顺序改写 \(steps.count) 个提交。已共享历史后续可能需要单独审查固定租约强制推送。")
+    let plan = steps.map { step in
+      [step.action.rawValue, String(step.id.prefix(8)), step.commit.subject].joined(separator: " ")
+    }.joined(separator: "\n")
+    return "\(branch) · \(head)\n\(warning)\n\n\(plan)"
   }
   var selectedIndex: Int? { steps.firstIndex { $0.id == selected } }
   func move(_ delta: Int) {
@@ -166,7 +177,7 @@ struct RebaseRecoveryView: View {
       }
       WorkflowProblem(request: request)
       if let state {
-        Text(state.branch + " · " + String(state.originalHead.prefix(12)) + " → " + String(state.upstream.prefix(12)))
+        Text(rangeSummary(state))
           .font(.caption).textSelection(.enabled)
         Text(store.text("Step \(state.current) of \(state.total). State is read from Git metadata and survives application restarts.",
                         "第 \(state.current)/\(state.total) 步。状态读取自 Git 元数据，可在应用重启后恢复。"))
@@ -210,6 +221,10 @@ struct RebaseRecoveryView: View {
         Button(controlTitle) { execute() }
         Button(store.text("Cancel", "取消"), role: .cancel) { control = nil }.keyboardShortcut(.defaultAction)
       } message: { Text(controlDetail) }
+  }
+  private func rangeSummary(_ state: RebaseState) -> String {
+    let original = String(state.originalHead.prefix(12)), upstream = String(state.upstream.prefix(12))
+    return "\(state.branch) · \(original) → \(upstream)"
   }
   var controlTitle: String {
     switch control {

@@ -149,8 +149,7 @@ struct SubmoduleReviewView: View {
       Text(title).font(.title2.weight(.semibold))
       Text(review.module.path).font(.headline).textSelection(.enabled)
       Text(review.module.url).font(.caption).textSelection(.enabled)
-      Text("HEAD " + (review.module.currentHead ?? "—") + "\nIndex gitlink " + (review.module.indexCommit ?? "—")
-        + "\n" + store.text("Target: ", "目标：") + (review.target ?? "—"))
+      Text(commitSummary)
         .font(uiFont(size: 11, design: .monospaced)).textSelection(.enabled)
       Text(detail).font(.callout)
       Text(store.text("Local modifications, the parent Index, other child worktrees, hooks and SSH/HTTPS verification remain protected. No recursive update, force or commit runs.",
@@ -165,6 +164,12 @@ struct SubmoduleReviewView: View {
         Button(store.text("Proceed", "继续")) { execute() }
         Button(store.text("Cancel", "取消"), role: .cancel) {}.keyboardShortcut(.defaultAction)
       } message: { Text(detail) }
+  }
+  private var commitSummary: String {
+    let head = "HEAD " + (review.module.currentHead ?? "—")
+    let index = "Index gitlink " + (review.module.indexCommit ?? "—")
+    let target = store.text("Target: ", "目标：") + (review.target ?? "—")
+    return [head, index, target].joined(separator: "\n")
   }
   var detail: String {
     switch review.action {
@@ -208,8 +213,7 @@ struct SubmoduleAddView: View {
         .font(.caption).foregroundStyle(.secondary)
       WorkflowProblem(request: request)
       if let review {
-        Text(".gitmodules\n  path = " + review.path + "\n  url = " + GitService.redact(review.url)
-          + "\n\n" + store.text("Parent HEAD: ", "父 HEAD：") + (review.parent.head ?? "—"))
+        Text(configurationSummary(review))
           .font(uiFont(size: 11, design: .monospaced)).textSelection(.enabled)
       }
       HStack {
@@ -228,6 +232,12 @@ struct SubmoduleAddView: View {
         }
         Button(store.text("Cancel", "取消"), role: .cancel) {}.keyboardShortcut(.defaultAction)
       } message: { Text(store.text("This downloads a repository into the displayed new directory and stages its configuration/gitlink. Existing directories are never replaced. No commit is created.", "将仓库下载到显示的新目录并暂存配置 / gitlink，绝不替换已有目录，不创建提交。")) }
+  }
+  private func configurationSummary(_ review: SubmoduleAddReview) -> String {
+    let path = "  path = " + review.path
+    let url = "  url = " + GitService.redact(review.url)
+    let parent = store.text("Parent HEAD: ", "父 HEAD：") + (review.parent.head ?? "—")
+    return [".gitmodules", path, url, "", parent].joined(separator: "\n")
   }
   func prepare() {
     let url = url, path = path
