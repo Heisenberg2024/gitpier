@@ -11,6 +11,8 @@ struct RepositoryWorkspace: View {
   }
   @EnvironmentObject var store: AppStore
   @Environment(\.colorScheme) var scheme
+  @State private var rebaseRecovery = false
+  @State private var importedPatch: PatchImportRequest?
   var body: some View {
     VStack(spacing: 0) {
       toolbar
@@ -24,6 +26,9 @@ struct RepositoryWorkspace: View {
             Button(store.text("Resolve Conflicts…", "解决冲突…")) { model.openConflicts() }.disabled(
               model.busy)
           }
+          if operation == .rebase {
+            Button(store.text("Review Rebase…", "审查变基…")) { rebaseRecovery = true }.disabled(model.busy)
+          } else {
           Button(store.text("Continue", "继续")) {
             if operation == .merge {
               model.reviewMergeContinuation()
@@ -36,6 +41,7 @@ struct RepositoryWorkspace: View {
               [command(operation), "--abort"],
               confirmation: store.text(
                 "Abort the operation and restore its starting state?", "中止操作并恢复起始状态？"))
+          }
           }
         }.font(uiFont(size: 12)).padding(10).background(Color.orange.opacity(0.09))
         Divider()
@@ -107,6 +113,8 @@ struct RepositoryWorkspace: View {
     .sheet(isPresented: $model.needsUpstream) {
       PushUpstreamSheet(model: model).environmentObject(store)
     }
+    .sheet(isPresented: $rebaseRecovery) { RebaseRecoveryView(model: model).environmentObject(store) }
+    .sheet(item: $importedPatch) { PatchImportView(model: model, input: $0).environmentObject(store) }
     .alert(
       model.confirmation?.title ?? "",
       isPresented: Binding(
@@ -143,6 +151,8 @@ struct RepositoryWorkspace: View {
     case "tags": TagsView(model: model)
     case "repository": RepositorySettingsView(model: model)
     case "conflicts": ConflictResolutionView(model: model)
+    case "lfs": LFSView(model: model)
+    case "submodules": SubmodulesView(model: model)
     default:
       GeometryReader { area in
         HStack(spacing: 0) {
@@ -194,7 +204,20 @@ struct RepositoryWorkspace: View {
         Button(store.text("Resolve Conflicts", "解决冲突")) { model.openConflicts() }
         Button(store.text("Reflog", "引用日志")) { model.setPage("reflog") }
         Button(store.text("Worktrees", "工作树")) { model.setPage("worktrees") }
+        Button("Git LFS") { model.setPage("lfs") }
+        Button(store.text("Submodules", "子模块")) { model.setPage("submodules") }
         Button(store.text("Compare Branches", "比较分支")) { model.setPage("compare") }
+        Button(store.text("Import Patch…", "导入补丁…")) {
+          PatchFileDialogs.choose { url in
+            Task {
+              do {
+                let data = try await PatchFileDialogs.read(url)
+                guard store.current === model, !model.busy else { return }
+                importedPatch = PatchImportRequest(name: url.lastPathComponent, data: data)
+              } catch { model.error = localizedUI(error.localizedDescription) }
+            }
+          }
+        }.disabled(model.busy || model.status.operation != nil)
         Divider()
         Button(store.text("Remotes", "远程")) { model.setPage("remotes") }
         Button(localizedUI("Stash")) { model.setPage("stash") }

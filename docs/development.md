@@ -4,6 +4,7 @@
 
 - macOS 14 or later; Xcode 16 or later with a Swift 6 toolchain and command-line tools.
 - System Git, SSH, and an installed shell.
+- Git LFS is optional for the LFS page. Install/configure it separately; GitPier never installs the tool, global filters or repository hooks. No new SwiftPM dependency is introduced.
 - Swift Package Manager; commit `Package.resolved` for reproducible application dependencies.
 - Python 3.9+ for release metadata and verification (standard library only); macOS `hdiutil`, `codesign`, `osascript` and Finder for local installer acceptance.
 
@@ -25,6 +26,14 @@ Core tests create temporary Git repositories. Keychain tests use synthetic entri
 ```bash
 Scripts/ui-acceptance.sh
 ```
+
+For the v1.3 development workflows, run `GITPIER_UI_ACCEPTANCE_SCOPE=version130 Scripts/ui-acceptance.sh`. Rebase tests exercise typed plans, native conflicts, restart/message recovery, hooks/signing rejection and stale HEAD/Index/todo/file protection in disposable repositories. Hosted screenshots supplement actual visible GUI interaction; they do not establish real drag or confirmation behavior. Native Git may require an explicit recovery commit after a signing/hook failure; keep its diagnosis, use the repository terminal or reviewed Abort, and never disable signing to make acceptance pass.
+
+The temporary DMG structural test uses a unique staging directory, volume and mount point. Only an exact `hdiutil: create failed - Resource busy` retries (three attempts; one/two-second delays). Every attempt emits its complete log, uses a different image path, and other failures stop immediately. Cleanup detaches only its own mount, preserves the directory if detach fails, and never forces a detach or restarts DiskImages services. `python3 Scripts/test-release-tools.py` includes four offline retry gates. A successful original-commit CI rerun establishes environment evidence only; new local source still needs its own CI after an owner-authorized commit/push.
+
+The v1.3 scope also renders Patch import/export, LFS rules/files and Submodule list/review/Add in both languages and appearances using temporary repositories. Installed LFS interfaces use a clearly identified, network-disabled command fixture when the host lacks Git LFS; this does not establish real LFS server/credential/download acceptance. Submodule fixtures use only temporary local origins with file transport enabled for the fixture process. Native previews and write actions check preserved HEAD/Index and reuse DiffTable.
+
+For visible P1 inspection, set `GITPIER_UI_ACCEPTANCE_INTERACTIVE_V130=1` and `GITPIER_UI_ACCEPTANCE_INTERACTIVE_PAGE=advanced` with a separately identified Debug bundle via `GITPIER_UI_ACCEPTANCE_EXECUTABLE`. The isolated panel exposes fixture, language and appearance selectors at 960×640, including a clearly labeled network-disabled LFS interface. Finish by creating `finish-gui` in the output directory; the process restores its settings, quits and cleans the temporary repositories. Normal application Settings scenes are not registered by the standalone acceptance runner; use these dedicated selectors instead.
 
 For the rejected-push workflow only, run `GITPIER_UI_ACCEPTANCE_SCOPE=push-recovery Scripts/ui-acceptance.sh`. It checks the English and Simplified Chinese native alert buttons, cancellation, successful merge/push and conflict resolution against disposable local remotes, and captures only the test alerts.
 
@@ -130,6 +139,16 @@ Released v1.2.0, build 18, is based on v1.1.0 (1827818). The original 98 Core te
 Run the complete suite with `Scripts/test.sh`, `python3 Scripts/test-release-tools.py`, and `Scripts/ui-acceptance.sh .cache/ui-acceptance/v120`. The workflow-only GUI entry is `GITPIER_UI_ACCEPTANCE_SCOPE=version120 Scripts/ui-acceptance.sh .cache/ui-acceptance/v120-workflows`. All writes and resets in these workflows use disposable repositories. The visible GUI mode sets `GITPIER_UI_ACCEPTANCE_INTERACTIVE_WORKFLOWS=1`, uses an independently identified application through `GITPIER_UI_ACCEPTANCE_EXECUTABLE`, supports `GITPIER_UI_ACCEPTANCE_LANGUAGE=zh-Hans` / `GITPIER_UI_ACCEPTANCE_APPEARANCE=light` for isolated initial settings, and waits for a `finish-gui` marker in its output directory after manual interactions. Use an isolated workspace and application identity; never launch this mode with a normal user's workspace. Offscreen view bitmaps do not prove full SwiftUI visuals or mouse interaction.
 
 Local builds remain development candidates until an approved release. Production signing, asset uploads, tags and publication require owner authorization; preserve historical releases. The production Bundle ID, Sparkle 2, feed and public key are retained; never replace or regenerate the production key. Keep future changes in Unreleased until an approved release. Universal compilation does not establish Intel/macOS 14 device acceptance or notarization.
+
+### v1.3.0 local validation — 2026-10-15
+
+The unreleased 1.3.0 (19) source passed 201 Core tests with zero failures/skips and ten release-tool gates. The original full native UI/PTY regression and the v1.3 workflow scope passed; the added visible P1 panel was compiled and checked again through `Scripts/ui-acceptance.sh`. Actual CUA inspection covered Patch import/export, the explicitly marked LFS interface fixture and Submodules at 960×640 in English/Chinese and light/dark, with native Diff, OID/gitlink details, rule/Add sheets and default-cancel confirmations. A native Patch save produced the expected 225-byte fixture. Read-only inspection and cancelled confirmations retained the fixture's staged configuration/gitlink and working files.
+
+`UNIVERSAL=1 Scripts/build-app.sh` passed on the final source, including both architectures, Sparkle helpers and deep signatures. A new local HFS+/ULFO DMG passed `Scripts/package-dmg.sh` structural/signature checks; all 109 mounted bundle files/links matched the current application. Finder displayed the actual application icon, Applications link, background, arrow and bilingual instructions. This image is a local review artifact without production EdDSA signing. No commit, push, tag or Release was created. New-source Swift 6.1 CI, real LFS server downloads, physical Rebase drag behavior, Intel/macOS 14 device runs and production update/Gatekeeper acceptance remain outside this local evidence.
+
+Additional interface/update fixes passed the full UI/PTY suite and the v1.1 updater lifecycle scope, followed by a current Universal rebuild. Visible inspection checked aligned Rebase controls, functional menus without attached indicators, and the complete About content at the fixed 760×580 Settings size in both languages/appearances. A temporary-key signed loopback Feed offered build 21 to build 20 automatically despite a freshly seeded last-check date; disabling automatic checks persisted across restart with no Feed request, and manual checking still offered the update. Both dialogs were dismissed without downloading/installing. The test application, server, preference domain, runtime and disposable key files were cleaned; the production install and preferences were read only. The earlier local DMG predates these additional interface changes and must not be distributed as the current candidate.
+
+The visible v1.3 inspector accepts `GITPIER_UI_ACCEPTANCE_INTERACTIVE_PAGE=rebase` for the clean linear fixture and `about` for 760×580 Settings. These are optional isolated acceptance entries; normal launches and the default full suite retain the same workflow.
 
 ### Local validation — 2026-10-14
 

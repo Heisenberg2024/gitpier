@@ -67,6 +67,11 @@ final class UpdateManager: NSObject, ObservableObject, SPUUpdaterDelegate,
     state = .idle
     // No automatic downloads or install-on-quit. The standard driver owns all update UI.
     controller.startUpdater()
+    // Check once at launch when the user opted in, even if the last scheduled check was recent.
+    // Sparkle owns subsequent scheduling; never reset its saved check date or skipped versions.
+    if controller.updater.automaticallyChecksForUpdates {
+      controller.updater.checkForUpdatesInBackground()
+    }
   }
   func check() {
     start()
@@ -187,16 +192,7 @@ final class UpdateManager: NSObject, ObservableObject, SPUUpdaterDelegate,
   }
   func standardUserDriverShouldHandleShowingScheduledUpdate(
     _ update: SUAppcastItem, andInImmediateFocus immediateFocus: Bool
-  ) -> Bool { false }
-  func standardUserDriverWillHandleShowingUpdate(
-    _ handleShowingUpdate: Bool, forUpdate update: SUAppcastItem, state: SPUUserUpdateState
-  ) {
-    if !handleShowingUpdate {
-      store.notice = store.text(
-        "A GitPier update is available. Open Settings → About to review it.",
-        "GitPier 有可用更新，请打开设置 → 关于查看。")
-    }
-  }
+  ) -> Bool { true }
   var statusText: String {
     switch state {
     case .unavailable:
@@ -233,7 +229,7 @@ struct UpdateSettingsView: View {
   @ObservedObject var manager: UpdateManager
   @EnvironmentObject var store: AppStore
   var body: some View {
-    VStack(alignment: .leading, spacing: 10) {
+    VStack(alignment: .leading, spacing: 8) {
       HStack {
         Text(store.text("Updates", "更新")).font(.headline)
         Spacer()
@@ -248,7 +244,10 @@ struct UpdateSettingsView: View {
           set: { enabled in manager.setAutomaticChecks(enabled) })
       )
       .disabled(!manager.configured)
+      Text(store.text("When enabled, checks at launch and periodically while GitPier is running.", "开启后，在启动时和 GitPier 运行期间定期检查。"))
+        .font(.caption).foregroundStyle(.secondary)
       Text(manager.statusText).font(.callout).foregroundStyle(.secondary).textSelection(.enabled)
+        .lineLimit(3).help(manager.statusText)
       if let date = manager.lastCheck {
         Text(store.text("Last checked: ", "上次检查：") + date.formatted()).font(.caption)
           .foregroundStyle(.secondary)
@@ -257,19 +256,10 @@ struct UpdateSettingsView: View {
         Button(store.text("Resume Installation…", "继续安装…")) { manager.resumeInstallation() }
           .disabled(!manager.canResumeInstallation)
       }
-      Link(
-        store.text("GitHub Releases / Manual DMG Upgrade", "GitHub Releases / 手动 DMG 升级"),
-        destination: URL(string: "https://github.com/Heisenberg2024/gitpier/releases/latest")!)
       Text(
         store.text(
-          "Update dialogs follow the selected language after restarting GitPier.",
-          "重新启动 GitPier 后，更新对话框会使用所选语言。")
-      )
-      .font(.caption).foregroundStyle(.secondary)
-      Text(
-        store.text(
-          "Downloads and installation require your confirmation. Restarting ends terminal sessions; commit drafts are saved.",
-          "下载和安装需要确认。重启会结束终端会话，提交草稿已保存。")
+          "Downloads and installation require confirmation. Restart ends terminal sessions and applies the selected update language; commit drafts are saved.",
+          "下载和安装需要确认。重启会结束终端会话并应用所选更新语言，提交草稿已保存。")
       )
       .font(.caption).foregroundStyle(.secondary)
     }.onAppear { manager.start() }

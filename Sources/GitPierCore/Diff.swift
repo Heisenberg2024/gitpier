@@ -47,11 +47,13 @@ public struct DiffDocument: Sendable {
 public enum DiffParser {
   public static func parse(_ data: Data) -> DiffDocument {
     let raw = String(decoding: data, as: UTF8.self)
-    let source = raw.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
-    let binary = raw.contains("Binary files ") || raw.contains("GIT binary patch")
-    let complex = source.contains {
+    // CRLF is one Swift Character; split the LF protocol delimiter without dropping CR bytes.
+    let source = raw.components(separatedBy: "\n")
+    let binary = source.contains { $0.hasPrefix("Binary files ") || $0 == "GIT binary patch" }
+    let complex = String(data: data, encoding: .utf8) == nil || source.contains {
       $0.hasPrefix("rename ") || $0.hasPrefix("copy ") || $0.hasPrefix("old mode ")
-        || $0.hasPrefix("new mode ") || $0.contains("160000")
+        || $0.hasPrefix("new mode ") || ($0.hasPrefix("index ") && $0.hasSuffix(" 160000"))
+        || $0 == "new file mode 160000" || $0 == "deleted file mode 160000"
     }
     var prefix: [String] = []
     var hunks: [DiffHunk] = []

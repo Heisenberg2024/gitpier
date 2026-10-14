@@ -55,6 +55,13 @@ import SwiftUI
         window.orderFront(nil)
         try await settle()
         try await waitFor { !model.refreshing && !model.diffLoading }
+        if ProcessInfo.processInfo.environment["GITPIER_UI_ACCEPTANCE_SCOPE"] == "version130" {
+          if ProcessInfo.processInfo.environment["GITPIER_UI_ACCEPTANCE_INTERACTIVE_V130"] == "1" { window.close() }
+          try await verifyVersion130(store: store, output: output)
+          store.shutdown(); window.close()
+          print("Native 1.3.0 workflow acceptance passed.")
+          exit(0)
+        }
         if ProcessInfo.processInfo.environment["GITPIER_UI_ACCEPTANCE_SCOPE"] == "version120" {
           if ProcessInfo.processInfo.environment["GITPIER_UI_ACCEPTANCE_INTERACTIVE_WORKFLOWS"] == "1" { window.close() }
           try await verifyVersion120(store: store, output: output)
@@ -583,6 +590,7 @@ import SwiftUI
           store: store, model: model, host: host, window: window, output: output)
         try await verifyVersion110(store: store, model: model, output: output)
         try await verifyVersion120(store: store, output: output)
+        try await verifyVersion130(store: store, output: output)
         try await verifyDiffScrollBounds(settings: store.settings, output: output)
         try await verifyUnifiedScrollbars(store: store, model: model, output: output)
         session.view.acceptanceOutput = nil

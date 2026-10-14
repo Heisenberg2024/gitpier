@@ -46,6 +46,7 @@ public actor GitService {
   public func read(
     _ arguments: [String], input: Data? = nil, environment: [String: String] = [:],
     allowFailure: Bool = false, limit: Int = 16 * 1024 * 1024,
+    timeout: TimeInterval = 120,
     onStderr: (@Sendable (Data) -> Void)? = nil
   ) async throws -> CommandResult {
     var env = ["LC_ALL": "en_US.UTF-8", "GIT_OPTIONAL_LOCKS": "0", "GIT_TERMINAL_PROMPT": "0"]
@@ -53,7 +54,7 @@ public actor GitService {
     for (key, value) in environment { env[key] = value }
     let result = try await runner.run(
       executable: gitPath, arguments: ["--no-pager"] + authArguments + arguments, directory: root,
-      environment: env, input: input, limit: limit,
+      environment: env, input: input, timeout: timeout, limit: limit,
       excludingEnvironmentKeys: ["GIT_DIR", "GIT_WORK_TREE", "GIT_COMMON_DIR", "GIT_INDEX_FILE"],
       onStderr: onStderr)
     if result.code != 0 && !allowFailure {
@@ -158,7 +159,13 @@ public actor GitService {
     for name in [
       "MERGE_HEAD", "CHERRY_PICK_HEAD", "REVERT_HEAD", "rebase-merge/head-name",
       "rebase-merge/onto", "rebase-merge/stopped-sha", "rebase-apply/head-name",
-      "rebase-apply/onto",
+      "rebase-apply/onto", "rebase-merge/orig-head", "rebase-merge/git-rebase-todo",
+      "rebase-merge/done", "rebase-merge/message", "rebase-merge/amend",
+      "rebase-merge/msgnum", "rebase-merge/end", "rebase-apply/orig-head",
+      "rebase-apply/next", "rebase-apply/last", "rebase-apply/patch",
+      "rebase-merge/author-script", "rebase-merge/gpg_sign_opt", "rebase-merge/message-squash",
+      "rebase-merge/message-fixup", "rebase-merge/current-fixups", "rebase-merge/rewritten-list",
+      "gitpier-rebase-messages.json",
     ] {
       bytes.append(Data(name.utf8))
       bytes.append(0)
@@ -722,6 +729,568 @@ public actor GitService {
       try await read(args + ["-"], input: patch)
     }
   }
+  private func liveIndexURL() async throws -> URL {
+    let path = try Self.nativePath(try await read(["rev-parse", "--git-path", "index"]).stdout)
+    return path.hasPrefix("/") ? URL(fileURLWithPath: path) : root.appendingPathComponent(path)
+  }
+  private func liveIndexDigest() async throws -> Data {
+    let index = try await liveIndexURL()
+    let attributes = try FileManager.default.attributesOfItem(atPath: index.path)
+    guard attributes[.type] as? FileAttributeType == .typeRegular,
+      (attributes[.size] as? Int ?? Int.max) <= 64 * 1024 * 1024 else { throw GitPierError.outputLimit }
+    return Data(SHA256.hash(data: try Data(contentsOf: index)))
+  }
+  public func reviewSelectiveStaging(file: FileChange, comparison: DiffComparison,
+                                    expectedPatch: String, expectedIndex: IndexSnapshot) async throws -> SelectiveStagingReview {
+    guard file.kind == .modified, file.originalPath == nil, file.submodule == "N...", !file.isConflicted else {
+      throw GitPierError.invalidInput("Line actions support regular text modifications. Use file or supported hunk actions for this file type.")
+    }
+    let operation = try await reviewOperation(expectedIndex: expectedIndex)
+    guard try await status().files.contains(file) else { throw GitPierError.indexChanged }
+    // diff drivers only affect headings here: native patches disable external Diff/textconv.
+    let attributes = try await read(["--literal-pathspecs", "check-attr", "-z", "filter", "working-tree-encoding", "ident", "--", file.path]).stdout
+      .split(separator: 0, omittingEmptySubsequences: false).map { String(decoding: $0, as: UTF8.self) }
+    for index in stride(from: 2, to: attributes.count, by: 3) {
+      guard ["unspecified", "unset"].contains(attributes[index]) else {
+        throw GitPierError.invalidInput("Line actions are disabled for custom filters, encodings or ident expansion (" + attributes[index - 1] + "=" + attributes[index] + "). Use file-level staging.")
+      }
+    }
+    let raw = try await patch(for: file, comparison: comparison)
+    guard let text = String(data: raw, encoding: .utf8), text == expectedPatch else { throw GitPierError.indexChanged }
+    let document = DiffParser.parse(raw)
+    guard SelectivePatch.supported(document) else { throw GitPierError.invalidInput("This Diff does not support safe line actions. Use file or supported hunk actions.") }
+    let working = try conflictWorkingFile(file.path).0
+    guard working.kind == .regular else { throw GitPierError.invalidInput("Line actions require a regular working file.") }
+    let digest = try await liveIndexDigest()
+    guard try await reviewOperation() == operation, try await liveIndexDigest() == digest,
+      try conflictWorkingFile(file.path).0 == working else { throw GitPierError.indexChanged }
+    return SelectiveStagingReview(file: file, comparison: comparison, operation: operation,
+                                 indexDigest: digest, working: working, document: document)
+  }
+  public func applySelectedLines(_ selected: Set<Int>, expected: SelectiveStagingReview) async throws {
+    let patch = try SelectivePatch.build(expected.document, selected: selected, reverse: expected.comparison == .staged)
+    try await writing {
+      let index = try await liveIndexURL()
+      let transaction = try IndexEditTransaction(index: index)
+      guard Data(SHA256.hash(data: transaction.original)) == expected.indexDigest,
+        try await reviewOperation() == expected.operation,
+        try conflictWorkingFile(expected.file.path).0 == expected.working,
+        try await self.patch(for: expected.file, comparison: expected.comparison) == Data(expected.document.raw.utf8) else {
+        throw GitPierError.indexChanged
+      }
+      let temporary = FileManager.default.temporaryDirectory.appendingPathComponent("GitPier-line-index-" + UUID().uuidString)
+      try FileManager.default.createDirectory(at: temporary, withIntermediateDirectories: false,
+                                             attributes: [.posixPermissions: 0o700])
+      defer { try? FileManager.default.removeItem(at: temporary) }
+      let copy = temporary.appendingPathComponent("index")
+      try transaction.original.write(to: copy)
+      let env = ["GIT_INDEX_FILE": copy.path]
+      let args = ["apply", "--cached", "--whitespace=nowarn"]
+      try await read(args + ["--check", "-"], input: patch, environment: env)
+      try await read(args + ["-"], input: patch, environment: env)
+      guard try await reviewOperation() == expected.operation,
+        try conflictWorkingFile(expected.file.path).0 == expected.working else { throw GitPierError.indexChanged }
+      try transaction.publish(Data(contentsOf: copy))
+    }
+  }
+  public func reviewPatchImport(_ data: Data, target: PatchTarget = .workingTree) async throws -> PatchImportReview {
+    let sections = try PatchParser.sections(data)
+    let operation = try await reviewOperation()
+    let current = try await status()
+    guard current.head != nil else { throw GitPierError.invalidInput("Create an initial commit before importing a patch.") }
+    guard current.operation == nil, !current.files.contains(where: \.isConflicted) else {
+      throw GitPierError.invalidInput("Complete the unfinished Git operation before importing a patch.")
+    }
+    let numstat = try await read(["apply", "--numstat", "-z", "-"], input: data).stdout
+    let files = try PatchParser.files(numstat, sections: sections)
+    guard !files.isEmpty else { throw GitPierError.invalidInput("The patch has no file changes.") }
+    var working: [String: ConflictWorkingState] = [:]
+    let gitlinks = try await read(["ls-files", "--stage", "-z"]).stdout.split(separator: 0).compactMap { record -> String? in
+      let row = String(decoding: record, as: UTF8.self)
+      guard row.hasPrefix("160000 "), let tab = row.firstIndex(of: "\t") else { return nil }
+      return String(row[row.index(after: tab)...])
+    }
+    for file in files {
+      guard !gitlinks.contains(where: { file.path == $0 || file.path.hasPrefix($0 + "/") }) else { throw GitPierError.unsafePath(file.path) }
+      var parent = try conflictURL(file.path).deletingLastPathComponent()
+      while parent.path != root.path && parent.path.hasPrefix(root.path + "/") {
+        guard !FileManager.default.fileExists(atPath: parent.appendingPathComponent(".git").path) else { throw GitPierError.unsafePath(file.path) }
+        parent = parent.deletingLastPathComponent()
+      }
+      let state = try conflictWorkingFile(file.path).0
+      guard state.kind == .regular || state.kind == .absent else { throw GitPierError.unsafePath(file.path) }
+      working[file.path] = state
+    }
+    let digest = try await liveIndexDigest()
+    let args = ["apply", "--whitespace=nowarn"] + (target == .index ? ["--cached"] : [])
+    try await read(args + ["--check", "-"], input: data)
+    let summary = try await read(["apply", "--summary", "-"], input: data).text
+    guard try await reviewOperation() == operation, try await liveIndexDigest() == digest else { throw GitPierError.indexChanged }
+    for (path, state) in working { guard try conflictWorkingFile(path).0 == state else { throw GitPierError.indexChanged } }
+    return PatchImportReview(patch: data, target: target, operation: operation, indexDigest: digest,
+                             files: files, working: working, summary: summary)
+  }
+  public func applyImportedPatch(_ expected: PatchImportReview) async throws -> String {
+    _ = try PatchParser.sections(expected.patch)
+    return try await writing {
+      guard try await reviewOperation() == expected.operation,
+        try await liveIndexDigest() == expected.indexDigest else { throw GitPierError.indexChanged }
+      for (path, state) in expected.working { guard try conflictWorkingFile(path).0 == state else { throw GitPierError.indexChanged } }
+      let index = try await liveIndexURL()
+      // Even worktree-only apply holds the Index lock to preserve partial staging during the operation.
+      let transaction = try IndexEditTransaction(index: index)
+      guard Data(SHA256.hash(data: transaction.original)) == expected.indexDigest else { throw GitPierError.indexChanged }
+      let temporary = FileManager.default.temporaryDirectory.appendingPathComponent("GitPier-patch-index-" + UUID().uuidString)
+      try FileManager.default.createDirectory(at: temporary, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
+      defer { try? FileManager.default.removeItem(at: temporary) }
+      let copy = temporary.appendingPathComponent("index"); try transaction.original.write(to: copy)
+      let env = ["GIT_INDEX_FILE": copy.path]
+      let args = ["apply", "--whitespace=nowarn"] + (expected.target == .index ? ["--cached"] : [])
+      try await read(args + ["--check", "-"], input: expected.patch, environment: env)
+      guard try await reviewOperation() == expected.operation else { throw GitPierError.indexChanged }
+      for (path, state) in expected.working { guard try conflictWorkingFile(path).0 == state else { throw GitPierError.indexChanged } }
+      let result = try await read(args + ["-"], input: expected.patch, environment: env)
+      if expected.target == .index {
+        guard try await reviewOperation() == expected.operation else { throw GitPierError.indexChanged }
+        for (path, state) in expected.working { guard try conflictWorkingFile(path).0 == state else { throw GitPierError.indexChanged } }
+        try transaction.publish(Data(contentsOf: copy))
+      }
+      return Self.redact(result.text + result.errorText)
+    }
+  }
+  public func exportFilePatch(_ file: FileChange, comparison: DiffComparison) async throws -> Data {
+    try file.paths.forEach(InputValidation.repositoryPath)
+    let args = ["--literal-pathspecs", "diff", "--binary", "--full-index", "--no-ext-diff", "--no-textconv"]
+    if file.isUntracked {
+      return try await read(args + ["--no-index", "--", "/dev/null", file.path], allowFailure: true,
+                            limit: PatchParser.limit).stdout
+    }
+    return try await read(args + (comparison == .staged ? ["--cached"] : []) + ["--"] + file.paths,
+                          limit: PatchParser.limit).stdout
+  }
+  public func exportCommitPatch(_ reference: String, format: PatchExportFormat = .diff) async throws -> Data {
+    let hash = try await resolveCommit(reference)
+    let commit = try await commitDetail(hash)
+    if format == .commitEmail {
+      guard commit.parents.count <= 1 else { throw GitPierError.invalidInput("Email patch export does not support merge commits. Export a Diff against a parent instead.") }
+      return try await read(["format-patch", "--stdout", "--binary", "--full-index", "--no-ext-diff", "--no-textconv", "-1", hash], limit: PatchParser.limit).stdout
+    }
+    if let parent = commit.parents.first {
+      return try await exportRangePatch(from: parent, to: hash)
+    }
+    return try await read(["diff-tree", "--root", "--no-commit-id", "--binary", "--full-index",
+                           "--no-ext-diff", "--no-textconv", "-p", hash], limit: PatchParser.limit).stdout
+  }
+  public func exportRangePatch(from: String, to: String, format: PatchExportFormat = .diff) async throws -> Data {
+    let base = try await resolveCommit(from), tip = try await resolveCommit(to)
+    if format == .commitEmail {
+      guard try await read(["merge-base", "--is-ancestor", base, tip], allowFailure: true).code == 0 else {
+        throw GitPierError.invalidInput("Email patch export requires an ancestor range.")
+      }
+      let merges = try await read(["rev-list", "--merges", base + ".." + tip]).stdout
+      let count = Int(try await read(["rev-list", "--count", base + ".." + tip]).text.trimmingCharacters(in: .newlines)) ?? 0
+      guard merges.isEmpty, count > 0, count <= 200 else { throw GitPierError.invalidInput("Email patch export requires 1–200 linear commits without merges.") }
+      return try await read(["format-patch", "--stdout", "--binary", "--full-index", "--no-ext-diff", "--no-textconv", base + ".." + tip], limit: PatchParser.limit).stdout
+    }
+    return try await read(["diff", "--binary", "--full-index", "--no-ext-diff", "--no-textconv", base, tip],
+                          limit: PatchParser.limit).stdout
+  }
+  private func rootLFSAttributes() throws -> (ConflictWorkingState, Data) {
+    let url = try conflictURL(".gitattributes")
+    if let attributes = try? FileManager.default.attributesOfItem(atPath: url.path),
+      (attributes[.size] as? Int ?? 0) > LFSAttributes.limit { throw GitPierError.outputLimit }
+    let (state, content) = try conflictWorkingFile(".gitattributes")
+    guard state.kind == .regular || state.kind == .absent else { throw GitPierError.unsafePath(".gitattributes") }
+    guard state.kind == .absent || content != nil else { throw GitPierError.outputLimit }
+    let data = content ?? Data(); _ = try LFSAttributes.rules(data); return (state, data)
+  }
+  private func requireLFS() async throws -> String {
+    let result = try await read(["lfs", "version"], allowFailure: true, limit: 8192)
+    guard result.code == 0, result.text.hasPrefix("git-lfs/") else {
+      throw GitPierError.invalidInput("Git LFS is not available for the selected Git environment. Install it separately and refresh; GitPier does not install or configure it globally.")
+    }
+    return result.text.trimmingCharacters(in: .newlines)
+  }
+  private func lfsFiltersConfigured() async throws -> Bool {
+    let process = try await read(["config", "--get", "filter.lfs.process"], allowFailure: true)
+    if process.code == 0 && !process.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { return true }
+    let clean = try await read(["config", "--get", "filter.lfs.clean"], allowFailure: true)
+    let smudge = try await read(["config", "--get", "filter.lfs.smudge"], allowFailure: true)
+    return clean.code == 0 && smudge.code == 0 && !clean.stdout.isEmpty && !smudge.stdout.isEmpty
+  }
+  public func lfsState() async throws -> LFSState {
+    let (_, attributes) = try rootLFSAttributes()
+    let rules = try LFSAttributes.rules(attributes)
+    let version = try await read(["lfs", "version"], allowFailure: true, limit: 8192)
+    guard version.code == 0, version.text.hasPrefix("git-lfs/") else {
+      return LFSState(installed: false, configured: false, version: "", diagnostic: Self.redact(version.errorText),
+                      attributes: attributes, rules: rules, files: [], trackingSummary: "")
+    }
+    let configured = try await lfsFiltersConfigured()
+    let listing = try await read(["lfs", "ls-files", "--json"], allowFailure: true, limit: 8 * 1024 * 1024)
+    if listing.code != 0 {
+      return LFSState(installed: true, configured: configured, version: version.text.trimmingCharacters(in: .newlines),
+                      diagnostic: Self.redact(listing.errorText), attributes: attributes, rules: rules, files: [], trackingSummary: "")
+    }
+    let native = try JSONDecoder().decode(LFSNativeFiles.self, from: listing.stdout)
+    var files: [LFSFile] = [], seen = Set<String>()
+    for item in (native.files ?? []).prefix(5000) {
+      try Task.checkCancellation(); try InputValidation.repositoryPath(item.name)
+      guard seen.insert(item.name).inserted, item.size >= 0, item.oid_type == "sha256",
+        item.oid.count == 64, item.oid.allSatisfy(\.isHexDigit) else { throw GitPierError.invalidInput("Git LFS returned invalid file metadata.") }
+      let url = try conflictURL(item.name)
+      var pointer: LFSPointer?
+      if let attributes = try? FileManager.default.attributesOfItem(atPath: url.path),
+        attributes[.type] as? FileAttributeType == .typeRegular,
+        (attributes[.size] as? Int ?? Int.max) <= LFSPointer.limit {
+        pointer = LFSPointer.parse(try Data(contentsOf: url))
+      }
+      files.append(LFSFile(path: item.name, oid: item.oid, size: item.size, downloaded: item.downloaded,
+                           materialized: item.checkout && pointer == nil, workingPointer: pointer))
+    }
+    let summary = try await read(["lfs", "track"], allowFailure: true, limit: LFSAttributes.limit)
+    return LFSState(installed: true, configured: configured, version: version.text.trimmingCharacters(in: .newlines),
+                    diagnostic: (native.files?.count ?? 0) > 5000 ? "The file list shows the first 5,000 LFS files. Network operations use the complete current reference." : nil,
+                    attributes: attributes, rules: rules, files: files,
+                    trackingSummary: Self.redact(summary.text + summary.errorText))
+  }
+  public func reviewLFSRule(_ pattern: String, track: Bool) async throws -> LFSRuleReview {
+    _ = try await requireLFS()
+    let operation = try await reviewOperation()
+    guard try await status().operation == nil else { throw GitPierError.invalidInput("Complete the Git operation before editing LFS rules.") }
+    let (working, before) = try rootLFSAttributes()
+    let after = try LFSAttributes.edit(before, pattern: pattern, track: track)
+    guard before != after else { throw GitPierError.invalidInput("This root LFS rule is already effective.") }
+    let temporary = FileManager.default.temporaryDirectory.appendingPathComponent("GitPier-lfs-rule-" + UUID().uuidString)
+    try FileManager.default.createDirectory(at: temporary, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
+    defer { try? FileManager.default.removeItem(at: temporary) }
+    let old = temporary.appendingPathComponent("before"), new = temporary.appendingPathComponent("after")
+    try before.write(to: old); try after.write(to: new)
+    let diff = try await read(["diff", "--no-index", "--no-ext-diff", "--no-textconv", "--", old.path, new.path], allowFailure: true).stdout
+    guard try await reviewOperation() == operation, try rootLFSAttributes().0 == working else { throw GitPierError.indexChanged }
+    return LFSRuleReview(operation: operation, working: working, before: before, after: after,
+                         document: DiffParser.parse(diff), pattern: pattern, track: track)
+  }
+  public func applyLFSRule(_ expected: LFSRuleReview) async throws {
+    try await writing {
+      guard try await reviewOperation() == expected.operation, try rootLFSAttributes().0 == expected.working else { throw GitPierError.indexChanged }
+      let file = try conflictURL(".gitattributes")
+      try expected.after.write(to: file, options: .atomic)
+      try FileManager.default.setAttributes([.posixPermissions: expected.working.kind == .absent ? 0o644 : expected.working.permissions], ofItemAtPath: file.path)
+    }
+  }
+  private func lfsConfiguration() async throws -> Data {
+    let result = try await read(["config", "--null", "--get-regexp", "^(lfs\\.|remote\\.|filter\\.lfs\\.)"], allowFailure: true)
+    guard result.code == 0 || result.code == 1 else { throw GitPierError.invalidInput("Cannot review the LFS network configuration.") }
+    return Data(SHA256.hash(data: result.stdout))
+  }
+  public func reviewLFSNetwork(_ action: LFSNetworkAction, remote: String) async throws -> LFSNetworkReview {
+    _ = try await requireLFS(); try InputValidation.reference(remote)
+    let configuration = try await lfsConfiguration()
+    guard let destination = try await remotes().first(where: { $0.name == remote }) else { throw GitPierError.invalidInput("Choose an existing Git remote for LFS.") }
+    let operation = try await reviewOperation(), state = try await status()
+    guard operation.head != nil, state.operation == nil else { throw GitPierError.invalidInput("LFS network operations require a commit and no unfinished Git operation.") }
+    if action == .pull, !state.tracked.isEmpty { throw GitPierError.invalidInput("Commit or preserve tracked changes before LFS Pull. LFS Fetch leaves working files unchanged.") }
+    if action == .pull, !(try await lfsFiltersConfigured()) {
+      throw GitPierError.invalidInput("Configure Git LFS filters and hooks separately before Pull. GitPier does not install them or alter global Git configuration.")
+    }
+    let settings = try conflictWorkingFile(".lfsconfig").0
+    guard settings.kind == .regular || settings.kind == .absent else { throw GitPierError.unsafePath(".lfsconfig") }
+    let digest = try await liveIndexDigest()
+    guard try await reviewOperation() == operation, try await lfsConfiguration() == configuration,
+      try conflictWorkingFile(".lfsconfig").0 == settings else { throw GitPierError.indexChanged }
+    return LFSNetworkReview(action: action, remote: remote, remoteURL: Self.redact(destination.fetchURL),
+                            operation: operation, indexDigest: digest, configuration: configuration, settings: settings)
+  }
+  public func performLFSNetwork(_ expected: LFSNetworkReview,
+                                 progress: (@Sendable (GitTransferProgress) -> Void)? = nil) async throws -> String {
+    try await writing { () async throws -> String in
+      _ = try await requireLFS()
+      if expected.action == .pull, !(try await lfsFiltersConfigured()) { throw GitPierError.indexChanged }
+      guard try await reviewOperation() == expected.operation, try await liveIndexDigest() == expected.indexDigest,
+        try await lfsConfiguration() == expected.configuration,
+        try conflictWorkingFile(".lfsconfig").0 == expected.settings else { throw GitPierError.indexChanged }
+      let decoder = GitProgressDecoder { value in progress?(value) }
+      let receiver: @Sendable (Data) -> Void = { bytes in decoder.feed(bytes) }
+      let fetched = try await read(["lfs", "fetch", "--", expected.remote, expected.operation.head!],
+        environment: ["GIT_LFS_FORCE_PROGRESS": "1"], timeout: 3600, onStderr: receiver)
+      guard expected.action == .pull else { return Self.redact(fetched.text + fetched.errorText) }
+      // Native Pull semantics, split so HEAD/Index changes during download stop checkout.
+      guard try await reviewOperation() == expected.operation, try await liveIndexDigest() == expected.indexDigest,
+        try await lfsConfiguration() == expected.configuration, try await status().tracked.isEmpty,
+        try conflictWorkingFile(".lfsconfig").0 == expected.settings else { throw GitPierError.indexChanged }
+      let index = try await liveIndexURL()
+      let transaction = try IndexEditTransaction(index: index)
+      guard Data(SHA256.hash(data: transaction.original)) == expected.indexDigest else { throw GitPierError.indexChanged }
+      let temporary = FileManager.default.temporaryDirectory.appendingPathComponent("GitPier-lfs-index-" + UUID().uuidString)
+      try FileManager.default.createDirectory(at: temporary, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
+      defer { try? FileManager.default.removeItem(at: temporary) }
+      let copy = temporary.appendingPathComponent("index"); try transaction.original.write(to: copy)
+      let checked = try await read(["lfs", "checkout"], environment: ["GIT_INDEX_FILE": copy.path, "GIT_LFS_FORCE_PROGRESS": "1"],
+                                   timeout: 3600, onStderr: receiver)
+      guard try await reviewOperation() == expected.operation else { throw GitPierError.indexChanged }
+      return Self.redact(fetched.text + fetched.errorText + checked.text + checked.errorText)
+    }
+  }
+  private func submodulePath(_ path: String) throws -> URL {
+    try InputValidation.repositoryPath(path)
+    guard !path.contains("\n"), !path.contains("\r"),
+      !path.split(separator: "/").contains(where: { $0.lowercased() == ".git" }) else { throw GitPierError.unsafePath(path) }
+    let url = try conflictURL(path)
+    if let attributes = try? FileManager.default.attributesOfItem(atPath: url.path),
+      attributes[.type] as? FileAttributeType != .typeDirectory { throw GitPierError.unsafePath(path) }
+    return url
+  }
+  private func submodulesFileState() throws -> ConflictWorkingState {
+    let file = try conflictURL(".gitmodules")
+    if let attributes = try? FileManager.default.attributesOfItem(atPath: file.path),
+      (attributes[.size] as? Int ?? 0) > 1024 * 1024 { throw GitPierError.outputLimit }
+    let state = try conflictWorkingFile(".gitmodules").0
+    guard state.kind == .regular || state.kind == .absent else { throw GitPierError.unsafePath(".gitmodules") }
+    return state
+  }
+  private func moduleConfiguration(_ module: GitSubmodule? = nil) async throws -> Data {
+    let parent = try await read(["config", "--null", "--get-regexp", "^submodule\\."], allowFailure: true)
+    guard parent.code == 0 || parent.code == 1 else { throw GitPierError.invalidInput("Cannot review submodule configuration.") }
+    var bytes = parent.stdout
+    if let module, module.initialized {
+      bytes.append(try await read(["-C", try submodulePath(module.path).path, "config", "--null", "--get-regexp", "^(remote\\.|branch\\.|submodule\\.)"], allowFailure: true).stdout)
+    }
+    return Data(SHA256.hash(data: bytes))
+  }
+  public func submodules(includeNested: Bool = true) async throws -> [GitSubmodule] {
+    _ = try submodulesFileState()
+    var result: [GitSubmodule] = [], visited = Set<String>()
+    func scan(_ directory: URL, relative: String, depth: Int) async throws {
+      let canonical = ProfessionalWorkflowParser.canonicalPath(directory.path)
+      guard visited.insert(canonical).inserted, result.count < 100 else { return }
+      let file = directory.appendingPathComponent(".gitmodules")
+      var declarations: [(String, String)] = []
+      if FileManager.default.fileExists(atPath: file.path) {
+        let attributes = try FileManager.default.attributesOfItem(atPath: file.path)
+        guard attributes[.type] as? FileAttributeType == .typeRegular, (attributes[.size] as? Int ?? Int.max) <= 1024 * 1024 else { throw GitPierError.unsafePath(".gitmodules") }
+        let config = try await read(["-C", directory.path, "config", "--null", "--file", ".gitmodules", "--get-regexp", "^submodule\\..*\\.path$"], allowFailure: true)
+        guard config.code == 0 || config.code == 1 else { throw GitPierError.invalidInput("The .gitmodules file is invalid. Inspect it in the editor.") }
+        declarations = try SubmoduleParser.declarations(config.stdout)
+      }
+      let index = try SubmoduleParser.gitlinks(await read(["-C", directory.path, "ls-files", "--stage", "-z"]).stdout, index: true)
+      let head = try SubmoduleParser.gitlinks(await read(["-C", directory.path, "ls-tree", "-r", "-z", "HEAD"], allowFailure: true).stdout, index: false)
+      let configuredPaths = Set(declarations.map(\.1))
+      declarations += index.keys.filter { !configuredPaths.contains($0) }.sorted().map { ($0, $0) }
+      var seen = Set<String>()
+      for (name, path) in declarations {
+        try Task.checkCancellation()
+        guard result.count < 100 else { return }
+        guard seen.insert(path).inserted else { throw GitPierError.invalidInput("Duplicate submodule paths require manual repair.") }
+        let fullPath = relative.isEmpty ? path : relative + "/" + path
+        let declared = try await read(["-C", directory.path, "config", "--file", ".gitmodules", "--get", "submodule." + name + ".url"], allowFailure: true).text.trimmingCharacters(in: .newlines)
+        let registered = try await read(["-C", directory.path, "config", "--get", "submodule." + name + ".url"], allowFailure: true).text.trimmingCharacters(in: .newlines)
+        let branch = try await read(["-C", directory.path, "config", "--file", ".gitmodules", "--get", "submodule." + name + ".branch"], allowFailure: true).text.trimmingCharacters(in: .newlines)
+        var initialized = false, childHead: String?, changes: Int?, operation: GitOperation?, problem: String?
+        var childURL: URL?
+        do {
+          let child = try submodulePath(fullPath); childURL = child
+          if FileManager.default.fileExists(atPath: child.path) {
+            let top = try await read(["-C", child.path, "rev-parse", "--show-toplevel"], allowFailure: true)
+            if top.code == 0, ProfessionalWorkflowParser.canonicalPath(try Self.nativePath(top.stdout)) == ProfessionalWorkflowParser.canonicalPath(child.path) {
+              initialized = true
+              let service = await GitServiceRegistry.shared.service(for: child, gitPath: gitPath)
+              let state = try await service.status(); childHead = state.head; changes = state.files.count; operation = state.operation
+            }
+          }
+          if declared.isEmpty { problem = "Missing .gitmodules URL; inspect this gitlink in the terminal." }
+          if index[path] == nil { problem = "This declaration has no staged gitlink." }
+        } catch { problem = Self.redact(error.localizedDescription) }
+        result.append(GitSubmodule(name: name, path: fullPath, localPath: path, depth: depth,
+          url: Self.redact(declared), configuredURL: Self.redact(registered), branch: branch,
+          currentHead: childHead, indexCommit: index[path], parentCommit: head[path], registered: !registered.isEmpty,
+          initialized: initialized, changes: changes, operation: operation, problem: problem))
+        if includeNested, initialized, depth < 3, let childURL { try await scan(childURL, relative: fullPath, depth: depth + 1) }
+      }
+    }
+    try await scan(root, relative: "", depth: 0)
+    return result
+  }
+  private func currentSubmodule(_ path: String) async throws -> GitSubmodule {
+    guard let module = try await submodules(includeNested: false).first(where: { $0.path == path }) else {
+      throw GitPierError.invalidInput("This submodule changed. Refresh and review its state again.")
+    }
+    guard module.depth == 0, module.problem == nil, module.indexCommit != nil else {
+      throw GitPierError.invalidInput("Manage nested or incomplete submodules by opening their parent repository. Deinit and removal are not supported.")
+    }
+    return module
+  }
+  private func validateChildIndexFlags(_ path: String) async throws {
+    let entries = try await read(["-C", try submodulePath(path).path, "ls-files", "-v", "-z"]).stdout.split(separator: 0)
+    guard !entries.contains(where: { $0.first == 83 || ($0.first.map { (97...122).contains($0) } ?? false) }) else {
+      throw GitPierError.invalidInput("Inspect skip-worktree or assume-unchanged child entries in the terminal before updating the submodule.")
+    }
+  }
+  public func reviewSubmodule(_ path: String, action: SubmoduleAction) async throws -> SubmoduleReview {
+    let parent = try await reviewOperation()
+    guard try await status().operation == nil else { throw GitPierError.invalidInput("Complete the parent Git operation before managing submodules.") }
+    let module = try await currentSubmodule(path), working = try submodulesFileState()
+    let configuration = try await moduleConfiguration(module)
+    var childReview: GitOperationReview?, target = module.indexCommit, remote: String?
+    if module.initialized {
+      let child = try await GitServiceRegistry.shared.service(for: submodulePath(path), gitPath: gitPath)
+      childReview = try await child.reviewOperation()
+      if action == .recorded || action == .remote {
+        try await validateChildIndexFlags(path)
+        let state = try await child.status()
+        guard state.operation == nil, state.files.isEmpty else {
+          throw GitPierError.invalidInput("Preserve all modified and untracked child files and finish its Git operation before updating the submodule.")
+        }
+      }
+      if action == .remote {
+        let childURL = try submodulePath(path)
+        let remotes = try await child.remotes()
+        guard let selected = remotes.first(where: { $0.name == "origin" }) ?? (remotes.count == 1 ? remotes.first : nil) else {
+          throw GitPierError.invalidInput("Select the child's remote in its own repository before a remote-tracking update.")
+        }
+        remote = selected.name
+        var branch = try await read(["config", "--get", "submodule." + module.name + ".branch"], allowFailure: true).text.trimmingCharacters(in: .newlines)
+        if branch.isEmpty { branch = module.branch }
+        if branch == "." {
+          guard !parent.branch.isEmpty, parent.branch != "(detached)" else { throw GitPierError.invalidInput("A submodule branch of '.' requires a parent branch.") }
+          branch = parent.branch
+        }
+        if !branch.isEmpty { try InputValidation.reference(branch) }
+        let reference = branch.isEmpty ? "HEAD" : "refs/heads/" + branch
+        let data = try await read(["-C", childURL.path, "ls-remote", "--symref", "--", selected.name, reference]).text
+        let hashes = data.components(separatedBy: "\n").compactMap { line -> String? in
+          let fields = line.split(separator: "\t", maxSplits: 1).map(String.init)
+          return fields.count == 2 && fields[1] == reference && [40, 64].contains(fields[0].count) && fields[0].allSatisfy(\.isHexDigit) ? fields[0] : nil
+        }
+        guard hashes.count == 1 else { throw GitPierError.invalidInput("The remote-tracking target is unavailable or ambiguous.") }
+        target = hashes[0]
+      }
+    } else if action == .remote {
+      throw GitPierError.invalidInput("Initialize and check out the recorded submodule before reviewing a remote-tracking update.")
+    } else if action == .recorded {
+      let url = try submodulePath(path)
+      if FileManager.default.fileExists(atPath: url.path), !(try FileManager.default.contentsOfDirectory(atPath: url.path)).isEmpty {
+        throw GitPierError.invalidInput("The uninitialized submodule directory contains unknown data. It will not be overwritten.")
+      }
+    }
+    guard try await reviewOperation() == parent, try submodulesFileState() == working,
+      try await moduleConfiguration(module) == configuration else { throw GitPierError.indexChanged }
+    return SubmoduleReview(module: module, action: action, parent: parent, modulesFile: working,
+                           configuration: configuration, child: childReview, target: target, remote: remote)
+  }
+  private func validateSubmoduleReview(_ expected: SubmoduleReview) async throws {
+    guard try await reviewOperation() == expected.parent, try submodulesFileState() == expected.modulesFile,
+      try await moduleConfiguration(expected.module) == expected.configuration else { throw GitPierError.indexChanged }
+    let current = try await currentSubmodule(expected.module.path)
+    guard current == expected.module else { throw GitPierError.indexChanged }
+    if current.initialized && (expected.action == .recorded || expected.action == .remote) {
+      try await validateChildIndexFlags(current.path)
+    }
+    if let expectedChild = expected.child {
+      let child = try await GitServiceRegistry.shared.service(for: submodulePath(current.path), gitPath: gitPath)
+      guard try await child.reviewOperation() == expectedChild else { throw GitPierError.indexChanged }
+    }
+  }
+  func submoduleReservation<T: Sendable>(initialized: Bool, heldCommon: String,
+                                         _ action: @Sendable () async throws -> T) async throws -> T {
+    if initialized, try await commonDirectory().path != heldCommon { return try await lifecycleWrite(action) }
+    return try await writing(action)
+  }
+  public func performSubmodule(_ expected: SubmoduleReview,
+                               progress: (@Sendable (GitTransferProgress) -> Void)? = nil) async throws -> String {
+    try await lifecycleWrite {
+      let childURL = try submodulePath(expected.module.path)
+      let child = await GitServiceRegistry.shared.service(for: childURL, gitPath: gitPath)
+      let held = try await commonDirectory().path
+      return try await child.submoduleReservation(initialized: expected.module.initialized, heldCommon: held) {
+        try await self.validateSubmoduleReview(expected)
+        let decoder = GitProgressDecoder { value in progress?(value) }
+        let receiver: @Sendable (Data) -> Void = { bytes in decoder.feed(bytes) }
+        if expected.action == .initialize || expected.action == .sync {
+          let command = expected.action == .initialize ? "init" : "sync"
+          let result = try await self.read(["--literal-pathspecs", "submodule", command, "--", expected.module.path])
+          return Self.redact(result.text + result.errorText)
+        }
+        if !expected.module.initialized {
+          let result = try await self.read(["--literal-pathspecs", "submodule", "update", "--init", "--checkout", "--", expected.module.path], timeout: 3600, onStderr: receiver)
+          guard try await child.resolveCommit("HEAD") == expected.target else { throw GitPierError.invalidInput("The submodule checkout differs from the reviewed gitlink. Inspect its state before continuing.") }
+          return Self.redact(result.text + result.errorText)
+        }
+        let target = expected.target!
+        let exists = try await self.read(["-C", childURL.path, "cat-file", "-e", target + "^{commit}"], allowFailure: true)
+        let temporaryReference = "refs/gitpier/submodule/" + UUID().uuidString.replacingOccurrences(of: "-", with: "")
+        var fetched = false
+        func cleanup() async {
+          if fetched {
+            _ = try? await Task.detached { try await self.read(["-C", childURL.path, "update-ref", "-d", temporaryReference, target]) }.value
+          }
+        }
+        do {
+          if expected.action == .remote || exists.code != 0 {
+            let remote = expected.remote ?? "origin"
+            fetched = true
+            _ = try await self.read(["-C", childURL.path, "fetch", "--no-write-fetch-head", "--no-tags", "--", remote, target + ":" + temporaryReference], timeout: 3600, onStderr: receiver)
+          }
+          try await self.validateSubmoduleReview(expected)
+          let result = try await self.read(["-C", childURL.path, "checkout", "--detach", "--no-overwrite-ignore", target], timeout: 3600, onStderr: receiver)
+          guard try await child.resolveCommit("HEAD") == target else { throw GitPierError.indexChanged }
+          await cleanup()
+          return Self.redact(result.text + result.errorText)
+        } catch { await cleanup(); throw error }
+      }
+    }
+  }
+  public func reviewSubmoduleAdd(url: String, path: String) async throws -> SubmoduleAddReview {
+    try InputValidation.remoteURL(url)
+    guard !url.hasPrefix("./"), !url.hasPrefix("../") else {
+      throw GitPierError.invalidInput("Choose an absolute submodule URL or path. Relative remote URLs require terminal review.")
+    }
+    let destination = try submodulePath(path)
+    guard !FileManager.default.fileExists(atPath: destination.path) else { throw GitPierError.invalidInput("Choose a new submodule directory. Existing directories are preserved.") }
+    let parent = try await reviewOperation(), state = try await status()
+    guard parent.head != nil, state.operation == nil, !state.files.contains(where: { $0.path == ".gitmodules" || $0.path == path || $0.isConflicted }) else {
+      throw GitPierError.invalidInput("Preserve .gitmodules changes and finish the parent Git operation before adding a submodule.")
+    }
+    let registered = try await submodules(includeNested: false)
+    guard !registered.contains(where: { path == $0.path || path.hasPrefix($0.path + "/") || $0.path.hasPrefix(path + "/") }) else { throw GitPierError.unsafePath(path) }
+    let metadata = try await metadataFile("modules/" + path)
+    guard !FileManager.default.fileExists(atPath: metadata.path) else { throw GitPierError.invalidInput("Existing submodule Git metadata requires manual review; it will not be reused or removed.") }
+    let filters = try await read(["check-attr", "-z", "filter", "working-tree-encoding", "--", ".gitmodules"]).stdout.split(separator: 0, omittingEmptySubsequences: false)
+    for index in stride(from: 2, to: filters.count, by: 3) {
+      guard ["unspecified", "unset"].contains(String(decoding: filters[index], as: UTF8.self)) else { throw GitPierError.invalidInput("Submodule configuration uses a filter or encoding. Review it in the terminal before adding.") }
+    }
+    return try await SubmoduleAddReview(path: path, url: url, parent: parent, modulesFile: submodulesFileState(), configuration: moduleConfiguration())
+  }
+  public func addSubmodule(_ expected: SubmoduleAddReview,
+                            progress: (@Sendable (GitTransferProgress) -> Void)? = nil) async throws -> String {
+    try await lifecycleWrite {
+      let current = try await reviewSubmoduleAdd(url: expected.url, path: expected.path)
+      guard current.parent == expected.parent, current.modulesFile == expected.modulesFile,
+        current.configuration == expected.configuration else { throw GitPierError.indexChanged }
+      let child = try await GitServiceRegistry.shared.service(for: submodulePath(expected.path), gitPath: gitPath)
+      let held = try await commonDirectory().path
+      return try await child.submoduleReservation(initialized: false, heldCommon: held) {
+        let decoder = GitProgressDecoder { value in progress?(value) }
+        let before = try await self.read(["ls-files", "--stage", "-z"]).stdout
+        let protected = SubmoduleParser.otherIndex(before, excluding: [expected.path, ".gitmodules"])
+        let destination = try await self.submodulePath(expected.path)
+        try FileManager.default.createDirectory(at: destination.deletingLastPathComponent(), withIntermediateDirectories: true)
+        // Download first. An external Index/.gitmodules change during a long clone
+        // stops registration/staging, retaining the downloaded directory for review.
+        try await Self.clone(url: expected.url, destination: destination, gitPath: self.gitPath,
+                             environment: self.authEnvironment, authArguments: self.authArguments, progress: progress)
+        guard try await self.reviewOperation() == expected.parent,
+          try await self.submodulesFileState() == expected.modulesFile,
+          try await self.moduleConfiguration() == expected.configuration else { throw GitPierError.indexChanged }
+        let result = try await self.read(["submodule", "add", "--", expected.url, expected.path], timeout: 3600, onStderr: { bytes in decoder.feed(bytes) })
+        let after = try await self.read(["ls-files", "--stage", "-z"]).stdout
+        guard SubmoduleParser.otherIndex(after, excluding: [expected.path, ".gitmodules"]) == protected else {
+          throw GitPierError.indexChanged
+        }
+        return Self.redact(result.text + result.errorText)
+      }
+    }
+  }
   public func history(skip: Int = 0, count: Int = 100, path: String? = nil, query: HistoryQuery? = nil) async throws
     -> [CommitRecord]
   {
@@ -1183,9 +1752,168 @@ public actor GitService {
     return GitOperationReview(head: state.head, branch: state.branch,
                               indexFingerprint: Data(SHA256.hash(data: entries)), operationIdentity: operation)
   }
+  public func interactiveRebaseCandidate(upstream reference: String) async throws -> InteractiveRebaseCandidate {
+    let review = try await reviewOperation()
+    let state = try await status()
+    guard state.operation == nil, state.files.isEmpty, state.head != nil,
+      state.branch != "(detached)", !state.branch.isEmpty else {
+      throw GitPierError.invalidInput("Interactive rebase requires a clean working tree and Index, a local branch, and no unfinished Git operation.")
+    }
+    let flagged = try await read(["ls-files", "-v", "-z"]).stdout.split(separator: 0)
+    guard !flagged.contains(where: { $0.first == 83 || ($0.first.map { (97...122).contains($0) } ?? false) }) else {
+      throw GitPierError.invalidInput("Interactive rebase does not support skip-worktree or assume-unchanged entries. Inspect hidden working changes in the terminal first.")
+    }
+    let upstream = try await resolveCommit(reference)
+    guard try await read(["merge-base", "--is-ancestor", upstream, "HEAD"], allowFailure: true).code == 0 else {
+      throw GitPierError.invalidInput("Choose an ancestor of the current branch as the rebase starting point.")
+    }
+    let data = try await read(["log", "--reverse", "--topo-order", "-201",
+      "--format=%H%x00%P%x00%an%x00%ae%x00%at%x00%s%x00%b%x00%D%x00", "-z", upstream + "..HEAD"]).stdout
+    let commits = Self.parseHistory(data)
+    guard !commits.isEmpty, commits.count <= 200 else {
+      throw GitPierError.invalidInput("Select between 1 and 200 commits for interactive rebase.")
+    }
+    var parent = upstream
+    var shared = Set<String>()
+    for commit in commits {
+      guard commit.parents == [parent] else {
+        throw GitPierError.invalidInput("This range contains merge or nonlinear history. Interactive rebase currently supports linear history only.")
+      }
+      parent = commit.hash
+      if !(try await read(["for-each-ref", "--format=%(refname)", "--contains=" + commit.hash, "refs/remotes"]).stdout).isEmpty {
+        shared.insert(commit.hash)
+      }
+    }
+    guard try await reviewOperation() == review, try await status().files.isEmpty else { throw GitPierError.indexChanged }
+    return InteractiveRebaseCandidate(review: review, upstream: upstream, commits: commits, sharedCommits: shared)
+  }
+  private func rebaseText(_ directory: URL, _ name: String) throws -> String {
+    let url = directory.appendingPathComponent(name)
+    guard FileManager.default.fileExists(atPath: url.path) else { return "" }
+    let attributes = try FileManager.default.attributesOfItem(atPath: url.path)
+    guard attributes[.type] as? FileAttributeType == .typeRegular,
+      (attributes[.size] as? Int ?? Int.max) <= 1024 * 1024 else {
+      throw GitPierError.invalidInput("The rebase metadata is too large or uses an unsupported file type.")
+    }
+    guard let text = String(data: try Data(contentsOf: url), encoding: .utf8) else {
+      throw GitPierError.invalidInput("The rebase metadata must be UTF-8.")
+    }
+    return text
+  }
+  private func rebaseWorkingFingerprint() async throws -> Data {
+    var data = try await read(["status", "--porcelain=v2", "-z", "--untracked-files=all"]).stdout
+    for file in try await status().files {
+      for path in file.paths {
+        let state = try conflictWorkingFile(path).0
+        data.append(Data((path + "\0" + String(describing: state) + "\0").utf8))
+      }
+    }
+    return Data(SHA256.hash(data: data))
+  }
+  public func rebaseState() async throws -> RebaseState? {
+    guard try await status().operation == .rebase else { return nil }
+    let review = try await reviewOperation()
+    let metadata = try await metadataDirectories()[0]
+    let merge = metadata.appendingPathComponent("rebase-merge")
+    let interactive = FileManager.default.fileExists(atPath: merge.path)
+    let directory = interactive ? merge : metadata.appendingPathComponent("rebase-apply")
+    let fingerprint = try await rebaseWorkingFingerprint()
+    let state = RebaseState(review: review, workingFingerprint: fingerprint,
+      branch: try rebaseText(directory, "head-name").trimmingCharacters(in: .newlines),
+      originalHead: try rebaseText(directory, "orig-head").trimmingCharacters(in: .newlines),
+      upstream: try rebaseText(directory, "onto").trimmingCharacters(in: .newlines),
+      done: try rebaseText(directory, "done"), todo: try rebaseText(directory, "git-rebase-todo"),
+      message: try rebaseText(directory, "message"),
+      current: Int(try rebaseText(directory, interactive ? "msgnum" : "next").trimmingCharacters(in: .newlines)) ?? 0,
+      total: Int(try rebaseText(directory, interactive ? "end" : "last").trimmingCharacters(in: .newlines)) ?? 0,
+      interactive: interactive)
+    guard try await reviewOperation() == review,
+      try await rebaseWorkingFingerprint() == fingerprint else { throw GitPierError.indexChanged }
+    return state
+  }
+  private func savedRebaseMessages(_ metadata: URL) throws -> (URL, Data?, RebaseMessagePlan?) {
+    let file = metadata.appendingPathComponent("gitpier-rebase-messages.json")
+    guard FileManager.default.fileExists(atPath: file.path) else { return (file, nil, nil) }
+    let attributes = try FileManager.default.attributesOfItem(atPath: file.path)
+    guard attributes[.type] as? FileAttributeType == .typeRegular,
+      (attributes[.size] as? Int ?? Int.max) <= 16 * 1024 * 1024 else {
+      throw GitPierError.invalidInput("Preserve and inspect the saved rebase message plan before continuing.")
+    }
+    let data = try Data(contentsOf: file)
+    let plan = try JSONDecoder().decode(RebaseMessagePlan.self, from: data)
+    try plan.validate()
+    return (file, data, plan)
+  }
+  @discardableResult public func startInteractiveRebase(_ plan: InteractiveRebasePlan) async throws -> String {
+    try plan.validate()
+    return try await writing {
+      guard try await reviewOperation() == plan.candidate.review, try await status().files.isEmpty,
+        try await status().operation == nil else { throw GitPierError.indexChanged }
+      // Recompute linearity and sharing against the fixed ancestor, never a moving reference.
+      let current = try await interactiveRebaseCandidate(upstream: plan.candidate.upstream)
+      guard current.commits.map(\.hash) == plan.candidate.commits.map(\.hash),
+        current.sharedCommits == plan.candidate.sharedCommits else { throw GitPierError.indexChanged }
+      let metadata = try await metadataDirectories()[0]
+      let (saved, _, _) = try savedRebaseMessages(metadata)
+      let messages = try RebaseMessagePlan(plan)
+      let bytes = try JSONEncoder().encode(messages)
+      let editors = try RebaseEditorFiles(todo: plan.todo(), messages: messages.messages,
+                                        state: metadata.appendingPathComponent("rebase-merge"))
+      defer { editors.remove() }
+      // Persist data before launching Git so cancellation/crash/restart never loses reviewed messages.
+      try bytes.write(to: saved, options: .atomic)
+      try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: saved.path)
+      let result = try await read(["rebase", "--interactive", "--force-rebase", "--no-autostash",
+        "--no-autosquash", "--no-rebase-merges", "--no-update-refs", "--no-fork-point",
+        "--reapply-cherry-picks", "--keep-empty", "--empty=ask", plan.candidate.upstream], environment: editors.environment)
+      if try await status().operation == nil, (try? Data(contentsOf: saved)) == bytes { try FileManager.default.removeItem(at: saved) }
+      return Self.redact(result.text + result.errorText)
+    }
+  }
+  @discardableResult public func controlRebase(_ action: RebaseControl, expected: RebaseState,
+                                               message: String? = nil) async throws -> String {
+    if let message {
+      guard !message.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+        !message.utf8.contains(0), message.utf8.count <= 64 * 1024 else {
+        throw GitPierError.invalidInput("Enter a nonempty commit message within 64 KiB.")
+      }
+    }
+    return try await writing {
+      guard let actual = try await rebaseState(), actual.review == expected.review,
+        actual.workingFingerprint == expected.workingFingerprint else { throw GitPierError.indexChanged }
+      if action == .continue, try await status().files.contains(where: \.isConflicted) {
+        throw GitPierError.invalidInput("Resolve and stage every conflict before continuing rebase.")
+      }
+      let metadata = try await metadataDirectories()[0]
+      // A corrupt optional message plan must never prevent Git's native Abort recovery.
+      let savedPlan: (URL, Data?, RebaseMessagePlan?)
+      if action == .abort {
+        savedPlan = (try? savedRebaseMessages(metadata))
+          ?? (metadata.appendingPathComponent("gitpier-rebase-messages.json"), nil, nil)
+      } else { savedPlan = try savedRebaseMessages(metadata) }
+      let (saved, bytes, plan) = savedPlan
+      let owned = plan?.head == actual.originalHead && plan?.upstream == actual.upstream && plan?.branch == actual.branch
+      let editors = try RebaseEditorFiles(messages: owned ? plan?.messages ?? [:] : [:],
+                                        state: metadata.appendingPathComponent(actual.interactive ? "rebase-merge" : "rebase-apply"),
+                                        overrideMessage: action == .continue ? message : nil)
+      defer { editors.remove() }
+      let result = try await read(["rebase", "--" + action.rawValue], environment: editors.environment)
+      if try await status().operation == nil, owned, (try? Data(contentsOf: saved)) == bytes {
+        try FileManager.default.removeItem(at: saved)
+      }
+      return Self.redact(result.text + result.errorText)
+    }
+  }
   @discardableResult public func perform(_ arguments: [String], expected: GitOperationReview? = nil) async throws -> String {
     try await writing {
       if let expected, try await reviewOperation() != expected { throw GitPierError.indexChanged }
+      if ["reset", "switch", "checkout", "merge", "rebase", "cherry-pick", "revert"].contains(arguments.first ?? "") {
+        let nativeControl = arguments.count == 2 && arguments[0] == "rebase"
+          && ["--continue", "--skip", "--abort"].contains(arguments[1])
+        if try await status().operation == .rebase, !nativeControl {
+          throw GitPierError.invalidInput("Review the unfinished rebase and use Continue, Skip or Abort before starting another history operation.")
+        }
+      }
       let result = try await read(arguments)
       return Self.redact(result.text + result.errorText)
     }

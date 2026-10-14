@@ -35,6 +35,18 @@ Opening or selecting a repository always shows the Commit page; the current page
 
 Released [v1.2.0](https://github.com/Heisenberg2024/gitpier/releases/tag/v1.2.0) adds Reflog recovery, guarded Worktree lifecycle management, arbitrary local/remote-tracking branch comparison, and Git Blame. These use native Git queries and the existing macOS panels; recovery defaults to a new branch, comparison/Blame are read-only, and unknown or dirty worktree directories cannot be deleted. Blame supports UTF-8 text up to 4 MiB with 400-line pages. See the [changelog](CHANGELOG.md) and [development validation](docs/development.md). Install from GitHub Latest Release or use Check for Updates from v1.1.0.
 
+## Development preview — Unreleased
+
+The unreleased v1.3.0 source (build 19) implements Interactive Rebase with reviewed Pick/Reword/Squash/Fixup/Drop plans, commit reordering, native conflict handling and reviewed Continue/Skip/Abort recovery for linear histories of up to 200 commits. Hooks, signing, partial staging and the production update identity remain protected. Local validation is recorded in the [development guide](docs/development.md#v130-local-validation--2026-10-15); v1.2.0 remains the stable download.
+
+Menus use compact labels without extra disclosure indicators, Rebase action controls align with the drag glyphs, and About fits on one Settings page. Opting into automatic checks enables checks at launch and on Sparkle's regular schedule, with native update reminders; downloads and installation still require confirmation.
+
+Select individual changed lines in the Diff gutter and Stage/Unstage them while retaining other staged and working changes. Line actions support bounded regular-text modifications, CRLF and missing final newlines; complex file changes and filters retain file/hunk workflows. Refreshing or changing the file/comparison clears the selection.
+
+Export file, hunk, selected-line, commit or endpoint-range patches; preview and check ordinary Diff patches before applying them to the Working Tree or Index as distinct targets. Commit email export uses format-patch; email import/git am, rename/copy/symlink/gitlink imports and binary deltas remain terminal workflows. Import is limited to 8 MiB / 200 files, with bounded literal binary data.
+
+The Git LFS page detects the optional installed tool, shows rules/files/OIDs/pointers, reviews root .gitattributes edits and offers confirmed Fetch/Pull with existing credentials. It never installs LFS, filters or hooks, converts existing files, or stages rules automatically. Submodules show declared/registered URLs and HEAD/Index/parent gitlinks, offer reviewed Init/Sync/Add and separate recorded/remote commit checkout, and open children in GitPier, editors or terminals. Nested entries are read-only until their parent repository is opened. Deinit/removal and automatic recursive updates remain unavailable.
+
 ## Screenshots
 
 

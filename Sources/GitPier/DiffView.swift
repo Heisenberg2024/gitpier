@@ -8,6 +8,21 @@ struct DiffPanel: View {
   @Environment(\.colorScheme) var scheme
   @State private var showSlowLoad = false
   @State private var blame: BlameRequest?
+  @State private var patchExport: PatchExportRequest?
+  @State private var lineSelectionKey = ""
+  @State private var selectedLineIDs: Set<Int> = []
+  @State private var lineSupportRevision: UUID?
+  @State private var lineSupport = false
+  var currentLineKey: String {
+    model.record.id.uuidString + (model.selectedPath ?? "") + model.comparison.rawValue
+      + model.diff.revision.uuidString + (model.snapshot?.identity ?? "") + String(store.settings.ignoreWhitespace)
+  }
+  var activeLines: Set<Int> { lineSelectionKey == currentLineKey ? selectedLineIDs : [] }
+  var lineActionsAvailable: Bool {
+    !model.busy && !model.refreshing && !model.diffLoading && !store.settings.ignoreWhitespace && model.selectedFile?.kind == .modified
+      && model.selectedFile?.submodule == "N..." && model.snapshot != nil
+      && lineSupportRevision == model.diff.revision && lineSupport
+  }
   var body: some View {
     VStack(spacing: 0) {
       ScrollView(.horizontal, showsIndicators: false) {
@@ -93,6 +108,22 @@ struct DiffPanel: View {
           Image(systemName: "doc.text").foregroundStyle(.secondary)
           Text(path).lineLimit(1).truncationMode(.middle)
           Button(store.text("Blame", "逐行溯源")) { blame = BlameRequest(path: path) }
+          Menu {
+            if let file = model.selectedFile {
+              Button(store.text("Export File Patch…", "导出文件补丁…")) { patchExport = PatchExportRequest(source: .file(file, model.comparison)) }
+            }
+            if lineActionsAvailable, !model.diff.hunks.isEmpty {
+              let hunk = model.diff.hunks[min(model.selectedHunk, model.diff.hunks.count - 1)]
+              Button(store.text("Export Hunk Patch…", "导出差异块补丁…")) {
+                let ids = Set(hunk.lines.filter { $0.kind == .addition || $0.kind == .deletion }.map(\.id))
+                patchExport = PatchExportRequest(source: .selected(model.diff, ids, path))
+              }
+              Button(store.text("Export Selected Lines…", "导出选中行补丁…")) {
+                patchExport = PatchExportRequest(source: .selected(model.diff, activeLines, path))
+              }.disabled(activeLines.isEmpty)
+            }
+          } label: { Image(systemName: "square.and.arrow.up") }.menuStyle(.borderlessButton).frame(width: 22)
+            .help(store.text("Export Patch", "导出补丁"))
           Spacer()
           if model.selectedFile?.submodule.hasPrefix("S") == true { Badge(text: "Submodule") }
         }.font(uiFont(size: 10)).padding(.horizontal, 12).frame(height: 27)
@@ -122,6 +153,7 @@ struct DiffPanel: View {
               "此 Diff 超过 20,000 行，请在编辑器中查看。"))
         } else {
           ZStack {
+            let selectionKey = currentLineKey
             DiffTable(
               document: model.diff, path: path,
               key: model.record.id.uuidString + path + model.comparison.rawValue,
@@ -130,7 +162,18 @@ struct DiffPanel: View {
               afterOnly: model.comparison == .unstaged && !model.diff.hunks.isEmpty
                 && !model.diff.hasOldContent,
               beforeTitle: model.comparison == .staged ? "HEAD" : "Index",
-              afterTitle: model.comparison == .staged ? "Index" : store.text("Working Tree", "工作区")
+              afterTitle: model.comparison == .staged ? "Index" : store.text("Working Tree", "工作区"),
+              selectionKey: selectionKey, allowsLineSelection: lineActionsAvailable,
+              selectedLineIDs: activeLines,
+              onLineSelection: lineActionsAvailable ? { ids in
+                guard selectionKey == currentLineKey, lineActionsAvailable else { return }
+                lineSelectionKey = selectionKey; selectedLineIDs = ids
+              } : nil,
+              lineActionTitle: store.text(model.comparison == .staged ? "Unstage Selected Lines" : "Stage Selected Lines",
+                                         model.comparison == .staged ? "取消暂存选中行" : "暂存选中行"),
+              onLineAction: lineActionsAvailable ? { ids in
+                guard selectionKey == currentLineKey else { return }; applyLines(ids)
+              } : nil
             )
             .equatable()
             if !model.diffLoading && model.diff.hunks.isEmpty {
@@ -152,6 +195,22 @@ struct DiffPanel: View {
             }
           }
           Divider()
+          HStack(spacing: 8) {
+            Text(store.text("Select changed lines in the gutter · ⇧ range · ⌘ toggle", "在行号区选择修改行 · ⇧ 连选 · ⌘ 多选"))
+              .foregroundStyle(.secondary).lineLimit(1)
+            Spacer()
+            if !activeLines.isEmpty {
+              Text(store.text("\(activeLines.count) selected", "已选 \(activeLines.count) 行"))
+              Button(store.text("Clear", "清除")) { selectedLineIDs = [] }
+            }
+            Button(store.text(model.comparison == .staged ? "Unstage Selected Lines" : "Stage Selected Lines",
+                              model.comparison == .staged ? "取消暂存选中行" : "暂存选中行")) { applyLines(activeLines) }
+              .disabled(!lineActionsAvailable || activeLines.isEmpty)
+              .accessibilityIdentifier("diff.selected-lines")
+          }.font(uiFont(size: 10)).controlSize(.small).padding(.horizontal, 10).frame(height: 32)
+            .help(store.text("Code text still supports normal copying. Unsupported file types use file or hunk actions; no whole-file fallback runs.",
+                             "代码文本仍可正常复制。不支持的文件类型请使用文件级或差异块操作，不会自动改为整文件暂存。"))
+          Divider()
           hunkToolbar
         }
       } else {
@@ -162,13 +221,29 @@ struct DiffPanel: View {
             "单击文件预览 Diff，双击保留为标签。"))
       }
     }.sheet(item: $blame) { BlameView(model: model, request: $0).environmentObject(store) }
+    .sheet(item: $patchExport) { PatchExportView(model: model, source: $0.source).environmentObject(store) }
     .background(Theme.editor(scheme))
+      .onChange(of: model.selectedPath) { _, _ in clearLineSelection() }
+      .onChange(of: model.comparison) { _, _ in clearLineSelection() }
+      .onChange(of: model.refreshing) { _, refreshing in if refreshing { clearLineSelection() } }
+      .onChange(of: model.diff.revision) { _, _ in clearLineSelection() }
+      .task(id: model.diff.revision) {
+        let document = model.diff
+        let supported = await Task.detached(priority: .userInitiated) { SelectivePatch.supported(document) }.value
+        guard !Task.isCancelled, model.diff.revision == document.revision else { return }
+        lineSupport = supported; lineSupportRevision = document.revision
+      }
       .task(id: model.diffLoading) {
         showSlowLoad = false
         guard model.diffLoading else { return }
         do { try await Task.sleep(for: .milliseconds(180)) } catch { return }
         if model.diffLoading { showSlowLoad = true }
       }
+  }
+  func clearLineSelection() { lineSelectionKey = ""; selectedLineIDs = [] }
+  func applyLines(_ ids: Set<Int>) {
+    guard lineActionsAvailable, let file = model.selectedFile, let index = model.snapshot else { return }
+    model.applySelectedLines(ids, document: model.diff, file: file, comparison: model.comparison, index: index)
   }
   var hunkToolbar: some View {
     HStack(spacing: 10) {
@@ -269,10 +344,9 @@ struct BinaryDiffView: View {
       } else if let data {
         Image(systemName: "doc.richtext").font(uiFont(size: 32)).foregroundStyle(.secondary)
         Text("\(data.count) bytes").font(uiFont(size: 11, design: .monospaced))
-        if let text = String(data: data, encoding: .utf8),
-          text.hasPrefix("version https://git-lfs.github.com/spec/v1")
+        if LFSPointer.parse(data) != nil, let text = String(data: data, encoding: .utf8)
         {
-          Text("Git LFS pointer").font(.caption)
+          Text(store.text("Git LFS pointer", "Git LFS 指针")).font(.caption)
           Text(text).font(uiFont(size: 10, design: .monospaced)).textSelection(.enabled)
         }
       } else {
@@ -293,12 +367,21 @@ struct DiffTable: NSViewRepresentable, Equatable {
   var afterOnly = false
   var beforeTitle = "Before"
   var afterTitle = "After"
+  var selectionKey = ""
+  var allowsLineSelection = false
+  var selectedLineIDs: Set<Int> = []
+  var onLineSelection: ((Set<Int>) -> Void)? = nil
+  var lineActionTitle = "Stage Selected Lines"
+  var onLineAction: ((Set<Int>) -> Void)? = nil
   nonisolated static func == (lhs: DiffTable, rhs: DiffTable) -> Bool {
     lhs.document.revision == rhs.document.revision && lhs.path == rhs.path && lhs.key == rhs.key
       && lhs.styleIdentity == rhs.styleIdentity && lhs.dark == rhs.dark
       && lhs.selectedHunk == rhs.selectedHunk && lhs.beforeTitle == rhs.beforeTitle
       && lhs.afterTitle == rhs.afterTitle && lhs.afterOnly == rhs.afterOnly
       && lhs.indexSide == rhs.indexSide
+      && lhs.selectedLineIDs == rhs.selectedLineIDs
+      && lhs.selectionKey == rhs.selectionKey && lhs.allowsLineSelection == rhs.allowsLineSelection
+      && lhs.lineActionTitle == rhs.lineActionTitle
   }
   func makeCoordinator() -> Coordinator { Coordinator() }
   func makeNSView(context: Context) -> DiffSplitContainer {
@@ -310,6 +393,10 @@ struct DiffTable: NSViewRepresentable, Equatable {
       let table = host.tables[side]
       table.delegate = coordinator
       table.dataSource = coordinator
+      table.selectLine = { [weak coordinator] row, modifiers in coordinator?.selectChangedLine(row, side: side, modifiers: modifiers) }
+      table.clearLines = { [weak coordinator] in coordinator?.clearChangedLines() }
+      table.lineAction = { [weak coordinator] in coordinator?.invokeLineAction() }
+      table.actionMenu = { [weak coordinator] row in coordinator?.lineMenu(row, side: side) }
       scroll.contentView.postsBoundsChangedNotifications = true
       let observer = NotificationCenter.default.addObserver(
         forName: NSView.boundsDidChangeNotification, object: scroll.contentView, queue: .main
@@ -330,12 +417,19 @@ struct DiffTable: NSViewRepresentable, Equatable {
       c.document.revision != document.revision || c.key != key || c.dark != dark
       || c.style != styleIdentity || host.afterOnly != afterOnly
     let previousKey = c.key
+    let previousRevision = c.document.revision
+    let previousSelectionKey = c.selectionKey
+    let previousLines = c.selectedLineIDs
     c.document = document
     c.path = path
     c.key = key
     c.dark = dark
     c.settings = settings
     c.style = styleIdentity
+    c.selectionKey = selectionKey
+    c.selectedLineIDs = selectedLineIDs
+    c.onLineSelection = onLineSelection; c.onLineAction = onLineAction; c.lineActionTitle = lineActionTitle
+    if previousKey != key || previousRevision != document.revision || previousSelectionKey != selectionKey { c.anchors = [nil, nil] }
     host.unified = settings.unifiedDiff
     host.afterOnly = afterOnly
     if changed {
@@ -364,12 +458,15 @@ struct DiffTable: NSViewRepresentable, Equatable {
       c.lastWidths = [-1, -1]
     }
     for (side, table) in host.tables.enumerated() {
+      table.gutterWidth = settings.showLineNumbers ? 46 : 18
+      table.selectLine = allowsLineSelection ? { [weak c] row, modifiers in c?.selectChangedLine(row, side: side, modifiers: modifiers) } : nil
       host.scrolls[side].verticalThumbOnLeft = !settings.unifiedDiff && side == indexSide
       table.backgroundColor = NSColor(hex: dark ? 0x191B1F : 0xFAFBFC)
       table.tableColumns[0].title =
         settings.unifiedDiff ? localizedUI("Changes") : side == 0 ? beforeTitle : afterTitle
       table.tableColumns[0].headerCell.font = NSFont.systemFont(ofSize: 10, weight: .medium)
     }
+    if !changed && previousLines != selectedLineIDs { c.refreshLineHighlights() }
     if changed {
       c.synchronizing = true
       host.needsLayout = true
@@ -412,6 +509,51 @@ struct DiffTable: NSViewRepresentable, Equatable {
     var longestLines = [0, 0]
     var lastWidths: [CGFloat] = [-1, -1]
     var pendingHeightUpdate: Task<Void, Never>?
+    var selectedLineIDs: Set<Int> = []
+    var onLineSelection: ((Set<Int>) -> Void)?
+    var onLineAction: ((Set<Int>) -> Void)?
+    var lineActionTitle = "Stage Selected Lines"
+    var selectionKey = ""
+    var anchors: [Int?] = [nil, nil]
+    func changedLine(_ row: Int, side: Int) -> DiffLine? {
+      guard row >= 0, row < rowCount else { return nil }
+      let line = settings.unifiedDiff ? rows[row] : side == 0 ? document.pairs[row].old : document.pairs[row].new
+      return line?.kind == .addition || line?.kind == .deletion ? line : nil
+    }
+    func selectChangedLine(_ row: Int, side: Int, modifiers: NSEvent.ModifierFlags) {
+      guard onLineSelection != nil else { return }
+      if modifiers.contains(.shift), let anchor = anchors[side] {
+        let ids = Set((min(anchor, row)...max(anchor, row)).compactMap { changedLine($0, side: side)?.id })
+        selectedLineIDs.formUnion(ids)
+      } else if let line = changedLine(row, side: side) {
+        if modifiers.contains(.command) {
+          if !selectedLineIDs.insert(line.id).inserted { selectedLineIDs.remove(line.id) }
+        } else { selectedLineIDs = [line.id] }
+        anchors[side] = row
+      } else if !modifiers.contains(.command) { selectedLineIDs = []; anchors[side] = row }
+      onLineSelection?(selectedLineIDs); refreshLineHighlights()
+    }
+    func clearChangedLines() { selectedLineIDs = []; anchors = [nil, nil]; onLineSelection?([]); refreshLineHighlights() }
+    @objc func invokeLineAction() { if !selectedLineIDs.isEmpty { onLineAction?(selectedLineIDs) } }
+    func lineMenu(_ row: Int, side: Int) -> NSMenu? {
+      guard onLineSelection != nil, onLineAction != nil else { return nil }
+      if let line = changedLine(row, side: side), !selectedLineIDs.contains(line.id) {
+        selectChangedLine(row, side: side, modifiers: [])
+      }
+      let menu = NSMenu(); menu.autoenablesItems = false
+      let item = NSMenuItem(title: lineActionTitle, action: #selector(invokeLineAction), keyEquivalent: "")
+      item.target = self; item.isEnabled = !selectedLineIDs.isEmpty; menu.addItem(item)
+      return menu
+    }
+    func refreshLineHighlights() {
+      guard let host else { return }
+      for table in host.tables {
+        let range = table.rows(in: table.visibleRect)
+        if range.location != NSNotFound, range.length > 0 {
+          table.reloadData(forRowIndexes: IndexSet(integersIn: range.location..<NSMaxRange(range)), columnIndexes: IndexSet(integer: 0))
+        }
+      }
+    }
     var rowCount: Int { settings.unifiedDiff ? rows.count : document.pairs.count }
     func numberOfRows(in tableView: NSTableView) -> Int { rowCount }
     func resize() {
@@ -533,6 +675,9 @@ struct DiffTable: NSViewRepresentable, Equatable {
       }
       if line?.kind == .header { background = NSColor(hex: dark ? 0x252B36 : 0xEDF1F8) }
       if line == nil { background = NSColor(hex: dark ? 0x202228 : 0xF0F1F4) }
+      if let line, selectedLineIDs.contains(line.id) {
+        background = background.blended(withFraction: 0.35, of: .controlAccentColor) ?? background
+      }
       cell.layer?.backgroundColor = background.cgColor
       return cell
     }
@@ -543,7 +688,7 @@ struct DiffTable: NSViewRepresentable, Equatable {
 @MainActor final class DiffSplitContainer: NSView {
   var renderedPath = ""
   let scrolls = [DiffScrollView(), DiffScrollView()]
-  let tables = [NSTableView(), NSTableView()]
+  let tables = [LineSelectableDiffTable(), LineSelectableDiffTable()]
   var unified = false { didSet { if oldValue != unified { needsLayout = true } } }
   var afterOnly = false { didSet { if oldValue != afterOnly { needsLayout = true } } }
   var resized: (() -> Void)?

@@ -19,6 +19,8 @@ struct HistoryView: View {
   @State private var branchAt: String?
   @State private var branchName = ""
   @State private var blame: BlameRequest?
+  @State private var rebase: InteractiveRebaseRequest?
+  @State private var patchExport: PatchExportRequest?
   var records: [CommitRecord] {
     model.history.filter {
       fullHistory || search.isEmpty || $0.subject.localizedCaseInsensitiveContains(search)
@@ -35,6 +37,10 @@ struct HistoryView: View {
             Text(store.text("History", "历史")).font(uiFont(size: 13, weight: .semibold))
             Button(store.text("Reflog", "引用日志")) { model.setPage("reflog") }
             Button(store.text("Compare Branches", "比较分支")) { model.setPage("compare") }
+            Button(store.text("Interactive Rebase…", "交互式变基…")) {
+              rebase = InteractiveRebaseRequest(upstream: model.status.upstream ?? "HEAD~1")
+            }.disabled(model.busy || model.status.operation != nil)
+            Button(store.text("Export Commit Range…", "导出提交范围…")) { patchExport = PatchExportRequest(source: .range) }
             if let fileFilter = model.historyPath {
               Badge(text: fileFilter).lineLimit(1).frame(maxWidth: 160).help(fileFilter)
               Button(store.text("Blame", "逐行溯源")) { blame = BlameRequest(path: fileFilter) }
@@ -139,6 +145,8 @@ struct HistoryView: View {
       await model.ensureHistory()
     }.onDisappear { model.cancelHistoryLoading() }
     .sheet(item: $blame) { BlameView(model: model, request: $0).environmentObject(store) }
+    .sheet(item: $rebase) { InteractiveRebaseView(model: model, initialUpstream: $0.upstream).environmentObject(store) }
+    .sheet(item: $patchExport) { PatchExportView(model: model, source: $0.source).environmentObject(store) }
     .onReceive(
       NotificationCenter.default.publisher(for: .gitpierSearch)
     ) { event in if event.object == nil { searchFocused = true } }
@@ -164,6 +172,10 @@ struct HistoryView: View {
     }
   }
   @ViewBuilder func historyMenu(_ commit: CommitRecord) -> some View {
+    Button(store.text("Export Commit Patch…", "导出提交补丁…")) { patchExport = PatchExportRequest(source: .commit(commit)) }
+    Button(store.text("Interactive Rebase After This Commit…", "从此提交之后交互式变基…")) {
+      rebase = InteractiveRebaseRequest(upstream: commit.hash)
+    }.disabled(model.busy || model.status.operation != nil)
     Button(store.text("Copy Hash", "复制 Hash")) { copyText(commit.hash) }
     Button(store.text("Create Branch Here…", "从此处创建分支…")) {
       branchName = ""

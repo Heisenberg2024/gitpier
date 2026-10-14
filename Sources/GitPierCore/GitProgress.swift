@@ -73,6 +73,7 @@ public final class GitProgressDecoder: @unchecked Sendable {
       ("Receiving objects:", .receiving), ("Resolving deltas:", .resolving),
       ("Writing objects:", .writing), ("Updating files:", .checkout),
       ("Checking out files:", .checkout),
+      ("Downloading LFS objects:", .receiving), ("Checking out LFS objects:", .checkout),
     ]
     guard let phase = prefixes.first(where: { line.hasPrefix($0.0) })?.1,
       let range = line.range(of: #"\b[0-9]{1,3}%"#, options: .regularExpression),

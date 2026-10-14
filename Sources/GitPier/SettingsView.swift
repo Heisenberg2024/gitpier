@@ -236,49 +236,55 @@ struct AboutSettingsView: View {
   @Environment(\.colorScheme) var scheme
   @Environment(\.openWindow) var openWindow
   var body: some View {
-    ScrollView {
-      VStack(spacing: 22) {
-        VStack(spacing: 10) {
-          if let image = AppResources.applicationIcon {
-            Image(nsImage: image).resizable().frame(width: 80, height: 80)
-          }
-          Text("GitPier").font(.system(size: 26, weight: .semibold))
+    VStack(alignment: .leading, spacing: 16) {
+      HStack(spacing: 14) {
+        if let image = AppResources.applicationIcon {
+          Image(nsImage: image).resizable().frame(width: 56, height: 56)
+        }
+        VStack(alignment: .leading, spacing: 4) {
+          Text("GitPier").font(.system(size: 24, weight: .semibold))
           Text(localizedUI("Native Git Client for macOS")).font(.headline)
           Text(localizedUI("All Your Repositories. One Workspace."))
-            .foregroundStyle(.secondary)
-        }.frame(maxWidth: .infinity).padding(.top, 12)
-        VStack(spacing: 12) {
-          LabeledContent(store.text("Version", "版本")) {
-            Text("\(AppResources.version) (\(AppResources.build))").textSelection(.enabled)
-          }
-          Divider()
-          UpdateSettingsView(manager: store.updates)
-          Divider()
-          LabeledContent(store.text("License", "许可证")) { Text("MIT License") }
-          Text(
-            store.text(
-              "Licensed under the MIT License. Copyright © 2026 Heisenberg2024.",
-              "版权所有 © 2026 Heisenberg2024。使用与分发遵循 MIT License。")
-          )
-          .font(.caption).foregroundStyle(.secondary).frame(
-            maxWidth: .infinity, alignment: .leading)
-          Divider()
-          Text(
-            store.text(
-              "Repository contents stay on this Mac. GitPier has no analytics or repository-upload service.",
-              "仓库内容保留在本机。GitPier 不提供分析或仓库上传服务。")
-          )
-          .font(.callout).foregroundStyle(.secondary).frame(
-            maxWidth: .infinity, alignment: .leading)
-        }.padding(18).background(Theme.panel(scheme), in: RoundedRectangle(cornerRadius: 12))
-        HStack(spacing: 18) {
-          Button(store.text("GitPier Help", "GitPier 帮助")) { openWindow(id: "help") }
-          Link(
-            store.text("Source Code", "源代码"),
-            destination: URL(string: "https://github.com/Heisenberg2024/gitpier")!)
+            .font(.caption).foregroundStyle(.secondary)
         }
-      }.padding(24).frame(maxWidth: 520).frame(maxWidth: .infinity)
-    }.background(Theme.editor(scheme))
+        Spacer()
+        VStack(alignment: .trailing, spacing: 4) {
+          Text(store.text("Version", "版本")).font(.caption).foregroundStyle(.secondary)
+          Text("\(AppResources.version) (\(AppResources.build))").textSelection(.enabled)
+        }
+      }
+      UpdateSettingsView(manager: store.updates)
+        .padding(16).background(Theme.panel(scheme), in: RoundedRectangle(cornerRadius: 12))
+      VStack(alignment: .leading, spacing: 6) {
+        LabeledContent(store.text("License", "许可证")) { Text("MIT License") }
+        Text(
+          store.text(
+            "Licensed under the MIT License. Copyright © 2026 Heisenberg2024.",
+            "版权所有 © 2026 Heisenberg2024。使用与分发遵循 MIT License。")
+        )
+        .font(.caption).foregroundStyle(.secondary).frame(
+          maxWidth: .infinity, alignment: .leading)
+        Text(
+          store.text(
+            "Repository contents stay on this Mac. GitPier has no analytics or repository-upload service.",
+            "仓库内容保留在本机。GitPier 不提供分析或仓库上传服务。")
+        )
+        .font(.caption).foregroundStyle(.secondary).frame(
+          maxWidth: .infinity, alignment: .leading)
+      }
+      Divider()
+      HStack(spacing: 18) {
+        Button(store.text("GitPier Help", "GitPier 帮助")) { openWindow(id: "help") }
+        Link(
+          store.text("Source Code", "源代码"),
+          destination: URL(string: "https://github.com/Heisenberg2024/gitpier")!)
+        Spacer()
+        Link("GitHub Releases", destination: URL(string: "https://github.com/Heisenberg2024/gitpier/releases/latest")!)
+          .help(store.text("Manual DMG Upgrade", "手动 DMG 升级"))
+      }
+      Spacer(minLength: 0)
+    }.padding(20).frame(maxWidth: 680).frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+      .background(Theme.editor(scheme))
   }
 }
 
