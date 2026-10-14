@@ -179,9 +179,15 @@ extension GitServiceTests {
     try await raw(["-C", child.path, "config", "commit.gpgsign", "false"])
     try await raw(["-c", "protocol.file.allow=always", "-C", child.path, "submodule", "add", "--", nested.path, "inner"])
     try await raw(["-C", child.path, "commit", "-m", "nested module"])
+    try await raw(["-c", "protocol.file.allow=always", "submodule", "add", "--", nested.path, "sibling"])
+    let before = try await git.reviewOperation()
     let modules = try await git.submodules()
-    XCTAssertEqual(modules.map(\.path), ["vendor/child", "vendor/child/inner"])
+    XCTAssertEqual(modules.map(\.path), ["vendor/child", "vendor/child/inner", "sibling"])
     XCTAssertEqual(modules[1].depth, 1)
+    let topLevel = try await git.submodules(includeNested: false)
+    XCTAssertEqual(topLevel.map(\.path), ["vendor/child", "sibling"])
+    let after = try await git.reviewOperation()
+    XCTAssertEqual(after, before)
     await moduleRejected { _ = try await self.git.reviewSubmodule("vendor/child/inner", action: .recorded) }
   }
   func testSubmoduleUpdateWaitsForTheRegisteredChildWriteQueue() async throws {

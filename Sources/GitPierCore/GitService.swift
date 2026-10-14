@@ -1058,58 +1058,67 @@ public actor GitService {
     }
     return Data(SHA256.hash(data: bytes))
   }
+  private struct SubmoduleScan: Sendable {
+    var result: [GitSubmodule] = []
+    var visited = Set<String>()
+  }
   public func submodules(includeNested: Bool = true) async throws -> [GitSubmodule] {
     _ = try submodulesFileState()
-    var result: [GitSubmodule] = [], visited = Set<String>()
-    func scan(_ directory: URL, relative: String, depth: Int) async throws {
-      let canonical = ProfessionalWorkflowParser.canonicalPath(directory.path)
-      guard visited.insert(canonical).inserted, result.count < 100 else { return }
-      let file = directory.appendingPathComponent(".gitmodules")
-      var declarations: [(String, String)] = []
-      if FileManager.default.fileExists(atPath: file.path) {
-        let attributes = try FileManager.default.attributesOfItem(atPath: file.path)
-        guard attributes[.type] as? FileAttributeType == .typeRegular, (attributes[.size] as? Int ?? Int.max) <= 1024 * 1024 else { throw GitPierError.unsafePath(".gitmodules") }
-        let config = try await read(["-C", directory.path, "config", "--null", "--file", ".gitmodules", "--get-regexp", "^submodule\\..*\\.path$"], allowFailure: true)
-        guard config.code == 0 || config.code == 1 else { throw GitPierError.invalidInput("The .gitmodules file is invalid. Inspect it in the editor.") }
-        declarations = try SubmoduleParser.declarations(config.stdout)
-      }
-      let index = try SubmoduleParser.gitlinks(await read(["-C", directory.path, "ls-files", "--stage", "-z"]).stdout, index: true)
-      let head = try SubmoduleParser.gitlinks(await read(["-C", directory.path, "ls-tree", "-r", "-z", "HEAD"], allowFailure: true).stdout, index: false)
-      let configuredPaths = Set(declarations.map(\.1))
-      declarations += index.keys.filter { !configuredPaths.contains($0) }.sorted().map { ($0, $0) }
-      var seen = Set<String>()
-      for (name, path) in declarations {
-        try Task.checkCancellation()
-        guard result.count < 100 else { return }
-        guard seen.insert(path).inserted else { throw GitPierError.invalidInput("Duplicate submodule paths require manual repair.") }
-        let fullPath = relative.isEmpty ? path : relative + "/" + path
-        let declared = try await read(["-C", directory.path, "config", "--file", ".gitmodules", "--get", "submodule." + name + ".url"], allowFailure: true).text.trimmingCharacters(in: .newlines)
-        let registered = try await read(["-C", directory.path, "config", "--get", "submodule." + name + ".url"], allowFailure: true).text.trimmingCharacters(in: .newlines)
-        let branch = try await read(["-C", directory.path, "config", "--file", ".gitmodules", "--get", "submodule." + name + ".branch"], allowFailure: true).text.trimmingCharacters(in: .newlines)
-        var initialized = false, childHead: String?, changes: Int?, operation: GitOperation?, problem: String?
-        var childURL: URL?
-        do {
-          let child = try submodulePath(fullPath); childURL = child
-          if FileManager.default.fileExists(atPath: child.path) {
-            let top = try await read(["-C", child.path, "rev-parse", "--show-toplevel"], allowFailure: true)
-            if top.code == 0, ProfessionalWorkflowParser.canonicalPath(try Self.nativePath(top.stdout)) == ProfessionalWorkflowParser.canonicalPath(child.path) {
-              initialized = true
-              let service = await GitServiceRegistry.shared.service(for: child, gitPath: gitPath)
-              let state = try await service.status(); childHead = state.head; changes = state.files.count; operation = state.operation
-            }
+    return try await scanSubmodules(root, relative: "", depth: 0, includeNested: includeNested, scan: SubmoduleScan()).result
+  }
+  // Keep recursive traversal on this actor. A local async function is nonisolated
+  // in Swift 6.1 and cannot safely capture mutable result/visited collections.
+  private func scanSubmodules(_ directory: URL, relative: String, depth: Int, includeNested: Bool,
+                              scan initialScan: SubmoduleScan) async throws -> SubmoduleScan {
+    var scan = initialScan
+    let canonical = ProfessionalWorkflowParser.canonicalPath(directory.path)
+    guard scan.visited.insert(canonical).inserted, scan.result.count < 100 else { return scan }
+    let file = directory.appendingPathComponent(".gitmodules")
+    var declarations: [(String, String)] = []
+    if FileManager.default.fileExists(atPath: file.path) {
+      let attributes = try FileManager.default.attributesOfItem(atPath: file.path)
+      guard attributes[.type] as? FileAttributeType == .typeRegular, (attributes[.size] as? Int ?? Int.max) <= 1024 * 1024 else { throw GitPierError.unsafePath(".gitmodules") }
+      let config = try await read(["-C", directory.path, "config", "--null", "--file", ".gitmodules", "--get-regexp", "^submodule\\..*\\.path$"], allowFailure: true)
+      guard config.code == 0 || config.code == 1 else { throw GitPierError.invalidInput("The .gitmodules file is invalid. Inspect it in the editor.") }
+      declarations = try SubmoduleParser.declarations(config.stdout)
+    }
+    let index = try SubmoduleParser.gitlinks(await read(["-C", directory.path, "ls-files", "--stage", "-z"]).stdout, index: true)
+    let head = try SubmoduleParser.gitlinks(await read(["-C", directory.path, "ls-tree", "-r", "-z", "HEAD"], allowFailure: true).stdout, index: false)
+    let configuredPaths = Set(declarations.map(\.1))
+    declarations += index.keys.filter { !configuredPaths.contains($0) }.sorted().map { ($0, $0) }
+    var seen = Set<String>()
+    for (name, path) in declarations {
+      try Task.checkCancellation()
+      guard scan.result.count < 100 else { return scan }
+      guard seen.insert(path).inserted else { throw GitPierError.invalidInput("Duplicate submodule paths require manual repair.") }
+      let fullPath = relative.isEmpty ? path : relative + "/" + path
+      let declared = try await read(["-C", directory.path, "config", "--file", ".gitmodules", "--get", "submodule." + name + ".url"], allowFailure: true).text.trimmingCharacters(in: .newlines)
+      let registered = try await read(["-C", directory.path, "config", "--get", "submodule." + name + ".url"], allowFailure: true).text.trimmingCharacters(in: .newlines)
+      let branch = try await read(["-C", directory.path, "config", "--file", ".gitmodules", "--get", "submodule." + name + ".branch"], allowFailure: true).text.trimmingCharacters(in: .newlines)
+      var initialized = false, childHead: String?, changes: Int?, operation: GitOperation?, problem: String?
+      var childURL: URL?
+      do {
+        let child = try submodulePath(fullPath); childURL = child
+        if FileManager.default.fileExists(atPath: child.path) {
+          let top = try await read(["-C", child.path, "rev-parse", "--show-toplevel"], allowFailure: true)
+          if top.code == 0, ProfessionalWorkflowParser.canonicalPath(try Self.nativePath(top.stdout)) == ProfessionalWorkflowParser.canonicalPath(child.path) {
+            initialized = true
+            let service = await GitServiceRegistry.shared.service(for: child, gitPath: gitPath)
+            let state = try await service.status(); childHead = state.head; changes = state.files.count; operation = state.operation
           }
-          if declared.isEmpty { problem = "Missing .gitmodules URL; inspect this gitlink in the terminal." }
-          if index[path] == nil { problem = "This declaration has no staged gitlink." }
-        } catch { problem = Self.redact(error.localizedDescription) }
-        result.append(GitSubmodule(name: name, path: fullPath, localPath: path, depth: depth,
-          url: Self.redact(declared), configuredURL: Self.redact(registered), branch: branch,
-          currentHead: childHead, indexCommit: index[path], parentCommit: head[path], registered: !registered.isEmpty,
-          initialized: initialized, changes: changes, operation: operation, problem: problem))
-        if includeNested, initialized, depth < 3, let childURL { try await scan(childURL, relative: fullPath, depth: depth + 1) }
+        }
+        if declared.isEmpty { problem = "Missing .gitmodules URL; inspect this gitlink in the terminal." }
+        if index[path] == nil { problem = "This declaration has no staged gitlink." }
+      } catch { problem = Self.redact(error.localizedDescription) }
+      scan.result.append(GitSubmodule(name: name, path: fullPath, localPath: path, depth: depth,
+        url: Self.redact(declared), configuredURL: Self.redact(registered), branch: branch,
+        currentHead: childHead, indexCommit: index[path], parentCommit: head[path], registered: !registered.isEmpty,
+        initialized: initialized, changes: changes, operation: operation, problem: problem))
+      if includeNested, initialized, depth < 3, let childURL {
+        scan = try await scanSubmodules(childURL, relative: fullPath, depth: depth + 1, includeNested: includeNested, scan: scan)
       }
     }
-    try await scan(root, relative: "", depth: 0)
-    return result
+    return scan
   }
   private func currentSubmodule(_ path: String) async throws -> GitSubmodule {
     guard let module = try await submodules(includeNested: false).first(where: { $0.path == path }) else {
