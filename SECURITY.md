@@ -10,7 +10,7 @@ Never put tokens, private keys, private repository contents, or unredacted logs 
 
 If a credential has entered a public repository or log, revoke or rotate it first. Removing the working-tree file or adding an ignore rule does not remove it from existing Git history.
 
-## Application updates (v1.1.0 development)
+## Application updates (released in v1.1.0)
 
 Sparkle 2 fetches the stable feed over GitHub HTTPS and authenticates both feed/embedded release notes and final DMG using Ed25519 signatures. Archive verification happens before extraction. Signed-feed failures never expire into a degraded fallback mode. SHA256 is a manual integrity check, not a substitute for source authentication. Missing production keys disable updates; missing/invalid signatures, altered archives, incompatible versions or broken bundles must not be installed. Sparkle owns replacement and rollback behavior; GitPier does not run an ad-hoc shell installer or request root access.
 
@@ -19,3 +19,9 @@ Production private keys remain in the owner-controlled login Keychain; offline e
 Updates do not send repository data or a system profile. Automatic checks default off; download/install/restart require confirmation. Git work prevents termination, and existing conflict-draft/terminal warnings remain in force. Failed checks/downloads or cancellation leave the workspace and running old app available. Read-only mounts and App Translocation require installation in a writable trusted location or a manual DMG upgrade.
 
 Current builds are ad-hoc signed and **not Apple Developer ID signed or notarized**. EdDSA update authentication does not change Gatekeeper trust. Never disable Gatekeeper, strip quarantine or bypass Sparkle verification to make an update succeed. v1.0.3 requires a one-time manual upgrade because it contains no updater.
+
+## History recovery and working-tree management (Unreleased v1.2.0)
+
+Reflog and branch comparison are local queries; Blame never changes the Index or working files. Recovery branches require an available commit object. Expired logs and garbage-collected objects may be unrecoverable. GitPier does not automatically run garbage collection, reflog expiry, hard reset or worktree pruning. Explicit soft/mixed reset retains the existing stale-review checks and confirmation boundary.
+
+Worktree removal is a distinct disk operation, separate from removing a sidebar record. It requires an explicit affected-path review and matching GitPier creation receipt and metadata UUID marker. Detached commits require a retaining branch or tag first. Main repositories, unknown working directories, locked/missing/prunable trees, unfinished operations and modified/untracked/ignored files are refused. Active terminal sessions and unsaved drafts must be preserved first. Revalidation runs inside the shared metadata queue; no `--force` bypass exists. Repair only updates metadata for a verified moved linked tree in the same common directory and never moves or deletes its files. Filesystem/Git permissions and external Git safety checks remain active.

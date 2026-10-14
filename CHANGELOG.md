@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased — v1.2.0
+
+- Add a native Reflog page for HEAD/local branches, operation/description filters, bounded pagination, commit details and non-destructive recovery branches. Missing objects report their recovery limit; explicit soft/mixed reset retains the existing review boundary.
+- Add Worktree listing, existing/new-branch creation, workspace registration, editor/terminal opening, lock/unlock, reviewed safe removal and moved-linked-tree metadata repair. Protect the main repository, unknown directories, modified/untracked/ignored files, locks, drafts and sessions; serialize shared metadata writes and preserve per-tree IDs/state.
+- Add read-only local/remote-tracking branch comparisons with fixed tips, merge bases, accurate unique counts, paged commits and shared file Diff. Distinguish direct tip comparison from merge-base three-point semantics; handle ambiguous/unrelated bases explicitly.
+- Add working/historical Git Blame with per-line author/date/hash, rename attribution, uncommitted-line handling, commit/file navigation, hash copy, cancellation and bounded 400-line pages for UTF-8 files up to 4 MiB.
+- Keep new interfaces in the existing native navigation with English/Chinese, light/dark appearances, code styling and scrollbars. Separate creation-sheet and Blame presentation state; rebind services/watchers/terminals after a moved worktree repair without granting ownership of external trees.
+- Retain the original 98 Core tests and six release-tool gates; add 30 temporary-repository regressions and extend native UI/PTY acceptance. Keep 1.2.0 (build 18) as an unpublished development candidate with the existing production identity, key and feed.
+- Correct v1.1.0 documentation to released status and use GitHub Latest Release installation links. Stable update assets and historical releases remain unchanged.
+
 ## 1.1.0 — 2026-10-12
 
 - Fix clearing explicit Push URLs, retain additional fetch/push destinations and credentials, and reject stale remote edits.

@@ -18,6 +18,7 @@ struct HistoryView: View {
   @State private var query = HistoryQuery()
   @State private var branchAt: String?
   @State private var branchName = ""
+  @State private var blame: BlameRequest?
   var records: [CommitRecord] {
     model.history.filter {
       fullHistory || search.isEmpty || $0.subject.localizedCaseInsensitiveContains(search)
@@ -29,10 +30,14 @@ struct HistoryView: View {
     GeometryReader { geometry in
       VStack(spacing: 0) {
         VStack(spacing: 0) {
+          ScrollView(.horizontal, showsIndicators: false) {
           HStack {
             Text(store.text("History", "历史")).font(uiFont(size: 13, weight: .semibold))
+            Button(store.text("Reflog", "引用日志")) { model.setPage("reflog") }
+            Button(store.text("Compare Branches", "比较分支")) { model.setPage("compare") }
             if let fileFilter = model.historyPath {
-              Badge(text: fileFilter)
+              Badge(text: fileFilter).lineLimit(1).frame(maxWidth: 160).help(fileFilter)
+              Button(store.text("Blame", "逐行溯源")) { blame = BlameRequest(path: fileFilter) }
               IconButton("xmark", help: localizedUI("Clear File Filter")) {
                 model.historyPath = nil
                 model.selectedHistoryCommit = nil
@@ -47,7 +52,8 @@ struct HistoryView: View {
                       text: fullHistory ? $query.message : $search).textFieldStyle(
               .plain
             ).frame(width: 200).focused($searchFocused)
-          }.font(uiFont(size: 11)).padding(12).background(Theme.panel(scheme))
+          }.font(uiFont(size: 11)).padding(12)
+          }.background(Theme.panel(scheme))
           if fullHistory {
             HStack(spacing: 8) {
               Picker(store.text("Scope", "范围"), selection: $query.scope) {
@@ -131,7 +137,9 @@ struct HistoryView: View {
     .task(id: (fullHistory ? query.identity : "loaded") + (model.historyPath ?? "")) {
       model.historyQuery = fullHistory ? query : nil
       await model.ensureHistory()
-    }.onDisappear { model.cancelHistoryLoading() }.onReceive(
+    }.onDisappear { model.cancelHistoryLoading() }
+    .sheet(item: $blame) { BlameView(model: model, request: $0).environmentObject(store) }
+    .onReceive(
       NotificationCenter.default.publisher(for: .gitpierSearch)
     ) { event in if event.object == nil { searchFocused = true } }
     .onReceive(NotificationCenter.default.publisher(for: .gitpierFileHistory)) { notification in
@@ -234,7 +242,13 @@ struct CommitDetailView: View {
   @ObservedObject var model: RepositoryModel
   @ObservedObject var panels: WorkspacePanels
   let commit: CommitRecord
-  init(model: RepositoryModel, commit: CommitRecord) {
+  let initialPath: String?
+  var onClose: (() -> Void)?
+  var onBlame: ((String, String) -> Void)?
+  init(model: RepositoryModel, commit: CommitRecord, initialPath: String? = nil, onClose: (() -> Void)? = nil, onBlame: ((String, String) -> Void)? = nil) {
+    self.initialPath = initialPath
+    self.onClose = onClose
+    self.onBlame = onBlame
     self.model = model
     self.commit = commit
     panels = model.panels
@@ -243,6 +257,7 @@ struct CommitDetailView: View {
   }
   @EnvironmentObject var store: AppStore
   @Environment(\.colorScheme) var scheme
+  @State private var blame: BlameRequest?
   @State private var files: [FileChange] = []
   @State private var selected: String?
   @State private var diff = DiffDocument.empty
@@ -310,11 +325,16 @@ struct CommitDetailView: View {
                 : String(parent.prefix(8)) + " → " + String(commit.hash.prefix(8)))
             Spacer()
             if let selected {
+              Button(store.text("Blame", "逐行溯源")) {
+                if let onBlame { onBlame(selected, commit.hash) }
+                else { blame = BlameRequest(path: selected, revision: commit.hash) }
+              }
+                .disabled(files.first { $0.path == selected }?.kind == .deleted)
               Button(localizedUI("Copy Patch")) { copyText(diff.raw) }.disabled(loading)
               Text(selected).lineLimit(1)
             }
-            IconButton("xmark", help: store.text("Close commit details (Esc)", "关闭提交详情（Esc）")) {
-              model.selectedHistoryCommit = nil
+            IconButton("xmark", help: onClose == nil ? store.text("Close commit details (Esc)", "关闭提交详情（Esc）") : store.text("Close commit details", "关闭提交详情")) {
+              if let onClose { onClose() } else { model.selectedHistoryCommit = nil }
             }
           }.font(uiFont(size: 10)).padding(10).background(Theme.panel(scheme))
           Divider()
@@ -354,7 +374,8 @@ struct CommitDetailView: View {
           }
         }.frame(maxWidth: .infinity, maxHeight: .infinity)
       }
-    }.task(id: parent) { await loadFiles() }
+    }.sheet(item: $blame) { BlameView(model: model, request: $0).environmentObject(store) }
+    .task(id: parent) { await loadFiles() }
       .task(id: parent + "\0" + (selected ?? "")) { await loadPatch() }
   }
   func loadFiles() async {
@@ -370,7 +391,7 @@ struct CommitDetailView: View {
       try Task.checkCancellation()
       guard requestedParent == parent else { return }
       files = result
-      selected = files.first?.path
+      selected = files.first { $0.path == initialPath || $0.originalPath == initialPath }?.path ?? files.first?.path
       filesLoading = false
     } catch {
       guard !Task.isCancelled, requestedParent == parent else { return }

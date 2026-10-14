@@ -31,6 +31,10 @@ English and Simplified Chinese interfaces, light and dark themes, and system app
 
 Opening or selecting a repository always shows the Commit page; the current page is not persisted. Collapse or expand all organization repositories with one sidebar button.
 
+## Development preview — v1.2.0 (Unreleased)
+
+The development branch adds Reflog recovery, guarded Worktree lifecycle management, arbitrary local/remote-tracking branch comparison, and Git Blame. These use native Git queries and the existing macOS panels; recovery defaults to a new branch, comparison/Blame are read-only, and unknown or dirty worktree directories cannot be deleted. Blame supports UTF-8 text up to 4 MiB with 400-line pages. See [Unreleased changes](CHANGELOG.md) and [development validation](docs/development.md). GitHub Latest Release remains the stable installation source; this development target has not been published.
+
 ## Screenshots
 
 
@@ -50,7 +54,7 @@ Opening or selecting a repository always shows the Commit page; the current page
 
 GitPier requires **macOS 14 or later**.
 
-Download the current stable version from [GitHub Releases](https://github.com/Heisenberg2024/gitpier/releases/latest). Starting with v1.1.0, the primary installer is `GitPier-1.1.0-macos-universal.dmg`. Open the DMG, drag the real GitPier icon to Applications, and launch GitPier from Applications.
+Download the current stable version from [GitHub Releases](https://github.com/Heisenberg2024/gitpier/releases/latest). v1.1.0 is released; choose the universal DMG attached to the latest release. Open the DMG, drag the real GitPier icon to Applications, and launch GitPier from Applications.
 
 The v1.1.0 updater uses Sparkle 2, GitHub Releases, and EdDSA-signed DMGs. Automatic checks default to off; downloads and installation require confirmation. The production public key is configured; release assets must be signed and verified before publication. v1.0.3 requires a one-time manual upgrade.
 

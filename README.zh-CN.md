@@ -31,6 +31,10 @@ GitPier 将仓库管理、变更审查、提交和集成终端汇集在一个专
 
 打开或选择仓库时始终进入提交页，不持久化当前页面。侧栏支持一键收起或展开全部组织的仓库。
 
+## 开发预览 — v1.2.0（Unreleased）
+
+开发分支增加引用日志恢复、安全的 Worktree 生命周期管理、任意本地 / 远程跟踪分支比较及 Git Blame，复用 Git 原生查询和现有 macOS 面板。恢复优先创建新分支，比较与 Blame 保持只读；未知或存在修改的工作树目录不可删除。Blame 支持最大 4 MiB 的 UTF-8 文本，每页查询 400 行。详情见 [Unreleased 变更](CHANGELOG.md)及[开发验证说明](docs/development.md)。正式安装仍以 GitHub Latest Release 为准，此开发目标尚未公开发布。
+
 ## 界面截图
 
 
@@ -50,7 +54,7 @@ GitPier 将仓库管理、变更审查、提交和集成终端汇集在一个专
 
 GitPier 要求 **macOS 14 或更高版本**。
 
-从 [GitHub Releases](https://github.com/Heisenberg2024/gitpier/releases/latest) 下载当前正式版。从 v1.1.0 开始，主要安装包为 `GitPier-1.1.0-macos-universal.dmg`。打开 DMG，将真实的 GitPier 图标拖入 Applications，然后从 Applications 启动。
+从 [GitHub Releases](https://github.com/Heisenberg2024/gitpier/releases/latest) 下载当前正式版。v1.1.0 已正式发布，请选择最新发行版附带的通用 DMG。打开 DMG，将真实的 GitPier 图标拖入 Applications，然后从 Applications 启动。
 
 v1.1.0 的内置更新采用 Sparkle 2、GitHub Releases 和 EdDSA 签名 DMG；自动检查默认关闭，下载与安装需要确认。生产公钥已配置，发行资产必须在发布前完成签名和验证。v1.0.3 没有内置更新，需要手动升级一次。
 

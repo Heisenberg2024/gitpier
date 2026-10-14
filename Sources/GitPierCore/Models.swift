@@ -111,7 +111,7 @@ public struct CommitRecord: Identifiable, Sendable {
 }
 
 public struct GitBranch: Identifiable, Equatable, Sendable {
-  public var id: String { name }
+  public var id: String { (remote ? "refs/remotes/" : "refs/heads/") + name }
   public let name: String
   public let current: Bool
   public let remote: Bool
@@ -322,6 +322,7 @@ public struct CredentialProfile: Codable, Identifiable, Equatable, Sendable {
 public struct WorkspaceConfiguration: Codable, Sendable {
   public var version = 2
   public var repositories: [RepositoryRecord] = []
+  public var ownedWorktrees: [WorktreeOwnership] = []
   public var organizations: [RepositoryOrganization] = []
   public var credentials: [CredentialProfile] = []
   public var settings = AppSettings()
@@ -330,6 +331,7 @@ public struct WorkspaceConfiguration: Codable, Sendable {
   public init(from decoder: Decoder) throws {
     let values = try decoder.container(keyedBy: CodingKeys.self)
     repositories = try values.decodeIfPresent([RepositoryRecord].self, forKey: .repositories) ?? []
+    ownedWorktrees = try values.decodeIfPresent([WorktreeOwnership].self, forKey: .ownedWorktrees) ?? []
     organizations =
       try values.decodeIfPresent([RepositoryOrganization].self, forKey: .organizations) ?? []
     credentials = try values.decodeIfPresent([CredentialProfile].self, forKey: .credentials) ?? []

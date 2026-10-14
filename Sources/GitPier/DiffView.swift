@@ -7,6 +7,7 @@ struct DiffPanel: View {
   @EnvironmentObject var store: AppStore
   @Environment(\.colorScheme) var scheme
   @State private var showSlowLoad = false
+  @State private var blame: BlameRequest?
   var body: some View {
     VStack(spacing: 0) {
       ScrollView(.horizontal, showsIndicators: false) {
@@ -91,6 +92,7 @@ struct DiffPanel: View {
         HStack {
           Image(systemName: "doc.text").foregroundStyle(.secondary)
           Text(path).lineLimit(1).truncationMode(.middle)
+          Button(store.text("Blame", "逐行溯源")) { blame = BlameRequest(path: path) }
           Spacer()
           if model.selectedFile?.submodule.hasPrefix("S") == true { Badge(text: "Submodule") }
         }.font(uiFont(size: 10)).padding(.horizontal, 12).frame(height: 27)
@@ -159,7 +161,8 @@ struct DiffPanel: View {
             "Select a file to preview its diff. Double-click to keep it open in a tab.",
             "单击文件预览 Diff，双击保留为标签。"))
       }
-    }.background(Theme.editor(scheme))
+    }.sheet(item: $blame) { BlameView(model: model, request: $0).environmentObject(store) }
+    .background(Theme.editor(scheme))
       .task(id: model.diffLoading) {
         showSlowLoad = false
         guard model.diffLoading else { return }

@@ -102,6 +102,10 @@ struct GitPierApp: App {
           Button(store.text("Branches", "分支")) { store.current?.setPage("branches") }
             .keyboardShortcut("3")
           Divider()
+          Button(store.text("Reflog", "引用日志")) { store.current?.setPage("reflog") }.disabled(store.current == nil)
+          Button(store.text("Worktrees", "工作树")) { store.current?.setPage("worktrees") }.disabled(store.current == nil)
+          Button(store.text("Compare Branches", "比较分支")) { store.current?.setPage("compare") }.disabled(store.current == nil)
+          Divider()
           Button(store.text("Toggle Terminal", "显示 / 隐藏终端")) { toggleTerminal() }.keyboardShortcut(
             KeyEquivalent("\u{F70F}"), modifiers: .option)
           Button(store.text("New Terminal Tab", "新建终端标签")) {

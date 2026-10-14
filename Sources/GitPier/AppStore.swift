@@ -477,6 +477,7 @@ struct DiffTab: Identifiable, Equatable {
   @Published var historyQuery: HistoryQuery?
   @Published private(set) var historyError: String?
   @Published var selectedHistoryCommit: CommitRecord?
+  @Published var comparisonRight: String?
   @Published var historyHasMore = true
   @Published var branches: [GitBranch] = []
   @Published var remotes: [GitRemote] = []
@@ -489,6 +490,7 @@ struct DiffTab: Identifiable, Equatable {
   private var service: GitService?
   private var watcher: RepositoryWatcher?
   private var refreshTask: Task<Void, Never>?
+  private var refreshGeneration = 0
   private var activationTask: Task<Void, Never>?
   private var activationRefreshRequested = false
   private(set) var refreshCount = 0
@@ -597,6 +599,8 @@ struct DiffTab: Identifiable, Equatable {
       await refreshTask.value
       return
     }
+    refreshGeneration += 1
+    let generation = refreshGeneration
     refreshing = true
     let progressTicket =
       busy
@@ -610,6 +614,7 @@ struct DiffTab: Identifiable, Equatable {
     }
     refreshTask = task
     await task.value
+    guard generation == refreshGeneration else { return }
     refreshTask = nil
     refreshing = false
     if let progressTicket {
@@ -989,7 +994,7 @@ struct DiffTab: Identifiable, Equatable {
       } catch {
         result = .failed
         if output != nil { outputResult = .needsAttention }
-        self.error = error.localizedDescription
+        self.error = localizedUI(error.localizedDescription)
       }
       activity.advance(store.text("Refreshing", "刷新仓库"), cancellable: false)
       await refresh()
@@ -1559,6 +1564,27 @@ struct DiffTab: Identifiable, Equatable {
     NSWorkspace.shared.activateFileViewerSelecting([
       URL(fileURLWithPath: record.path).appendingPathComponent(path ?? "")
     ])
+  }
+  func relocateWorktree(to path: String) async {
+    // The manager has already protected this model's drafts and active terminal sessions.
+    watcher?.stop(); watcher = nil
+    activationTask?.cancel()
+    if let activationTask { await activationTask.value }
+    self.activationTask = nil
+    refreshTask?.cancel()
+    if let refreshTask { await refreshTask.value }
+    refreshGeneration += 1
+    refreshTask = nil; refreshing = false
+    cancelHistoryLoading()
+    diffTask?.cancel(); confirmationReviewTask?.cancel()
+    confirmationReviewID = UUID(); confirmation = nil
+    invalidateDiffCache()
+    service = nil
+    terminal.shutdown(); terminal = TerminalManager(root: path)
+    record.path = path; store.update(record)
+    historyReadyKey = nil; selectedHistoryCommit = nil
+    available = false; snapshot = nil; error = nil
+    await configure(); await configureWatcher(); await refresh()
   }
   func shutdown() {
     conflictEditor.shutdown()

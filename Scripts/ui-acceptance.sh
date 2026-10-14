@@ -58,4 +58,4 @@ export CLANG_MODULE_CACHE_PATH="$task_root/.cache/clang"
 export SWIFTPM_MODULECACHE_OVERRIDE="$task_root/.cache/swift"
 swift build --build-system native --disable-sandbox --cache-path "$task_root/.cache/swiftpm" --product GitPier
 task_bin="$(swift build --build-system native --disable-sandbox --cache-path "$task_root/.cache/swiftpm" --show-bin-path)"
-ZDOTDIR="$task_temp/home" GITPIER_WORKSPACE_FILE="$task_temp/workspace.json" "$task_bin/GitPier" --ui-acceptance --repository "$task_repo" --output "${1:-$task_root/.cache/ui-acceptance}"
+ZDOTDIR="$task_temp/home" GITPIER_WORKSPACE_FILE="$task_temp/workspace.json" "${GITPIER_UI_ACCEPTANCE_EXECUTABLE:-$task_bin/GitPier}" --ui-acceptance --repository "$task_repo" --output "${1:-$task_root/.cache/ui-acceptance}"

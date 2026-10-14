@@ -135,6 +135,9 @@ struct RepositoryWorkspace: View {
     switch model.page {
     case "history": HistoryView(model: model)
     case "branches": BranchesView(model: model)
+    case "reflog": ReflogView(model: model)
+    case "worktrees": WorktreesView(model: model)
+    case "compare": BranchComparisonView(model: model)
     case "remotes": RemotesView(model: model)
     case "stash": StashView(model: model)
     case "tags": TagsView(model: model)
@@ -189,6 +192,10 @@ struct RepositoryWorkspace: View {
       }
       Menu {
         Button(store.text("Resolve Conflicts", "解决冲突")) { model.openConflicts() }
+        Button(store.text("Reflog", "引用日志")) { model.setPage("reflog") }
+        Button(store.text("Worktrees", "工作树")) { model.setPage("worktrees") }
+        Button(store.text("Compare Branches", "比较分支")) { model.setPage("compare") }
+        Divider()
         Button(store.text("Remotes", "远程")) { model.setPage("remotes") }
         Button(localizedUI("Stash")) { model.setPage("stash") }
         Button(store.text("Tags", "标签")) { model.setPage("tags") }
@@ -275,6 +282,7 @@ struct ChangesPanel: View {
   }
   @EnvironmentObject var store: AppStore
   @Environment(\.colorScheme) var scheme
+  @State private var blame: BlameRequest?
   @FocusState private var searchFocused: Bool
   var body: some View {
     GeometryReader { geometry in
@@ -411,7 +419,8 @@ struct ChangesPanel: View {
         messagePanel.frame(
           height: min(panels.layout.messageHeight, max(130, geometry.size.height - 240)))
       }
-    }.background(Theme.editor(scheme)).onReceive(
+    }.sheet(item: $blame) { BlameView(model: model, request: $0).environmentObject(store) }
+    .background(Theme.editor(scheme)).onReceive(
       NotificationCenter.default.publisher(for: .gitpierSearch)
     ) { event in if event.object == nil { searchFocused = true } }
   }
@@ -547,6 +556,9 @@ struct ChangesPanel: View {
         model.reveal(file.path)
       },
       NativeMenuItems.action(store.text("Copy Path", "复制路径")) { copyText(file.path) },
+      NativeMenuItems.action(store.text("Blame", "逐行溯源")) {
+        blame = BlameRequest(path: file.path)
+      },
       NativeMenuItems.action(store.text("File History", "文件历史")) {
         model.setPage("history")
         model.historyPath = file.path

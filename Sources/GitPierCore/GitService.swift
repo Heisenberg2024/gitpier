@@ -67,17 +67,25 @@ public actor GitService {
       of: "(https?://)[^\\s/@]+(?::[^\\s/@]*)?@", with: "$1[redacted]@", options: .regularExpression
     )
   }
+  /// Git terminates path output with one LF. Whitespace and embedded/trailing LF can
+  /// belong to the actual directory name and must never be trimmed as presentation.
+  private static func nativePath(_ data: Data) throws -> String {
+    let bytes = data.last == 10 ? data.dropLast() : data[...]
+    guard let path = String(data: bytes, encoding: .utf8), !path.isEmpty, !path.utf8.contains(0) else {
+      throw GitPierError.invalidInput("Git returned an invalid repository path.")
+    }
+    return path
+  }
   public func validate() async throws -> URL {
     let result = try await read(["rev-parse", "--show-toplevel"], allowFailure: true)
     guard result.code == 0 else { throw GitPierError.invalidRepository(root.path) }
-    return URL(fileURLWithPath: result.text.trimmingCharacters(in: .whitespacesAndNewlines))
+    return URL(fileURLWithPath: try Self.nativePath(result.stdout))
       .resolvingSymlinksInPath()
   }
   public func metadataDirectories() async throws -> [URL] {
     var directories: [URL] = []
     for flag in ["--absolute-git-dir", "--git-common-dir"] {
-      let path = try await read(["rev-parse", flag]).text.trimmingCharacters(
-        in: .whitespacesAndNewlines)
+      let path = try Self.nativePath(try await read(["rev-parse", flag]).stdout)
       directories.append(
         path.hasPrefix("/") ? URL(fileURLWithPath: path) : root.appendingPathComponent(path))
     }
@@ -835,7 +843,7 @@ public actor GitService {
       let f = row.split(separator: "\0", omittingEmptySubsequences: false).map(String.init)
       guard f.count == 6 else { return nil }
       return GitBranch(
-        name: f[0], current: f[1] == "*", remote: f[5].hasPrefix("refs/remotes/"), upstream: f[2],
+        name: String(f[5].dropFirst(f[5].hasPrefix("refs/remotes/") ? "refs/remotes/".count : "refs/heads/".count)), current: f[1] == "*", remote: f[5].hasPrefix("refs/remotes/"), upstream: f[2],
         tracking: f[3], hash: f[4])
     }
   }
@@ -1194,7 +1202,8 @@ public actor GitService {
     try InputValidation.reference(name)
     _ = try await writing {
       // Git itself refuses overwriting modifications; never add --force/--discard-changes.
-      try await read(["switch"] + (remote ? ["--track"] : []) + [name])
+      let reference = remote && !name.hasPrefix("refs/remotes/") ? "refs/remotes/" + name : name
+      try await read(["switch"] + (remote ? ["--track"] : []) + [reference])
     }
   }
   public func stashes() async throws -> [GitStash] {
@@ -1334,5 +1343,266 @@ public actor GitServiceRegistry {
     let service = GitService(root: canonical, gitPath: gitPath)
     services[canonical.path] = service
     return service
+  }
+}
+
+// MARK: - Professional workflows
+extension GitService {
+  public func resolveCommit(_ reference: String) async throws -> String {
+    try InputValidation.reference(reference)
+    let result = try await read(["rev-parse", "--verify", "--end-of-options", reference + "^{commit}"], allowFailure: true)
+    guard result.code == 0 else {
+      throw GitPierError.invalidInput("This commit is unavailable. It may have expired or been removed by Git garbage collection. Reflog cannot recover missing objects.")
+    }
+    return result.text.trimmingCharacters(in: .whitespacesAndNewlines)
+  }
+  public func commitDetail(_ reference: String) async throws -> CommitRecord {
+    let hash = try await resolveCommit(reference)
+    let data = try await read(["show", "--no-patch", "--format=%H%x00%P%x00%an%x00%ae%x00%at%x00%s%x00%b%x00%D%x00", hash]).stdout
+    guard let record = Self.parseHistory(data).first else { throw GitPierError.invalidInput("Unable to read commit details.") }
+    return record
+  }
+  public func reflog(reference: String = "HEAD", skip: Int = 0, count: Int = 100, search: String = "", operation: String = "") async throws -> [ReflogEntry] {
+    guard reference == "HEAD" || reference.hasPrefix("refs/heads/") else { throw GitPierError.invalidInput("Select HEAD or a local branch reflog.") }
+    try InputValidation.reference(reference)
+    guard !search.utf8.contains(0), !operation.utf8.contains(0) else { throw GitPierError.invalidInput("Invalid reflog filter.") }
+    var args = ["log", "-g", "--date=raw", "--skip=\(max(0, skip))", "-n", "\(max(1, min(count, 500)))", "--format=%H%x00%gD%x00%gs%x00", "-z"]
+    // Git does the filtering before pagination. Text searches target operation descriptions.
+    if !search.isEmpty { args += ["--fixed-strings", "--regexp-ignore-case", "--grep-reflog=" + search] }
+    if !operation.isEmpty {
+      guard operation.allSatisfy({ $0.isLetter || $0 == "-" || $0 == " " || $0 == "(" || $0 == ")" }) else { throw GitPierError.invalidInput("Invalid reflog operation.") }
+      // A single native filter combines type and message; escape the message as a literal regex.
+      args.removeAll { $0 == "--fixed-strings" || $0.hasPrefix("--grep-reflog=") }
+      args += ["--extended-regexp", "--regexp-ignore-case", "--grep-reflog=^" + NSRegularExpression.escapedPattern(for: operation) + "( \\([^)]*\\))?:.*" + NSRegularExpression.escapedPattern(for: search)]
+    }
+    let result = try await read(args + [reference], allowFailure: true, limit: 4 * 1024 * 1024)
+    if result.code != 0 {
+      if try await status().head == nil { return [] }
+      throw GitPierError.command("reflog", result.code, result.errorText)
+    }
+    return ProfessionalWorkflowParser.reflog(result.stdout, offset: max(0, skip))
+  }
+  public func recoverReflogCommit(_ hash: String, branch: String) async throws {
+    // Freeze a full object ID, rather than a moving HEAD@{n} selector.
+    guard [40, 64].contains(hash.count), hash.allSatisfy(\.isHexDigit) else { throw GitPierError.invalidInput("Select a valid reflog commit.") }
+    try InputValidation.reference(branch)
+    try await writing {
+      let commit = try await resolveCommit(hash)
+      try await read(["check-ref-format", "--branch", branch])
+      try await read(["branch", "--", branch, commit])
+    }
+  }
+  public func commonDirectory() async throws -> URL {
+    let path = try Self.nativePath(try await read(["rev-parse", "--git-common-dir"]).stdout)
+    return (path.hasPrefix("/") ? URL(fileURLWithPath: path) : root.appendingPathComponent(path)).standardizedFileURL.resolvingSymlinksInPath()
+  }
+  private func lifecycleWrite<T: Sendable>(_ action: () async throws -> T) async throws -> T {
+    try await writing {
+      let key = try await commonDirectory().path
+      await CommonDirectoryQueue.shared.acquire(key)
+      do {
+        try Task.checkCancellation()
+        let result = try await action()
+        await CommonDirectoryQueue.shared.release(key)
+        return result
+      } catch {
+        await CommonDirectoryQueue.shared.release(key)
+        throw error
+      }
+    }
+  }
+  public func worktrees(includeStatus: Bool = true) async throws -> [GitWorktree] {
+    let data = try await read(["worktree", "list", "--porcelain", "-z"]).stdout
+    guard String(data: data, encoding: .utf8) != nil else { throw GitPierError.invalidInput("Worktree paths must be valid UTF-8.") }
+    let records = ProfessionalWorkflowParser.worktrees(data)
+    guard includeStatus else { return records }
+    var result: [GitWorktree] = []
+    for record in records {
+      try Task.checkCancellation()
+      var changes: Int?
+      if !record.missing && !record.bare {
+        let state = try await read(["-C", record.path, "status", "--porcelain=v2", "-z", "--untracked-files=all"], allowFailure: true, limit: 4 * 1024 * 1024)
+        if state.code == 0 { changes = try StatusParser.parse(state.stdout).files.count }
+      }
+      result.append(GitWorktree(path: record.path, head: record.head, branch: record.branch, main: record.main, bare: record.bare,
+        locked: record.locked, lockReason: record.lockReason, prunable: record.prunable, pruneReason: record.pruneReason,
+        missing: record.missing, changeCount: changes))
+    }
+    return result
+  }
+  private func linkedOwnership(path: String) async throws -> WorktreeOwnership {
+    let common = try await commonDirectory()
+    let directories = try Self.nativePath(try await read(["-C", path, "rev-parse", "--absolute-git-dir"]).stdout)
+    let directory = URL(fileURLWithPath: directories).standardizedFileURL.resolvingSymlinksInPath()
+    let family = try Self.nativePath(try await read(["-C", path, "rev-parse", "--path-format=absolute", "--git-common-dir"]).stdout)
+    guard directory.deletingLastPathComponent().path == common.appendingPathComponent("worktrees").path,
+      URL(fileURLWithPath: family).standardizedFileURL.resolvingSymlinksInPath().path == common.path else {
+      throw GitPierError.invalidInput("The directory does not belong to this repository's linked worktrees.")
+    }
+    let marker = directory.appendingPathComponent("gitpier-creation-id")
+    let attributes = try? FileManager.default.attributesOfItem(atPath: marker.path)
+    var creationID: String?
+    if attributes?[.type] as? FileAttributeType == .typeRegular,
+      (attributes?[.size] as? NSNumber)?.intValue ?? Int.max <= 128,
+      let data = try? Data(contentsOf: marker), let value = String(data: data, encoding: .utf8), UUID(uuidString: value) != nil {
+      creationID = value
+    }
+    return WorktreeOwnership(path: ProfessionalWorkflowParser.canonicalPath(path), commonDirectory: common.path, gitDirectory: directory.path, creationID: creationID)
+  }
+  public func createWorktree(destination: URL, branch: String, newBranch: Bool = false, startAt: String = "HEAD") async throws -> WorktreeOwnership {
+    try InputValidation.reference(branch)
+    return try await lifecycleWrite {
+      let target = destination.standardizedFileURL
+      guard target.path.hasPrefix("/"), !target.path.utf8.contains(0), target.resolvingSymlinksInPath() == target,
+        (try? FileManager.default.attributesOfItem(atPath: target.path)) == nil else {
+        throw GitPierError.invalidInput("Choose a new directory. Existing folders and symbolic links are never overwritten.")
+      }
+      let canonicalTarget = ProfessionalWorkflowParser.canonicalPath(target.path)
+      let records = try await worktrees(includeStatus: false)
+      guard !records.contains(where: { canonicalTarget == $0.path || canonicalTarget.hasPrefix($0.path + "/") }) else {
+        throw GitPierError.invalidInput("Choose a directory outside the existing working trees.")
+      }
+      try await read(["check-ref-format", "--branch", branch])
+      let base: String
+      if newBranch { base = try await resolveCommit(startAt) }
+      else {
+        guard try await read(["show-ref", "--verify", "refs/heads/" + branch], allowFailure: true).code == 0 else { throw GitPierError.invalidInput("Select an existing local branch.") }
+        // worktree add requires the short branch name to attach HEAD; a full ref detaches.
+        // Existence is verified above, and Git enforces checked-out-branch protection.
+        base = branch
+      }
+      try await read(["worktree", "add"] + (newBranch ? ["-b", branch] : []) + ["--", canonicalTarget, base])
+      let identity = try await linkedOwnership(path: canonicalTarget)
+      let creationID = UUID().uuidString
+      let marker = URL(fileURLWithPath: identity.gitDirectory).appendingPathComponent("gitpier-creation-id")
+      try Data(creationID.utf8).write(to: marker, options: .withoutOverwriting)
+      try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: marker.path)
+      return WorktreeOwnership(path: identity.path, commonDirectory: identity.commonDirectory, gitDirectory: identity.gitDirectory, creationID: creationID)
+    }
+  }
+  private func currentWorktree(_ expected: GitWorktree) async throws -> GitWorktree {
+    guard let current = try await worktrees(includeStatus: false).first(where: { $0.path == expected.path }), current == GitWorktree(
+      path: expected.path, head: expected.head, branch: expected.branch, main: expected.main, bare: expected.bare,
+      locked: expected.locked, lockReason: expected.lockReason, prunable: expected.prunable, pruneReason: expected.pruneReason,
+      missing: expected.missing, changeCount: nil) else {
+      throw GitPierError.invalidInput("The worktree changed. Refresh and review it again.")
+    }
+    guard !current.main, !current.bare else { throw GitPierError.invalidInput("The main repository cannot be removed, locked or unlocked.") }
+    return current
+  }
+  public func setWorktreeLock(_ worktree: GitWorktree, locked: Bool, reason: String = "") async throws {
+    guard !reason.utf8.contains(0) else { throw GitPierError.invalidInput("Invalid lock reason.") }
+    try await lifecycleWrite {
+      let current = try await currentWorktree(worktree)
+      guard current.locked != locked else { return }
+      try await read(["worktree", locked ? "lock" : "unlock"] + (locked && !reason.isEmpty ? ["--reason", reason] : []) + ["--", current.path])
+    }
+  }
+  public func reviewWorktreeRemoval(_ worktree: GitWorktree, ownership: WorktreeOwnership) async throws -> WorktreeRemovalReview {
+    let current = try await currentWorktree(worktree)
+    guard !current.missing, !current.prunable, !current.locked, ownership.creationID != nil,
+      current.path == ownership.path, try await linkedOwnership(path: current.path) == ownership,
+      URL(fileURLWithPath: current.path).resolvingSymlinksInPath().path == current.path else {
+      throw GitPierError.invalidInput("Removal requires an available, unlocked worktree created by GitPier with unchanged Git metadata.")
+    }
+    if current.branch.isEmpty {
+      let retaining = try await read(["for-each-ref", "--contains=" + current.head, "--format=%(refname)", "refs/heads", "refs/remotes", "refs/tags"])
+      guard !retaining.stdout.isEmpty else {
+        throw GitPierError.invalidInput("The detached worktree commit has no retaining branch or tag. Create a recovery branch before removal.")
+      }
+    }
+    // Include ignored files: clean tracked files alone do not prove a directory is safe to delete.
+    let state = try await read(["-C", current.path, "status", "--porcelain=v2", "-z", "--untracked-files=all", "--ignored"])
+    guard state.stdout.isEmpty else { throw GitPierError.invalidInput("The worktree contains modified, untracked or ignored files. Preserve them before removal; force deletion is not available.") }
+    let linked = GitService(root: URL(fileURLWithPath: current.path), gitPath: gitPath, runner: runner)
+    guard try await linked.status().operation == nil else { throw GitPierError.invalidInput("Finish the worktree's Git operation before removal.") }
+    return WorktreeRemovalReview(worktree: current, ownership: ownership)
+  }
+  public func removeWorktree(_ review: WorktreeRemovalReview) async throws {
+    try await lifecycleWrite {
+      _ = try await reviewWorktreeRemoval(review.worktree, ownership: review.ownership)
+      try await read(["worktree", "remove", "--", review.worktree.path])
+    }
+  }
+  public func reviewWorktreeRepair(at destination: URL) async throws -> WorktreeRepairReview {
+    let target = destination.standardizedFileURL
+    guard target.resolvingSymlinksInPath() == target else { throw GitPierError.unsafePath(target.path) }
+    let ownership = try await linkedOwnership(path: target.path)
+    let registered = try String(contentsOf: URL(fileURLWithPath: ownership.gitDirectory).appendingPathComponent("gitdir"), encoding: .utf8).trimmingCharacters(in: .newlines)
+    let old = ProfessionalWorkflowParser.canonicalPath(URL(fileURLWithPath: registered).deletingLastPathComponent().path)
+    guard let record = try await worktrees(includeStatus: false).first(where: { $0.path == old }), !record.main,
+      (old == target.path || record.missing) else { throw GitPierError.invalidInput("The original worktree is still present or its registration is unknown. Repair was refused.") }
+    return WorktreeRepairReview(ownership: ownership, previous: record)
+  }
+  public func repairWorktree(at destination: URL) async throws -> WorktreeOwnership {
+    try await repairWorktree(reviewWorktreeRepair(at: destination))
+  }
+  /// Repairs only a moved linked tree whose .git pointer and reviewed registration remain valid.
+  public func repairWorktree(_ review: WorktreeRepairReview) async throws -> WorktreeOwnership {
+    try await lifecycleWrite {
+      guard try await reviewWorktreeRepair(at: URL(fileURLWithPath: review.ownership.path)) == review else {
+        throw GitPierError.invalidInput("The worktree changed. Refresh and review it again.")
+      }
+      try await read(["worktree", "repair", "--", review.ownership.path])
+      return review.ownership
+    }
+  }
+  public func compareBranches(left: String, right: String, mode: BranchComparisonMode = .tips, count: Int = 100) async throws -> BranchComparisonResult {
+    // Require actual full branch refs, preventing short-name tag ambiguity and revision injection.
+    for ref in [left, right] {
+      guard ref.hasPrefix("refs/heads/") || ref.hasPrefix("refs/remotes/") else { throw GitPierError.invalidInput("Select a local or remote-tracking branch.") }
+      try await read(["check-ref-format", ref])
+    }
+    let a = try await resolveCommit(left), b = try await resolveCommit(right)
+    let baseResult = try await read(["merge-base", "--all", a, b], allowFailure: true)
+    guard baseResult.code == 0 || baseResult.code == 1 else { throw GitPierError.command("merge-base", baseResult.code, baseResult.errorText) }
+    let bases = baseResult.text.split(separator: "\n").map(String.init)
+    if mode == .mergeBase, bases.count != 1 { throw GitPierError.invalidInput("Three-point comparison requires one merge base. These branches have no common ancestor or have multiple merge bases. Use direct tip comparison.") }
+    let counts = try await read(["rev-list", "--left-right", "--count", a + "..." + b]).text.split(whereSeparator: \.isWhitespace)
+    let old = mode == .tips ? a : bases[0]
+    return BranchComparisonResult(left: left, right: right, leftHash: a, rightHash: b, mergeBases: bases,
+      leftOnlyCount: counts.first.flatMap { Int($0) } ?? 0, rightOnlyCount: counts.last.flatMap { Int($0) } ?? 0,
+      leftOnly: try await comparisonCommits(base: b, tip: a, count: count), rightOnly: try await comparisonCommits(base: a, tip: b, count: count),
+      diffBase: old, mode: mode, files: try await commitFiles(b, parent: old))
+  }
+  public func comparisonCommits(base: String, tip: String, skip: Int = 0, count: Int = 100) async throws -> [CommitRecord] {
+    let a = try await resolveCommit(base), b = try await resolveCommit(tip)
+    return Self.parseHistory(try await read(["log", "--skip=\(max(0, skip))", "-n", "\(max(1, min(count, 500)))", "--format=%H%x00%P%x00%an%x00%ae%x00%at%x00%s%x00%b%x00%D%x00", "-z", a + ".." + b]).stdout)
+  }
+  public func blame(path: String, revision: String? = nil, start: Int = 1, count: Int = 400) async throws -> BlamePage {
+    try Task.checkCancellation()
+    try InputValidation.repositoryPath(path)
+    let hash: String?
+    if let revision { hash = try await resolveCommit(revision) } else { hash = nil }
+    let bytes: Data
+    if let hash {
+      let size = try await read(["cat-file", "-s", hash + ":" + path]).text.trimmingCharacters(in: .whitespacesAndNewlines)
+      guard let length = Int(size), length <= 4 * 1024 * 1024 else { throw GitPierError.outputLimit }
+      bytes = try await read(["show", hash + ":" + path], limit: 4 * 1024 * 1024).stdout
+    } else {
+      let url = root.appendingPathComponent(path).standardizedFileURL
+      guard url.resolvingSymlinksInPath() == url, url.path.hasPrefix(root.path + "/") else { throw GitPierError.unsafePath(path) }
+      let attributes = try FileManager.default.attributesOfItem(atPath: url.path)
+      guard attributes[.type] as? FileAttributeType == .typeRegular, (attributes[.size] as? NSNumber)?.intValue ?? Int.max <= 4 * 1024 * 1024 else { throw GitPierError.outputLimit }
+      bytes = try Data(contentsOf: url)
+      guard bytes.count <= 4 * 1024 * 1024 else { throw GitPierError.outputLimit }
+    }
+    guard !bytes.contains(0), String(data: bytes, encoding: .utf8) != nil else { throw GitPierError.invalidInput("Blame requires a UTF-8 text file; binary files are not supported.") }
+    try Task.checkCancellation()
+    let total = bytes.reduce(into: 0) { if $1 == 10 { $0 += 1 } } + (!bytes.isEmpty && bytes.last != 10 ? 1 : 0)
+    let first = max(1, start), last = min(total, first + max(1, min(count, 1000)) - 1)
+    guard first <= last else { return BlamePage(lines: [], totalLines: total, revision: hash) }
+    let result = try await read(["--literal-pathspecs", "blame", "--line-porcelain", "--no-textconv", "-M", "-L", "\(first),\(last)"] + (hash.map { [$0] } ?? []) + ["--", path], allowFailure: true, limit: 4 * 1024 * 1024)
+    if result.code != 0 {
+      // A newly added/untracked file has no committed attribution. Do not invent a commit.
+      let exists = try await read(["cat-file", "-e", "HEAD:" + path], allowFailure: true)
+      if hash == nil, exists.code != 0 {
+        let lines = String(decoding: bytes, as: UTF8.self).split(separator: "\n", omittingEmptySubsequences: false)
+        return BlamePage(lines: (first...last).map { BlameLine(line: $0, originalLine: $0, hash: String(repeating: "0", count: 40), author: "Not Committed Yet", date: Date(), originalPath: path, text: String(lines[$0 - 1])) }, totalLines: total, revision: nil)
+      }
+      throw GitPierError.command("blame", result.code, result.errorText)
+    }
+    try Task.checkCancellation()
+    return BlamePage(lines: ProfessionalWorkflowParser.blame(result.stdout), totalLines: total, revision: hash)
   }
 }

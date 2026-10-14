@@ -18,6 +18,7 @@ struct BranchesView: View {
         Text(store.text("Branches", "分支")).font(.title3.weight(.semibold))
         Spacer()
         TextField(store.text("Search branches", "搜索分支"), text: $search).frame(width: 200)
+        Button(store.text("Compare Branches", "比较分支")) { model.setPage("compare") }
         Button(store.text("New Branch…", "新建分支…")) { creating = true }
       }.padding(18)
       Divider()
@@ -114,6 +115,10 @@ struct BranchesView: View {
             model.run { git in try await git.switchBranch(branch.name, remote: branch.remote) }
           }
         }
+        Button(store.text("Compare with Current Branch", "与当前分支比较")) {
+          model.comparisonRight = branch.reference
+          model.setPage("compare")
+        }
         Button(store.text("Copy Name", "复制名称")) { copyText(branch.name) }
         if !branch.remote {
           Button(store.text("Rename…", "重命名…")) {
@@ -128,14 +133,14 @@ struct BranchesView: View {
         Divider()
         Button(store.text("Merge into ", "合并至 ") + model.status.branch + "…") {
           model.perform(
-            ["merge", "--no-edit", branch.name],
+            ["merge", "--no-edit", branch.reference],
             confirmation: store.text(
               "Merge this branch into the current branch? Git will retain conflict state if resolution is needed.",
               "合并至当前分支？如需解决冲突，Git 会保留冲突状态。"))
         }.disabled(branch.current)
         Button(localizedUI("Rebase onto…")) {
           model.perform(
-            ["rebase", branch.name],
+            ["rebase", branch.reference],
             confirmation: store.text(
               "Replay the current branch onto this branch? This rewrites local history.",
               "将当前分支变基到此分支？这会重写本地历史。"))

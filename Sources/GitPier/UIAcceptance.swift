@@ -55,6 +55,13 @@ import SwiftUI
         window.orderFront(nil)
         try await settle()
         try await waitFor { !model.refreshing && !model.diffLoading }
+        if ProcessInfo.processInfo.environment["GITPIER_UI_ACCEPTANCE_SCOPE"] == "version120" {
+          if ProcessInfo.processInfo.environment["GITPIER_UI_ACCEPTANCE_INTERACTIVE_WORKFLOWS"] == "1" { window.close() }
+          try await verifyVersion120(store: store, output: output)
+          store.shutdown(); window.close()
+          print("Native 1.2.0 workflow acceptance passed.")
+          exit(0)
+        }
         if ProcessInfo.processInfo.environment["GITPIER_UI_ACCEPTANCE_SCOPE"] == "version110" {
           try await verifyVersion110(store: store, model: model, output: output)
           store.shutdown()
@@ -382,7 +389,8 @@ import SwiftUI
         appearanceSettings.appearance = .system
         store.updateSettings(appearanceSettings)
         try await settle()
-        guard store.resolvedColorScheme == .dark, window.appearance == nil else {
+        let expectedSystemScheme: ColorScheme = NSApp.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua ? .dark : .light
+        guard store.resolvedColorScheme == expectedSystemScheme, NSApp.appearance == nil, window.appearance == nil else {
           throw GitPierError.invalidInput("Follow-system appearance did not reset all content")
         }
         NSApp.appearance = previousApplicationAppearance
@@ -574,6 +582,7 @@ import SwiftUI
         try await verifyVersion102(
           store: store, model: model, host: host, window: window, output: output)
         try await verifyVersion110(store: store, model: model, output: output)
+        try await verifyVersion120(store: store, output: output)
         try await verifyDiffScrollBounds(settings: store.settings, output: output)
         try await verifyUnifiedScrollbars(store: store, model: model, output: output)
         session.view.acceptanceOutput = nil

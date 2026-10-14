@@ -59,7 +59,8 @@ Scripts/test.sh
 python3 Scripts/test-release-tools.py
 UNIVERSAL=1 Scripts/build-app.sh
 Scripts/package-dmg.sh
-Scripts/verify-dmg.sh dist/GitPier-1.1.0-macos-universal.dmg
+task_version="$(python3 Scripts/release_metadata.py --field version)"
+Scripts/verify-dmg.sh "dist/GitPier-${task_version}-macos-universal.dmg"
 ```
 
 `package-dmg.sh` refuses to overwrite an existing image and requires a logged-in Finder session with Automation permission. The Finder-only layout is in `Scripts/layout-dmg.applescript`: a 720 × 448-point outer window (approximately 720 × 420-point content), 104-point real icons at (190,196) and (530,196), and /Applications symlink. `Scripts/generate-installer-background.swift` regenerates `Resources/Installer/background@2x.png` and `background.tiff` using AppKit; the TIFF includes 1x/2x representations. No external assets, false icons or installer programs are used. Visually inspect the mounted Finder window separately from the structural checks and copy to an isolated installation location for launch acceptance.
@@ -79,7 +80,8 @@ For an encrypted local backup, create a mode-0700 directory outside the reposito
 After reviewing release notes and completing local acceptance:
 
 ```bash
-Scripts/sign-release.sh dist/GitPier-1.1.0-macos-universal.dmg reviewed-release-notes.md
+task_version="$(python3 Scripts/release_metadata.py --field version)"
+Scripts/sign-release.sh "dist/GitPier-${task_version}-macos-universal.dmg" reviewed-release-notes.md
 # Or perform the complete build/test/package/sign pipeline with a new output path:
 Scripts/package-release.sh reviewed-release-notes.md
 ```
@@ -108,7 +110,33 @@ Failure cases can be prepared with `python3 Scripts/update-test-scenario.py .cac
 Example draft creation, only after explicit authorization and source/asset review:
 
 ```bash
-gh release create v1.1.0 --draft --target "$APPROVED_COMMIT_SHA" --title "GitPier v1.1.0" --notes-file "$REVIEWED_NOTES_FILE" dist/GitPier-1.1.0-macos-universal.dmg dist/GitPier-1.1.0-macos-universal.dmg.sha256 dist/appcast.xml
+task_version="$(python3 Scripts/release_metadata.py --field version)"
+gh release create "v${task_version}" --draft --target "$APPROVED_COMMIT_SHA" --title "GitPier v${task_version}" --notes-file "$REVIEWED_NOTES_FILE" "dist/GitPier-${task_version}-macos-universal.dmg" "dist/GitPier-${task_version}-macos-universal.dmg.sha256" dist/appcast.xml
 ```
 
 `APPROVED_COMMIT_SHA` and `REVIEWED_NOTES_FILE` must identify the owner's approved commit and final notes. This command is documentation, not an automatic publishing step; verify draft assets and CI before separately approving publication.
+
+## v1.2.0 professional workflows (Unreleased)
+
+The development target is 1.2.0, build 18, based on released v1.1.0 (1827818). The original 98 Core tests and six release-tool gates remain intact. Worktree identification/opening, commit details, DiffTable, literal paths, reviewed destructive actions and per-working-tree state already existed; the new pages reuse them.
+
+| Capability | v1.1.0 baseline | v1.2.0 implementation |
+| --- | --- | --- |
+| Reflog | No dedicated page/query | Native paged HEAD/local-branch log, filters, details, fixed-object recovery branch, reviewed soft/mixed reset |
+| Worktrees | Identify/open linked repositories | List/create/register, lock/unlock, guarded remove, moved-linked-tree repair, shared metadata queue |
+| Branch comparison | Commit/parent Diff | Local/remote-tracking ref pairs, merge bases, unique counts/paged commits, tip or three-point file Diff |
+| Blame | File history and commit Diff | Working/historical text, per-line attribution, commit/file details, rename attribution and bounded paging |
+
+Run the complete suite with `Scripts/test.sh`, `python3 Scripts/test-release-tools.py`, and `Scripts/ui-acceptance.sh .cache/ui-acceptance/v120`. The workflow-only GUI entry is `GITPIER_UI_ACCEPTANCE_SCOPE=version120 Scripts/ui-acceptance.sh .cache/ui-acceptance/v120-workflows`. All writes and resets in these workflows use disposable repositories. The visible GUI mode sets `GITPIER_UI_ACCEPTANCE_INTERACTIVE_WORKFLOWS=1`, uses an independently identified application through `GITPIER_UI_ACCEPTANCE_EXECUTABLE`, supports `GITPIER_UI_ACCEPTANCE_LANGUAGE=zh-Hans` / `GITPIER_UI_ACCEPTANCE_APPEARANCE=light` for isolated initial settings, and waits for a `finish-gui` marker in its output directory after manual interactions. Use an isolated workspace and application identity; never launch this mode with a normal user's workspace. Offscreen view bitmaps do not prove full SwiftUI visuals or mouse interaction.
+
+Local builds are development candidates. Do not sign a production appcast, upload assets, modify v1.1.0, create a tag or publish without separate authorization. The production Bundle ID, Sparkle 2, feed and public key are retained; never replace or regenerate the production key. Keep v1.2.0 changes in Unreleased until an approved release. Universal compilation does not establish Intel/macOS 14 device acceptance or notarization.
+
+### Local validation — 2026-10-14
+
+`Scripts/test.sh` passed all 128 Core tests (the original 98 plus 30 new cases), with zero failures and zero skips in the normal macOS environment. `python3 Scripts/test-release-tools.py` passed all six existing gates. New tests use temporary Git repositories and cover recovery after reset, unavailable objects, 1,001-record reflog pagination, worktree creation/lock/removal/repair, stale reviews, ignored files, replaced-directory ownership, detached commit retention, independent Index/drafts/layouts, full-ref comparison, merge bases, rename Blame, large files and cancellation.
+
+The final `Scripts/ui-acceptance.sh .cache/ui-acceptance/v120-full` run passed the complete native UI/PTY suite, including existing 1.0.2/1.1.0, conflict, scrollbar and terminal regressions plus the v1.2.0 workflow checks. `UNIVERSAL=1 Scripts/build-app.sh` verified both arm64/x86_64, version 1.2.0 (18), embedded Sparkle helpers and deep signatures. `Scripts/test-dmg-structure.sh` passed on that final bundle; it verifies a disposable image and does not establish a new Finder drag-install or self-update.
+
+Visible acceptance used a separate application identity, isolated configuration and disposable repositories. Native interactions checked recovery-branch creation, worktree creation/registration/lock/unlock/removal with the affected path, independent state, both comparison semantics, Blame → commit file Diff → return, English/Chinese, light/dark and 960×640 layouts. Hosted/offscreen component snapshots are separate evidence and do not prove complete SwiftUI pixels.
+
+Blame refuses single lines longer than 20,000 UTF-16 characters as well as files over 4 MiB, to keep native text layout bounded. Removal of external worktrees is intentionally unavailable; repair does not grant deletion ownership. Repair supports moved linked trees within the same common directory, not an automatic relocation of the whole main repository. Intel/macOS 14 device runs, Swift 6.1.2 remote CI, Developer ID/notarization and a new production-key self-update are outside this local validation. No commit, push, tag, release publication or production-key change was performed.
