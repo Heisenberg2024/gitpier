@@ -11,6 +11,12 @@ import SwiftUI
 
 if CommandLine.arguments.contains("--ssh-profile") {
   SSHLauncher.run()
+} else if CommandLine.arguments.contains("--background-keychain-helper") {
+  if CommandLine.arguments.last == "get" {
+    let request = String(decoding: FileHandle.standardInput.readDataToEndOfFile(), as: UTF8.self)
+    if let response = KeychainStore.internetResponse(request: request) { FileHandle.standardOutput.write(Data(response.utf8)) }
+  }
+  exit(0)
 } else if CommandLine.arguments.contains("--credential-helper") {
   let args = CommandLine.arguments
   if let index = args.firstIndex(of: "--credential-helper"), args.count > index + 2,
@@ -22,7 +28,7 @@ if CommandLine.arguments.contains("--ssh-profile") {
     }
     if let configuration = try? ConfigurationStore(url: url).load(),
       let profile = configuration.credentials.first(where: { $0.id == id }),
-      let secret = try? KeychainStore().read(id: id),
+      let secret = try? KeychainStore().read(id: id, allowInteraction: ProcessInfo.processInfo.environment["GITPIER_BACKGROUND"] != "1"),
       let response = AuthenticationContext.helperResponse(
         request: request, profile: profile, secret: secret)
     {
@@ -174,7 +180,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
   }
   func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
     let store = AppStore.shared
-    if store.hasRunningGitOperations {
+    if store.hasBlockingGitOperations {
       let alert = NSAlert()
       alert.messageText = store.text("A Git operation is running", "Git 操作正在运行")
       alert.informativeText = store.text(
@@ -201,6 +207,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         store.updates.terminationWasCancelled()
         return .terminateCancel
       }
+    }
+    if store.workspace.automaticallyFetching {
+      Task {
+        await store.workspace.stopAutomaticChecks()
+        guard !store.hasBlockingGitOperations else {
+          store.updates.terminationWasCancelled()
+          sender.reply(toApplicationShouldTerminate: false)
+          return
+        }
+        store.shutdown()
+        sender.reply(toApplicationShouldTerminate: true)
+      }
+      return .terminateLater
     }
     store.shutdown()
     return .terminateNow

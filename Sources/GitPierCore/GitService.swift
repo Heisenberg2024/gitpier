@@ -73,8 +73,9 @@ public actor GitService {
   }
   public static func redact(_ text: String) -> String {
     text.replacingOccurrences(
-      of: "(https?://)[^\\s/@]+(?::[^\\s/@]*)?@", with: "$1[redacted]@", options: .regularExpression
-    )
+      of: "((?:https?|ssh)://)[^\\s/@]+(?::[^\\s/@]*)?@", with: "$1[redacted]@", options: .regularExpression
+    ).replacingOccurrences(of: "(?i)([?&](?:access_token|token|password|auth|key|signature)=)[^&\\s]+",
+      with: "$1[redacted]", options: .regularExpression)
   }
   /// Git terminates path output with one LF. Whitespace and embedded/trailing LF can
   /// belong to the actual directory name and must never be trimmed as presentation.
@@ -101,9 +102,11 @@ public actor GitService {
     var seen: Set<URL> = []
     return directories.map { $0.standardizedFileURL }.filter { seen.insert($0).inserted }
   }
-  public func status() async throws -> RepositoryStatus {
+  public func status(localOnly: Bool = false) async throws -> RepositoryStatus {
+    if localOnly { try await requireLocalWorkspaceQueries() }
     var status = try StatusParser.parse(
-      await read(["status", "--porcelain=v2", "-z", "--branch", "--untracked-files=all"]).stdout)
+      await read(["status", "--porcelain=v2", "-z", "--branch", "--untracked-files=all"],
+        environment: localOnly ? ["GIT_NO_LAZY_FETCH": "1"] : [:]).stdout)
     let dir = try await metadataDirectories()[0]
     let fm = FileManager.default
     if fm.fileExists(atPath: dir.appendingPathComponent("rebase-merge").path)
@@ -143,6 +146,7 @@ public actor GitService {
           var state = try StatusParser.parse(await read(
             ["status", "--porcelain=v2", "-z", "--branch", "--untracked-files=all"],
             environment: ["GIT_NO_LAZY_FETCH": "1"], limit: 16 * 1024 * 1024, timeout: 20).stdout)
+          let collectedAt = Date(), collectedUptime = ProcessInfo.processInfo.systemUptime
           let dir = directories[0]
           let fm = FileManager.default
           if fm.fileExists(atPath: dir.appendingPathComponent("rebase-merge").path)
@@ -152,8 +156,11 @@ public actor GitService {
           else if fm.fileExists(atPath: dir.appendingPathComponent("REVERT_HEAD").path) { state.operation = .revert }
           let names = try await read(["remote"], limit: 256 * 1024, timeout: 15).text
             .split(separator: "\n").map(String.init)
+          let target: WorkspaceFetchTarget?
+          if state.upstream != nil { target = try? await upstreamFetchTarget(record) } else { target = nil }
           let snapshot = WorkspaceSnapshot(record: record, status: state, gitDirectory: gitDirectory,
-            commonDirectory: common, remoteNames: names)
+            commonDirectory: common, remoteNames: names, collectedAt: collectedAt,
+            remoteTarget: target, collectedUptime: collectedUptime)
           await CommonDirectoryQueue.shared.release(common)
           return snapshot
         } catch {
@@ -1575,19 +1582,127 @@ public actor GitService {
       return targets
     }
   }
+  /// Resolve only the branch's configured upstream remote, using local metadata exclusively.
+  public func upstreamFetchTarget(_ record: RepositoryRecord) async throws -> WorkspaceFetchTarget? {
+    let branch = try await read(["symbolic-ref", "-q", "HEAD"], allowFailure: true).text.trimmingCharacters(in: .newlines)
+    guard branch.hasPrefix("refs/heads/") else { return nil }
+    let name = try await read(["for-each-ref", "--format=%(upstream:remotename)", "--", branch]).text.trimmingCharacters(in: .newlines)
+    guard !name.isEmpty, name != "." else { return nil }
+    try InputValidation.reference(name)
+    let identity = try await workspaceFetchIdentity(name)
+    let url = try await read(["remote", "get-url", "--", name]).text.trimmingCharacters(in: .newlines)
+    let remote = GitRemote(name: name, fetchURL: Self.redact(url), pushURL: "",
+      configuredFetchURLs: [], configuredPushURLs: [], configurationID: identity)
+    return WorkspaceFetchTarget(record: record, commonDirectory: try await commonDirectory().path,
+      remote: remote, configurationIdentity: identity)
+  }
+  public func trackingReferenceIdentity(_ remote: String) async throws -> String {
+    try InputValidation.reference(remote)
+    let data = try await read(["for-each-ref", "--format=%(refname)%00%(objectname)", "refs/remotes/" + remote + "/"]).stdout
+    return SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+  }
+  public func confirmedManualFetchTargets(_ reviewed: [WorkspaceFetchTarget], all: Bool) async -> [WorkspaceFetchTarget] {
+    var valid: [WorkspaceFetchTarget] = []
+    for target in reviewed {
+      guard (try? await workspaceFetchIdentity(target.remote.name)) == target.configurationIdentity else { continue }
+      if all {
+        var skipped = false
+        for flag in ["skipFetchAll", "skipDefaultUpdate"] {
+          let value = try? await read(["config", "--bool", "--get", "remote." + target.remote.name + "." + flag], allowFailure: true).text
+          if value?.trimmingCharacters(in: .newlines) == "true" { skipped = true }
+        }
+        if skipped { continue }
+      }
+      valid.append(target)
+    }
+    return valid
+  }
   public func workspaceFetch(_ target: WorkspaceFetchTarget) async throws -> String {
+    try await checkedWorkspaceFetch(target).output
+  }
+  public func checkedWorkspaceFetch(_ target: WorkspaceFetchTarget, automatic: Bool = false) async throws -> WorkspaceFetchResult {
     try InputValidation.reference(target.remote.name)
-    return try await lifecycleWrite {
+    // Automatic work never queues behind an in-app write. Manual requests retain the normal FIFO.
+    if automatic, writeBusy { throw AutomaticFetchError.skipped("Repository busy. Check deferred.") }
+    return try await lifecycleWrite(onlyIfIdle: automatic) {
       try await validateWorkspaceRoot()
       guard root.path == URL(fileURLWithPath: target.record.path).resolvingSymlinksInPath().path,
             try await commonDirectory().path == target.commonDirectory,
             try await workspaceFetchIdentity(target.remote.name) == target.configurationIdentity else {
         throw GitPierError.invalidInput("The repository or remote configuration changed. Review Fetch again.")
       }
-      // Preserve another client's FETCH_HEAD and never chain a pull/push/merge operation.
-      let result = try await read(["fetch", "--progress", "--no-write-fetch-head", "--recurse-submodules=no", "--no-auto-gc", "--", target.remote.name])
-      return Self.redact(result.text + result.errorText)
+      var arguments = ["fetch", "--progress", "--no-write-fetch-head", "--recurse-submodules=no", "--no-auto-gc"]
+      var environment: [String: String] = [:]
+      if automatic {
+        let state: RepositoryStatus
+        do { state = try await status(localOnly: true) }
+        catch let failure as WorkspaceFailure { throw AutomaticFetchError.skipped(failure.summary) }
+        guard state.operation == nil, !state.files.contains(where: \.isConflicted) else {
+          throw AutomaticFetchError.skipped("Resolve the current Git operation before automatic Fetch.")
+        }
+        environment = try await automaticFetchEnvironment(target)
+        arguments += ["--no-tags", "--no-prune", "--no-prune-tags"]
+      }
+      let refs = ["for-each-ref", "--format=%(refname)%00%(objectname)", "refs/remotes/" + target.remote.name + "/"]
+      let before = try await read(refs).stdout
+      let result = try await read(arguments + ["--", target.remote.name], environment: environment, timeout: automatic ? 60 : 120)
+      let after = try await read(refs).stdout
+      // A changed URL/refspec cannot inherit the old result even if transport succeeded.
+      guard try await workspaceFetchIdentity(target.remote.name) == target.configurationIdentity else {
+        throw GitPierError.invalidInput("Remote configuration changed during Fetch. Check again.")
+      }
+      return WorkspaceFetchResult(output: Self.redact(result.text + result.errorText), referencesUpdated: before != after)
     }
+  }
+  private func automaticFetchEnvironment(_ target: WorkspaceFetchTarget) async throws -> [String: String] {
+    let name = target.remote.name
+    for option in ["vcs", "uploadpack"] {
+      let value = try await read(["config", "--get-all", "remote." + name + "." + option], allowFailure: true).text
+      guard value.isEmpty else { throw AutomaticFetchError.skipped("Custom remote helpers require manual Fetch.") }
+    }
+    let config = try await read(["config", "--get-all", "remote." + name + ".fetch"], allowFailure: true).text
+      .split(separator: "\n").map(String.init)
+    guard config == ["+refs/heads/*:refs/remotes/" + name + "/*"] else {
+      throw AutomaticFetchError.skipped("Custom fetch refspec requires manual Fetch.")
+    }
+    let mirror = try await read(["config", "--bool", "--get", "remote." + name + ".mirror"], allowFailure: true).text
+    guard mirror.trimmingCharacters(in: .newlines) != "true" else {
+      throw AutomaticFetchError.skipped("Mirror remotes require manual Fetch.")
+    }
+    let urls = try await read(["remote", "get-url", "--all", "--", name]).text.split(separator: "\n").map(String.init)
+    guard urls.count == 1 else { throw AutomaticFetchError.skipped("Multiple fetch URLs require manual Fetch.") }
+    let url = urls[0]
+    try InputValidation.remoteURL(url)
+    guard url.hasPrefix("https://") || url.hasPrefix("ssh://") || url.hasPrefix("file://") || url.hasPrefix("/")
+      || (!url.contains("://") && url.contains(":") && !url.contains("::")) else {
+      throw AutomaticFetchError.skipped("This transport requires manual Fetch.")
+    }
+    let ssh = authEnvironment["GIT_SSH_COMMAND"]
+    let custom = try await read(["config", "--get", "core.sshCommand"], allowFailure: true).text
+    guard ssh != nil || custom.isEmpty && ProcessInfo.processInfo.environment["GIT_SSH_COMMAND"] == nil
+      && ProcessInfo.processInfo.environment["GIT_SSH"] == nil else {
+      throw AutomaticFetchError.skipped("Custom SSH commands require manual Fetch.")
+    }
+    // Command-scoped overrides preserve TLS and host verification. App helpers read Keychain
+    // with interaction forbidden. Unknown credential helpers are never invoked in the background.
+    return ["GIT_TERMINAL_PROMPT": "0", "GIT_ASKPASS": "/usr/bin/false", "SSH_ASKPASS": "/usr/bin/false",
+      "SSH_ASKPASS_REQUIRE": "never", "GITPIER_BACKGROUND": "1", "GCM_INTERACTIVE": "never",
+      "GIT_SSH_COMMAND": (ssh ?? "/usr/bin/ssh") + " -oBatchMode=yes -oStrictHostKeyChecking=yes -oNumberOfPasswordPrompts=0",
+      "GIT_SSH_VARIANT": "ssh", "GIT_CONFIG_COUNT": "4",
+      "GIT_CONFIG_KEY_0": "credential.interactive", "GIT_CONFIG_VALUE_0": "false",
+      "GIT_CONFIG_KEY_1": "credential.helper", "GIT_CONFIG_VALUE_1": "",
+      "GIT_CONFIG_KEY_2": "credential.helper", "GIT_CONFIG_VALUE_2": try await automaticCredentialHelper(url),
+      "GIT_CONFIG_KEY_3": "maintenance.auto", "GIT_CONFIG_VALUE_3": "false"]
+  }
+  private func automaticCredentialHelper(_ url: String) async throws -> String {
+    // Explicit GitPier HTTPS profiles already install an app helper via command-line -c.
+    if authEnvironment["GITPIER_CREDENTIAL_ID"] != nil { return "" }
+    let configured = try await read(["config", "--get-urlmatch", "credential.helper", url], allowFailure: true).text.trimmingCharacters(in: .newlines)
+    if configured == "store" || configured == "cache" { return configured }
+    if configured == "osxkeychain", let executable = authEnvironment["GITPIER_HELPER_EXECUTABLE"] {
+      return "!" + InputValidation.shellQuote(executable) + " --background-keychain-helper"
+    }
+    return ""
   }
   public func workspaceSearch(record: RepositoryRecord, query: String, kinds: Set<WorkspaceSearchKind>,
                               page: Int = 0, size: Int = 25) async throws -> WorkspaceRepositorySearchPage {
@@ -2318,10 +2433,12 @@ extension GitService {
     let path = try Self.nativePath(try await read(["rev-parse", "--git-common-dir"]).stdout)
     return (path.hasPrefix("/") ? URL(fileURLWithPath: path) : root.appendingPathComponent(path)).standardizedFileURL.resolvingSymlinksInPath()
   }
-  private func lifecycleWrite<T: Sendable>(_ action: () async throws -> T) async throws -> T {
+  private func lifecycleWrite<T: Sendable>(onlyIfIdle: Bool = false, _ action: () async throws -> T) async throws -> T {
     try await writing {
       let key = try await commonDirectory().path
-      try await CommonDirectoryQueue.shared.acquire(key)
+      if onlyIfIdle {
+        guard await CommonDirectoryQueue.shared.tryAcquire(key) else { throw AutomaticFetchError.skipped("Related repository busy. Check deferred.") }
+      } else { try await CommonDirectoryQueue.shared.acquire(key) }
       do {
         try Task.checkCancellation()
         let result = try await action()

@@ -25,7 +25,8 @@ import UserNotifications
   @Published var notice: String?
   lazy var updates = UpdateManager(store: self)
   lazy var workspace = WorkspaceModel(store: self)
-  var hasRunningGitOperations: Bool { cloning || workspace.fetching || models.values.contains { $0.busy || $0.committing } }
+  var hasRunningGitOperations: Bool { hasBlockingGitOperations || workspace.automaticallyFetching }
+  var hasBlockingGitOperations: Bool { cloning || workspace.manuallyFetching || models.values.contains { $0.busy || $0.committing } }
   let cloneActivity = OperationProgress()
   @Published var cloning = false
   @Published var cloneTask: Task<Void, Never>?
@@ -181,6 +182,7 @@ import UserNotifications
     }
     save()
     workspace.configureWatchers()
+    workspace.remoteSettingsChanged()
     for model in models.values {
       if previous.gitPath != settings.gitPath
         || previous.defaultCredentialID != settings.defaultCredentialID
@@ -237,6 +239,7 @@ import UserNotifications
   }
   func refreshDashboard() async { await workspace.refresh() }
   func refreshVisibleRepositories() async {
+    workspace.requestRemoteEvaluation()
     if showDashboard {
       await workspace.refresh()
     } else {
@@ -251,6 +254,7 @@ import UserNotifications
   func select(_ id: UUID) {
     selectedID = id
     showDashboard = false
+    workspace.requestRemoteEvaluation()
     guard let model = models[id] else { return }
     model.setPage("commit")
     model.record.lastOpened = Date()
@@ -454,6 +458,7 @@ struct DiffTab: Identifiable, Equatable {
   @Published var busy = false {
     didSet {
       if busy != oldValue {
+        if !busy { applyPendingRemoteSnapshot() }
         store.objectWillChange.send()
         store.workspace.invalidate(record.id, collect: !busy)
       }
@@ -471,6 +476,7 @@ struct DiffTab: Identifiable, Equatable {
   @Published private(set) var conflictPush: PushRejection?
   private var pendingMergeReview: (MergeReview, Bool)?
   lazy var conflictEditor = ConflictEditorModel(repository: self)
+  @Published private(set) var networkFetching = false
   @Published var needsUpstream = false
   @Published var lastCommit: String?
   @Published var amend = false
@@ -501,6 +507,8 @@ struct DiffTab: Identifiable, Equatable {
   private var watcher: RepositoryWatcher?
   private var refreshTask: Task<Void, Never>?
   private var refreshGeneration = 0
+  private var trackingReadUptime: TimeInterval = 0
+  private var pendingRemoteSnapshot: WorkspaceSnapshot?
   private var activationTask: Task<Void, Never>?
   private var activationRefreshRequested = false
   private(set) var refreshCount = 0
@@ -556,7 +564,7 @@ struct DiffTab: Identifiable, Equatable {
     service = new
     return new
   }
-  @discardableResult func configure() async -> Bool {
+  @discardableResult func configure(reportErrors: Bool = true) async -> Bool {
     do {
       let id =
         record.credentialID
@@ -570,7 +578,7 @@ struct DiffTab: Identifiable, Equatable {
         authEnvironment: auth.environment)
       terminal.configure(authentication: auth)
       return true
-    } catch { self.error = error.localizedDescription; return false }
+    } catch { if reportErrors { self.error = error.localizedDescription }; return false }
   }
   func activate(refresh: Bool = false) async {
     activationRefreshRequested = activationRefreshRequested || refresh
@@ -628,15 +636,35 @@ struct DiffTab: Identifiable, Equatable {
     guard generation == refreshGeneration else { return }
     refreshTask = nil
     refreshing = false
+    applyPendingRemoteSnapshot()
     if let progressTicket {
       activity.finish(available ? .succeeded : .failed, ticket: progressTicket)
     }
+  }
+  func applyRemoteSnapshot(_ value: WorkspaceSnapshot) {
+    guard value.repositoryID == record.id, value.path == record.path else { return }
+    if busy || refreshing {
+      if value.collectedUptime >= (pendingRemoteSnapshot?.collectedUptime ?? 0) { pendingRemoteSnapshot = value }
+      return
+    }
+    guard available, value.branch == status.branch, value.head == status.head, value.upstream == status.upstream,
+      value.collectedUptime >= trackingReadUptime else { return }
+    trackingReadUptime = value.collectedUptime
+    if status.ahead != value.ahead || status.behind != value.behind || status.upstreamComparable != value.upstreamComparable {
+      var updated = status; updated.ahead = value.ahead; updated.behind = value.behind
+      updated.upstreamComparable = value.upstreamComparable; status = updated
+    }
+  }
+  private func applyPendingRemoteSnapshot() {
+    guard !busy, !refreshing, let pending = pendingRemoteSnapshot else { return }
+    pendingRemoteSnapshot = nil; applyRemoteSnapshot(pending)
   }
   private func performRefresh() async {
     refreshCount += 1
     do {
       let git = await git()
       let new = try await git.status()
+      trackingReadUptime = ProcessInfo.processInfo.systemUptime
       let snap =
         new.files.contains(where: \.isConflicted) ? nil : try await git.snapshot(status: new)
       let previousSnapshot = snapshot
@@ -690,7 +718,10 @@ struct DiffTab: Identifiable, Equatable {
       let newBranches = try await git.branches()
       if branches != newBranches { branches = newBranches }
       let newRemotes = try await git.remotes()
-      if remotes != newRemotes { remotes = newRemotes }
+      if remotes != newRemotes {
+        remotes = newRemotes
+        if !busy { store.workspace.invalidate(record.id, collect: true) }
+      }
       if page == "history" {
         await loadHistory(reset: true)
       } else {
@@ -985,6 +1016,7 @@ struct DiffTab: Identifiable, Equatable {
           confirmMergeContinuation(review, push: push)
         }
       }
+      await store.workspace.beginManualOperation()
       // Finish any older read before writing, so the refresh after this action reads its result.
       if let refreshTask { await refreshTask.value }
       var result = OperationResult.succeeded
@@ -1011,6 +1043,7 @@ struct DiffTab: Identifiable, Equatable {
         if output != nil { outputResult = .needsAttention }
         self.error = localizedUI(error.localizedDescription)
       }
+      await store.workspace.endManualOperation()
       activity.advance(store.text("Refreshing", "刷新仓库"), cancellable: false)
       await refresh()
       if !hadConflicts, status.files.contains(where: \.isConflicted) {
@@ -1149,11 +1182,34 @@ struct DiffTab: Identifiable, Equatable {
         : store.text("Fetch completed.", "获取已完成。")
     run(label: title, completion: completed, notify: true) { [weak self] git in
       guard let self else { return }
+      networkFetching = operation == "fetch"
+      defer { networkFetching = false }
       let progress = activity.receiver()
+      var targets: [WorkspaceFetchTarget] = []
+      var initialReferences: [String: String] = [:]
+      if operation == "fetch" {
+        targets = (try? await git.reviewWorkspaceFetch(record)) ?? []
+        if let remote { targets = targets.filter { $0.remote.name == remote } }
+        targets = await git.confirmedManualFetchTargets(targets, all: remote == nil)
+        await store.workspace.recordManualFetchStarted(targets)
+        for target in targets { initialReferences[target.id] = try? await git.trackingReferenceIdentity(target.remote.name) }
+      }
       do {
         output = try await git.network(
           operation, remote: remote, branch: branch, strategy: store.settings.pullStrategy,
           forceWithLease: force, forceReview: forceReview, progress: progress)
+        if operation == "fetch" {
+          let confirmed = await git.confirmedManualFetchTargets(targets, all: remote == nil)
+          var updated: Set<String> = []
+          for target in confirmed {
+            if let before = initialReferences[target.id], let after = try? await git.trackingReferenceIdentity(target.remote.name), before != after {
+              updated.insert(target.id)
+            }
+          }
+          await store.workspace.recordManualFetch(confirmed, updated: updated)
+          let rejected = targets.filter { target in !confirmed.contains(where: { $0.id == target.id }) }
+          await store.workspace.recordManualFetch(rejected, error: AutomaticFetchError.skipped("Remote configuration changed during Fetch."))
+        }
         if operation == "push" {
           pushFailed = false
           rejectedPush = nil
@@ -1165,6 +1221,7 @@ struct DiffTab: Identifiable, Equatable {
           "Push rejected because the remote has commits to merge. Your local commits are preserved.",
           "远程有尚未合并的提交，推送被拒绝。本地提交已保留。")
       } catch {
+        if operation == "fetch" { await store.workspace.recordManualFetch(targets, error: error) }
         if operation == "push" {
           pushFailed = true
           rejectedPush = nil

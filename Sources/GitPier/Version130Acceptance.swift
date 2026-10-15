@@ -205,7 +205,7 @@ extension UIAcceptance {
     func find(_ item: Any, depth: Int = 0) -> NSObject? {
       guard depth < 80, let item = item as? NSObject,
         visited.insert(ObjectIdentifier(item)).inserted else { return nil }
-      if value(item, "accessibilityRole") as? String == "AXButton",
+      if ["AXButton", "AXCheckBox"].contains(value(item, "accessibilityRole") as? String ?? ""),
         value(item, "accessibilityLabel") as? String == title {
         let selector = NSSelectorFromString("isAccessibilityEnabled")
         if let enabled, item.responds(to: selector) {

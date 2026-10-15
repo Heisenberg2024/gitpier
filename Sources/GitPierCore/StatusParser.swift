@@ -24,9 +24,9 @@ public enum StatusParser {
           }
           if header.hasPrefix("# branch.ab ") {
             let counts = header.dropFirst(12).split(separator: " ")
-            if counts.count == 2 {
-              status.ahead = Int(counts[0].dropFirst()) ?? 0
-              status.behind = Int(counts[1].dropFirst()) ?? 0
+            if counts.count == 2, counts[0].hasPrefix("+"), counts[1].hasPrefix("-"),
+              let ahead = Int(counts[0].dropFirst()), let behind = Int(counts[1].dropFirst()), ahead >= 0, behind >= 0 {
+              status.ahead = ahead; status.behind = behind; status.upstreamComparable = true
             }
           }
         }

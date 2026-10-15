@@ -81,7 +81,7 @@ extension UIAcceptance {
     try pressNativeButton(host, title: store.text("Favorites", "收藏") + " 1")
     try await waitFor { store.workspace.filters == [.favorites] }
     try pressNativeButton(host, title: store.text("All", "全部")); try await waitFor { store.workspace.filters.isEmpty }
-    try pressNativeButton(host, title: store.text("Select Matches", "选择匹配项")); try await waitFor { store.workspace.selected.count == 4 }
+    try pressNativeButton(host, title: store.text("Select Matching", "选择匹配项")); try await waitFor { store.workspace.selected.count == 4 }
     try pressNativeButton(host, title: store.text("Fetch Selected…", "获取已选仓库…"))
     try await waitFor { window.attachedSheet != nil && !store.workspace.preparingFetch }
     guard store.workspace.fetchTargets.count == 1, store.workspace.fetchTargets[0].repositoryIDs.count == 2,

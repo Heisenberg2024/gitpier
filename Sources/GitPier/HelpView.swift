@@ -72,6 +72,14 @@ struct HelpView: View {
             "在“设置 → 凭证”添加 HTTPS Token 或 SSH 配置，并在仓库设置中选择。Token 保存在 macOS Keychain 中。既有 Git 凭证助手、Hooks 和签名仍有效；GitPier 不会自动修改全局 Git 或 SSH 配置。"
           )
         }
+        section("Remote Checks", "远程检查", symbol: "arrow.triangle.2.circlepath") {
+          paragraph("Settings → Git → Automatic Remote Checks is off by default. Enabling connects to configured remotes while GitPier is active: current repository every 15 minutes (10/30/60 available), other workspace repositories about 45 minutes, with at most two Fetches. Limit the scope or exclude a repository as needed. Local watching remains independent.",
+            "“设置 → Git → 自动远程检查”默认关闭。启用后仅在 GitPier 活动期间连接远程，当前仓库默认15分钟（可选10/30/60），其他仓库约45分钟，最多两并发。可限制范围或排除仓库，与本地监听独立。")
+          paragraph("Checks update upstream tracking references only, preserve your files and Index, and never merge, push, prune or fetch tags. Failures back off; authentication may require manual Fetch. Tooltips distinguish the last local scan from the last successful remote check. Pull/Push counts describe local tracking references and warn when branches diverge.",
+            "检查仅更新上游跟踪引用，保留工作文件与Index，不自动合并、推送、清理或获取标签。失败后退避，认证可能需要手动获取。Tooltip区分本地扫描和成功远程检查时间；Pull/Push数量依据本地跟踪引用，并提示分支分叉。")
+          paragraph("The Dashboard header checkbox selects all matching repositories, including collapsed Worktrees. Mixed selection becomes all on click. Confirmed Fetch clears accepted selections; cancellation and unsubmitted targets retain them. Automatic checks preserve your selection and browsing state.",
+            "Dashboard表头复选框选择全部匹配仓库，包括折叠Worktree；部分选中时点击变为全选。确认获取后清除已接受的选择，取消和未提交目标保留。自动检查保留选择与浏览状态。")
+        }
         section("Keyboard Shortcuts", "键盘快捷键", symbol: "keyboard") {
           shortcut("⌘O", "Open repository", "打开仓库")
           shortcut("⌘R", "Refresh current repository", "刷新当前仓库")

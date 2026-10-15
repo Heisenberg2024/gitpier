@@ -32,6 +32,7 @@ private struct WorkspaceDashboard: View {
       .frame(maxWidth: 1368, maxHeight: .infinity)
       .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
     }.background(Theme.sidebar(scheme))
+      .onAppear { workspace.requestRemoteEvaluation() }
   }
 
   private func header(compact: Bool) -> some View {
@@ -175,12 +176,24 @@ private struct WorkspaceDashboard: View {
   private func repositoryList(_ listing: WorkspaceListing, columns: DashboardColumns) -> some View {
     VStack(spacing: 0) {
       HStack {
+        let count = workspace.selected.intersection(listing.matchingIDs).count
+        StagingCheckbox(state: count == 0 ? .off : count == listing.matchingIDs.count ? .on : .mixed,
+          enabled: !listing.matchingIDs.isEmpty, accessibilityLabel: store.text("Select Matching", "选择匹配项")) {
+          toggleMatching(listing.matchingIDs)
+        }.frame(width: 18).accessibilityRepresentation {
+          Toggle(store.text("Select Matching", "选择匹配项"), isOn: Binding(
+            get: { !listing.matchingIDs.isEmpty && listing.matchingIDs.isSubset(of: workspace.selected) },
+            set: { _ in toggleMatching(listing.matchingIDs) }))
+            .toggleStyle(.checkbox).disabled(listing.matchingIDs.isEmpty)
+            .accessibilityValue(count == 0 ? store.text("Off", "未选")
+              : count == listing.matchingIDs.count ? store.text("On", "全选") : store.text("Mixed", "部分选中"))
+        }
+        Button(store.text("Select Matching", "选择匹配项")) { toggleMatching(listing.matchingIDs) }
+          .buttonStyle(.plain).disabled(listing.matchingIDs.isEmpty).accessibilityHidden(true)
         Text(store.text("Repositories", "仓库列表")).fontWeight(.semibold)
         Text("\(listing.matching.count)").monospacedDigit().foregroundStyle(.secondary)
         if workspace.filters.count > 1 { Text(store.text("· Match all filters", "· 同时满足所选筛选")).foregroundStyle(.secondary) }
         Spacer()
-        Button(store.text("Select Matches", "选择匹配项")) { workspace.selected.formUnion(listing.matchingIDs) }
-          .buttonStyle(.borderless).disabled(listing.matching.isEmpty)
       }.font(uiFont(size: 12)).padding(.horizontal, 16).frame(height: 40)
       Divider()
       if !workspace.fetchJobs.isEmpty {
@@ -220,6 +233,10 @@ private struct WorkspaceDashboard: View {
     }.background(Theme.editor(scheme), in: RoundedRectangle(cornerRadius: 10))
       .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.primary.opacity(0.08)))
       .clipShape(RoundedRectangle(cornerRadius: 10))
+  }
+  private func toggleMatching(_ ids: Set<UUID>) {
+    if ids.isSubset(of: workspace.selected) { workspace.selected.subtract(ids) }
+    else { workspace.selected.formUnion(ids) }
   }
   private func columnHeadings(_ columns: DashboardColumns) -> some View {
     HStack(spacing: 14) {

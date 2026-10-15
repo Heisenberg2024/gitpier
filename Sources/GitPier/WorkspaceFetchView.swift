@@ -7,7 +7,7 @@ struct WorkspaceFetchPresentation: ViewModifier {
   func body(content: Content) -> some View {
     content.sheet(isPresented: Binding(get: { workspace.showFetchReview }, set: {
       if !$0 { workspace.cancelFetchReview() }
-    })) { WorkspaceFetchReview(workspace: workspace).environmentObject(store) }
+    })) { WorkspaceFetchReview(workspace: workspace).environmentObject(store).interactiveDismissDisabled(workspace.submittingFetch) }
   }
 }
 
@@ -35,10 +35,10 @@ struct WorkspaceFetchReview: View {
       }
       HStack {
         Spacer()
-        Button(store.text("Cancel", "取消")) { workspace.cancelFetchReview() }.keyboardShortcut(.cancelAction)
+        Button(store.text("Cancel", "取消")) { workspace.cancelFetchReview() }.disabled(workspace.submittingFetch).keyboardShortcut(.cancelAction)
           .keyboardShortcut(.defaultAction)
         Button(store.text("Fetch", "获取")) { workspace.startReviewedFetch() }
-          .disabled(workspace.preparingFetch || workspace.fetchTargets.isEmpty)
+          .disabled(workspace.preparingFetch || workspace.submittingFetch || workspace.fetchTargets.isEmpty)
       }
     }.padding(24).frame(width: 650, height: 470)
   }
@@ -52,13 +52,13 @@ struct WorkspaceFetchTray: View {
     VStack(alignment: .leading, spacing: 8) {
       HStack {
         Button { expanded.toggle() } label: { Image(systemName: expanded ? "chevron.down" : "chevron.right") }.buttonStyle(.plain)
-        if workspace.fetching { ProgressView().controlSize(.mini) }
+        if workspace.manuallyFetching { ProgressView().controlSize(.mini) }
         Text(summary)
         Spacer()
         if workspace.fetchJobs.contains(where: { $0.state == .failed }) {
           Button(store.text("Review Failed…", "审查失败项…")) { workspace.retryFailedFetch() }
         }
-        if workspace.fetching { Button(store.text("Cancel Fetch", "取消获取")) { workspace.cancelFetch() } }
+        if workspace.manuallyFetching { Button(store.text("Cancel Fetch", "取消获取")) { workspace.cancelFetch() } }
       }
       if expanded {
         ScrollView {
@@ -67,7 +67,7 @@ struct WorkspaceFetchTray: View {
               HStack(alignment: .top) {
                 Text(job.target.record.name + " · " + job.target.remote.name)
                 Text(stateName(job.state)).foregroundStyle(job.state == .failed ? .orange : .secondary)
-                if !job.summary.isEmpty { Text(job.summary).lineLimit(3).textSelection(.enabled) }
+                if !job.summary.isEmpty { Text(job.summary).lineLimit(3).textSelection(.enabled).help(job.summary) }
                 Spacer()
                 if job.state == .failed { Button(store.text("Retry…", "重试…")) { workspace.prepareFetch(job.target.repositoryIDs) } }
               }
@@ -75,13 +75,16 @@ struct WorkspaceFetchTray: View {
           }
         }.frame(maxHeight: 105)
       }
-    }.font(uiFont(size: 11)).padding(.horizontal, 24).padding(.bottom, 12)
+    }.font(uiFont(size: 11)).padding(.horizontal, 24).padding(.bottom, workspace.fetchTrayExpanded ? 12 : 4)
+      .onChange(of: workspace.fetchTrayExpanded) { _, value in if !value { expanded = false } }
+      .onChange(of: expanded) { _, value in if value { workspace.revealFetchTray() } }
   }
   var summary: String {
     let success = workspace.fetchJobs.filter { $0.state == .succeeded }.count
     let failed = workspace.fetchJobs.filter { $0.state == .failed }.count
     let cancelled = workspace.fetchJobs.filter { $0.state == .cancelled }.count
     let active = workspace.fetchJobs.filter(\.active).count
+    if !workspace.fetchTrayExpanded { return store.text("Last Fetch · \(success) succeeded · Show details", "上次获取 · \(success) 成功 · 展开详情") }
     return store.text("Fetch · \(success) succeeded · \(failed) failed · \(cancelled) cancelled · \(active) pending",
       "获取 · \(success) 成功 · \(failed) 失败 · \(cancelled) 取消 · \(active) 待完成")
   }

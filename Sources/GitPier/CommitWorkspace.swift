@@ -228,28 +228,7 @@ struct RepositoryWorkspace: View {
         Image(systemName: "ellipsis")
       }.menuStyle(.borderlessButton).frame(width: 22)
       Spacer(minLength: 5)
-      HStack(spacing: 14) {
-        Button {
-          model.network("fetch")
-        } label: {
-          Label(store.text("Fetch", "获取"), systemImage: "arrow.down.to.line")
-        }
-        Button {
-          model.network("pull")
-        } label: {
-          Label(store.text("Pull", "拉取"), systemImage: "arrow.down")
-        }
-        Button {
-          if model.status.upstream == nil {
-            model.needsUpstream = true
-          } else {
-            model.network("push")
-          }
-        } label: {
-          Label(store.text("Push", "推送"), systemImage: "arrow.up")
-        }.disabled(
-          model.status.operation != nil || model.status.files.contains(where: \.isConflicted))
-      }.font(uiFont(size: 11)).buttonStyle(.plain).disabled(model.busy || !model.available)
+      RepositoryNetworkToolbar(model: model, workspace: store.workspace)
       IconButton("arrow.clockwise", help: store.text("Refresh (⌘R)", "刷新 (⌘R)")) {
         Task { await model.refresh() }
       }
@@ -713,6 +692,7 @@ struct ChangesPanel: View {
 struct StagingCheckbox: NSViewRepresentable {
   var state: NSControl.StateValue
   var enabled: Bool
+  var accessibilityLabel = "Include changes in commit"
   var action: () -> Void
   func makeCoordinator() -> Coordinator { Coordinator(action) }
   func makeNSView(context: Context) -> NSButton {
@@ -720,12 +700,13 @@ struct StagingCheckbox: NSViewRepresentable {
       checkboxWithTitle: "", target: context.coordinator, action: #selector(Coordinator.click))
     button.allowsMixedState = true
     button.controlSize = .small
-    button.setAccessibilityLabel("Include changes in commit")
+    button.setAccessibilityLabel(accessibilityLabel)
     return button
   }
   func updateNSView(_ button: NSButton, context: Context) {
     button.state = state
     button.isEnabled = enabled
+    button.setAccessibilityLabel(accessibilityLabel)
     context.coordinator.action = action
   }
   final class Coordinator: NSObject {

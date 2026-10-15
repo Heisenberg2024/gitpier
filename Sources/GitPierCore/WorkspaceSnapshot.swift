@@ -7,6 +7,7 @@ public struct WorkspaceSnapshot: Equatable, Sendable {
   public let branch: String
   public let head: String?
   public let upstream: String?
+  public let upstreamComparable: Bool
   public let ahead: Int
   public let behind: Int
   public let tracked: Int
@@ -18,17 +19,21 @@ public struct WorkspaceSnapshot: Equatable, Sendable {
   public let commonDirectory: String
   public let remoteNames: [String]
   public let collectedAt: Date
+  public let collectedUptime: TimeInterval
+  public let remoteTarget: WorkspaceFetchTarget?
   public var detached: Bool { branch == "(detached)" }
   public var isWorktree: Bool { gitDirectory != commonDirectory }
   public var modified: Bool { tracked + untracked > 0 }
   public init(record: RepositoryRecord, status: RepositoryStatus, gitDirectory: String,
-              commonDirectory: String, remoteNames: [String] = [], collectedAt: Date = Date()) {
+              commonDirectory: String, remoteNames: [String] = [], collectedAt: Date = Date(), remoteTarget: WorkspaceFetchTarget? = nil,
+              collectedUptime: TimeInterval = ProcessInfo.processInfo.systemUptime) {
+    self.remoteTarget = remoteTarget
     repositoryID = record.id; path = record.path; branch = status.branch; head = status.head
-    upstream = status.upstream; ahead = status.ahead; behind = status.behind
+    upstream = status.upstream; upstreamComparable = status.upstreamComparable; ahead = status.ahead; behind = status.behind
     tracked = status.tracked.count; untracked = status.untracked.count
     staged = status.staged.count; conflicts = status.files.filter(\.isConflicted).count
     operation = status.operation; self.gitDirectory = gitDirectory
-    self.commonDirectory = commonDirectory; self.remoteNames = remoteNames; self.collectedAt = collectedAt
+    self.commonDirectory = commonDirectory; self.remoteNames = remoteNames; self.collectedAt = collectedAt; self.collectedUptime = collectedUptime
   }
 }
 

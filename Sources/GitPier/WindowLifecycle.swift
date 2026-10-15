@@ -42,7 +42,11 @@ struct WindowLifecycle: NSViewRepresentable {
   override nonisolated func forwardingTarget(for selector: Selector!) -> Any? { original }
   func windowShouldClose(_ sender: NSWindow) -> Bool {
     if store.managedWindows.count <= 1 {
-      if store.hasRunningGitOperations {
+      if !store.hasBlockingGitOperations, store.workspace.automaticallyFetching {
+        Task { await store.workspace.stopAutomaticChecks(); sender.performClose(nil) }
+        return false
+      }
+      if store.hasBlockingGitOperations {
         let alert = NSAlert()
         alert.messageText = store.text("A Git operation is running", "Git 操作正在运行")
         alert.informativeText = store.text(

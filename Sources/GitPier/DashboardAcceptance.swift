@@ -79,7 +79,7 @@ extension UIAcceptance {
           let label = "dashboard-\(language.rawValue)-\(appearance.rawValue)-\(Int(size.width))x\(Int(size.height))"
           try capture(host, to: output.appendingPathComponent(label + ".png"))
           guard accessibleButton(host, title: store.text("Refresh Local Status", "刷新本地状态"), enabled: true) != nil,
-            accessibleButton(host, title: store.text("Select Matches", "选择匹配项"), enabled: true) != nil else {
+            accessibleButton(host, title: store.text("Select Matching", "选择匹配项"), enabled: true) != nil else {
             throw GitPierError.invalidInput("Dashboard actions clipped or inaccessible at " + label)
           }
         }
@@ -93,7 +93,7 @@ extension UIAcceptance {
     try await waitFor { store.workspace.filters == [.modified] }
     try pressNativeButton(host, title: "Conflicts 1")
     try await waitFor { store.workspace.filters == [.modified, .conflicts] }
-    try pressNativeButton(host, title: "Select Matches")
+    try pressNativeButton(host, title: "Select Matching")
     try await waitFor { store.workspace.selected == [records[6].id] }
     try pressNativeButton(host, title: "All"); try await waitFor { store.workspace.filters.isEmpty }
     try pressNativeButton(host, title: "Clear Selection")
@@ -114,7 +114,7 @@ extension UIAcceptance {
     NotificationCenter.default.post(name: NSControl.textDidChangeNotification, object: field)
     try await settle()
     try pressNativeButton(host, title: "Behind 1")
-    try pressNativeButton(host, title: "Select Matches")
+    try pressNativeButton(host, title: "Select Matching")
     try await waitFor { store.workspace.selected == [records[3].id] }
     try pressNativeButton(host, title: "Clear search")
     try pressNativeButton(host, title: "All")
@@ -122,7 +122,7 @@ extension UIAcceptance {
     let disclosure = "Expand / collapse related worktrees atlas-app"
     try pressNativeButton(host, title: disclosure); try await settle()
     try capture(host, to: output.appendingPathComponent("dashboard-worktrees-collapsed.png"))
-    try pressNativeButton(host, title: "Select Matches")
+    try pressNativeButton(host, title: "Select Matching")
     try await waitFor { store.workspace.selected.count == 8 }
     guard store.showDashboard else { throw GitPierError.invalidInput("Disclosure or selection opened a repository") }
     try capture(host, to: output.appendingPathComponent("dashboard-selection.png"))
@@ -186,7 +186,7 @@ extension UIAcceptance {
       try "visible fixture ready\n".write(to: output.appendingPathComponent("gui-ready"), atomically: true, encoding: .utf8)
       while !FileManager.default.fileExists(atPath: output.appendingPathComponent("finish-gui").path) { try await Task.sleep(for: .milliseconds(250)) }
     }
-    try "Real 8-entry fixture; 20 visible language/theme/size layouts; KPI AND filters; native Select Matches/Clear; collapse preserves all 8 selected entries; Fetch review and cancellation/deduplication; errors; rapid filters; empty recovery; local refresh/manual identity/drafts; real scanning; System appearance passed.\n"
+    try "Real 8-entry fixture; 20 visible language/theme/size layouts; KPI AND filters; native Select Matching/Clear; collapse preserves all 8 selected entries; Fetch review and cancellation/deduplication; errors; rapid filters; empty recovery; local refresh/manual identity/drafts; real scanning; System appearance passed.\n"
       .write(to: output.appendingPathComponent("dashboard-results.txt"), atomically: true, encoding: .utf8)
   }
 

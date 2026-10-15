@@ -36,6 +36,7 @@ public struct RepositoryStatus: Equatable, Sendable {
   public var branch = ""
   public var head: String?
   public var upstream: String?
+  public var upstreamComparable = false
   public var ahead = 0
   public var behind = 0
   public var operation: GitOperation?
@@ -223,6 +224,10 @@ public struct AppSettings: Codable, Equatable, Sendable {
   public var unifiedDiff = false
   public var automaticRefresh = false
   public var refreshPolicyVersion = 1
+  public var automaticFetch = false
+  public var remoteCheckIntervalMinutes = 15
+  public var remoteCheckScope = "workspace"
+  public var remoteCheckExcludedRepositories: Set<UUID> = []
   public var compactUI = true
   public var uiFont = ""
   public var repositoryFont = ""
@@ -294,6 +299,12 @@ public struct AppSettings: Codable, Equatable, Sendable {
     editorPath = try values.decodeIfPresent(String.self, forKey: .editorPath) ?? editorPath
     customEditorPaths = try values.decodeIfPresent([String].self, forKey: .customEditorPaths) ?? []
     pullStrategy = try values.decodeIfPresent(String.self, forKey: .pullStrategy) ?? pullStrategy
+    automaticFetch = try values.decodeIfPresent(Bool.self, forKey: .automaticFetch) ?? false
+    let minutes = try values.decodeIfPresent(Int.self, forKey: .remoteCheckIntervalMinutes) ?? 15
+    remoteCheckIntervalMinutes = RemoteCheckPolicy.intervals.contains(minutes) ? minutes : 15
+    let scope = try values.decodeIfPresent(String.self, forKey: .remoteCheckScope) ?? "workspace"
+    remoteCheckScope = ["current", "workspace"].contains(scope) ? scope : "current"
+    remoteCheckExcludedRepositories = try values.decodeIfPresent(Set<UUID>.self, forKey: .remoteCheckExcludedRepositories) ?? []
     defaultCredentialID = try values.decodeIfPresent(UUID.self, forKey: .defaultCredentialID)
   }
 }

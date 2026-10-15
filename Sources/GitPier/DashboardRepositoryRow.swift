@@ -115,19 +115,7 @@ struct DashboardRepositoryRow: View {
       "\(value.tracked + value.untracked) 项修改，\(value.staged) 项暂存，\(value.conflicts) 个冲突，领先 \(value.ahead)，落后 \(value.behind)")
   }
   private var sync: some View {
-    VStack(alignment: .leading, spacing: 4) {
-      if let value = entry.usable {
-        if value.upstream == nil { Text(store.text("No upstream", "无上游")) }
-        else if value.ahead == 0 && value.behind == 0 { Text(store.text("Up to date", "已同步")) }
-        else {
-          HStack(spacing: 8) {
-            if value.ahead > 0 { Text("↑\(value.ahead)").foregroundStyle(Color.accentColor) }
-            if value.behind > 0 { Text("↓\(value.behind)").foregroundStyle(.orange) }
-          }.monospacedDigit()
-        }
-      } else { Text("—") }
-    }.font(uiFont(size: 12)).foregroundStyle(.secondary)
-      .help(store.text("Local remote-tracking references; use Fetch to update.", "本地远程跟踪引用，使用获取更新。"))
+    RepositorySyncStatus(entry: entry, workspace: store.workspace)
   }
   @ViewBuilder private var collection: some View {
     switch entry.state {

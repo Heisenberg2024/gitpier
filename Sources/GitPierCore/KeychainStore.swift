@@ -24,8 +24,9 @@ public struct KeychainStore: Sendable {
       throw GitPierError.configuration("Keychain save failed (\(status)).")
     }
   }
-  public func read(id: UUID) throws -> String? {
+  public func read(id: UUID, allowInteraction: Bool = true) throws -> String? {
     var q = query(id)
+    if !allowInteraction { q[kSecUseAuthenticationUI as String] = kSecUseAuthenticationUIFail }
     q[kSecReturnData as String] = true
     q[kSecMatchLimit as String] = kSecMatchLimitOne
     var value: CFTypeRef?
@@ -35,6 +36,31 @@ public struct KeychainStore: Sendable {
       throw GitPierError.configuration("Keychain lookup failed (\(status)).")
     }
     return String(data: data, encoding: .utf8)
+  }
+  /// Read an existing macOS internet credential without unlocking or authorization UI.
+  public static func internetResponse(request: String) -> String? {
+    var fields: [String: String] = [:]
+    for line in request.split(separator: "\n") {
+      let parts = line.split(separator: "=", maxSplits: 1).map(String.init)
+      if parts.count == 2 { fields[parts[0]] = parts[1] }
+    }
+    guard fields["protocol"] == "https", let host = fields["host"], !host.contains("\r") else { return nil }
+    let components = URLComponents(string: "https://" + host)
+    guard let server = components?.host else { return nil }
+    var query: [String: Any] = [kSecClass as String: kSecClassInternetPassword,
+      kSecAttrServer as String: server, kSecAttrProtocol as String: kSecAttrProtocolHTTPS,
+      kSecAttrAuthenticationType as String: kSecAttrAuthenticationTypeDefault,
+      kSecAttrPort as String: components?.port ?? 0,
+      kSecUseAuthenticationUI as String: kSecUseAuthenticationUIFail,
+      kSecReturnData as String: true, kSecReturnAttributes as String: true, kSecMatchLimit as String: kSecMatchLimitOne]
+    if let user = fields["username"] { query[kSecAttrAccount as String] = user }
+    if let path = fields["path"] { query[kSecAttrPath as String] = path }
+    var result: CFTypeRef?
+    guard SecItemCopyMatching(query as CFDictionary, &result) == errSecSuccess,
+      let values = result as? [String: Any], let data = values[kSecValueData as String] as? Data,
+      let secret = String(data: data, encoding: .utf8), let user = values[kSecAttrAccount as String] as? String,
+      !secret.contains("\n"), !secret.contains("\r"), !user.contains("\n"), !user.contains("\r") else { return nil }
+    return "username=\(user)\npassword=\(secret)\n\n"
   }
   public func delete(id: UUID) throws {
     let status = SecItemDelete(query(id) as CFDictionary)
@@ -52,7 +78,7 @@ public struct AuthenticationContext: Sendable {
   ) throws -> AuthenticationContext {
     var environment = [
       "GIT_ASKPASS": executable, "SSH_ASKPASS": executable, "GITPIER_ASKPASS": "1",
-      "SSH_ASKPASS_REQUIRE": "prefer", "GITPIER_CONFIGURATION": configurationPath,
+      "SSH_ASKPASS_REQUIRE": "prefer", "GITPIER_HELPER_EXECUTABLE": executable, "GITPIER_CONFIGURATION": configurationPath,
     ]
     var arguments: [String] = []
     if let profile {

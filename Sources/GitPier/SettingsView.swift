@@ -94,6 +94,7 @@ struct SettingsView: View {
             "Author identity, hooks, signing and LFS are inherited from your Git configuration. Edit repository-specific identity in Repository Settings. Global Git and SSH files are never changed automatically.",
             "作者身份、Hooks、签名和 LFS 遵循现有 Git 配置。仓库设置可以修改仓库级身份；不会自动修改全局 Git 或 SSH 配置。")
         ).font(.callout).foregroundStyle(.secondary)
+        AutomaticRemoteCheckSettings(workspace: store.workspace)
         Button(store.text("Open Repository Settings", "打开仓库设置")) {
           store.current?.setPage("repository")
         }.disabled(store.current == nil)

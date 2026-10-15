@@ -1,6 +1,6 @@
 import Foundation
 
-public struct WorkspaceFetchTarget: Identifiable, Sendable {
+public struct WorkspaceFetchTarget: Identifiable, Equatable, Sendable {
   public var id: String { commonDirectory + "\0" + remote.name + "\0" + configurationIdentity }
   public let record: RepositoryRecord
   public var repositoryIDs: Set<UUID>
@@ -26,11 +26,25 @@ public struct WorkspaceFetchJob: Identifiable, Sendable {
   public let target: WorkspaceFetchTarget
   public var state: WorkspaceFetchState = .queued
   public var summary = ""
+  public var automatic = false
+  public var referencesUpdated = false
+  public var phase: RemoteCheckPhase = .queued
+  public var attemptID = UUID()
+  public var startedAt = Date()
+  public var startedUptime = ProcessInfo.processInfo.systemUptime
+  public var completedAt: Date?
   public var active: Bool { state == .queued || state == .running }
+  public init(target: WorkspaceFetchTarget, automatic: Bool = false) {
+    self.target = target; self.automatic = automatic
+  }
+}
+public struct WorkspaceFetchAcceptance: Sendable {
+  public let accepted: Set<String>
+  public let rejected: Set<String>
 }
 
 public actor BatchFetchCoordinator {
-  public typealias Executor = @Sendable (WorkspaceFetchTarget) async throws -> String
+  public typealias Executor = @Sendable (WorkspaceFetchTarget, Bool) async throws -> WorkspaceFetchResult
   private let executor: Executor
   public let concurrency: Int
   private var jobs: [WorkspaceFetchJob] = []
@@ -38,10 +52,24 @@ public actor BatchFetchCoordinator {
   private var subscribers: [UUID: AsyncStream<[WorkspaceFetchJob]>.Continuation] = [:]
   private var idleWaiters: [CheckedContinuation<Void, Never>] = []
   private var stopped = false
-  public init(concurrency: Int = 2, executor: @escaping Executor = { target in
+  private var manualSessions = 0
+  public init(concurrency: Int = 2, checkedExecutor: @escaping Executor = { target, automatic in
     let git = await GitServiceRegistry.shared.service(for: URL(fileURLWithPath: target.record.path))
-    return try await git.workspaceFetch(target)
-  }) { self.concurrency = max(1, min(concurrency, 3)); self.executor = executor }
+    return try await git.checkedWorkspaceFetch(target, automatic: automatic)
+  }) { self.concurrency = max(1, min(concurrency, 2)); self.executor = checkedExecutor }
+  public init(concurrency: Int = 2, executor: @escaping @Sendable (WorkspaceFetchTarget) async throws -> String) {
+    self.concurrency = max(1, min(concurrency, 2))
+    self.executor = { target, _ in WorkspaceFetchResult(output: try await executor(target)) }
+  }
+  /// User operations preempt automatic transport; cancellation waits for process exit before the
+  /// manual write enters GitService's existing FIFO. Manual batch work also pauses auto admission.
+  public func beginManualOperation() async {
+    manualSessions += 1
+    let tasks = jobs.filter { $0.automatic && $0.active }.compactMap { running[$0.id] }
+    cancel(Set(jobs.filter { $0.automatic && $0.active }.map(\.id)))
+    for task in tasks { await task.value }
+  }
+  public func endManualOperation() { manualSessions = max(0, manualSessions - 1); pump() }
   public func updates() -> AsyncStream<[WorkspaceFetchJob]> {
     let id = UUID()
     return AsyncStream(bufferingPolicy: .bufferingNewest(1)) { continuation in
@@ -54,22 +82,25 @@ public actor BatchFetchCoordinator {
   private func publish() { for subscriber in subscribers.values { subscriber.yield(jobs) } }
   public func current() -> [WorkspaceFetchJob] { jobs }
   /// Accept only reviewed targets. Repeated submissions cannot start an active target twice.
-  public func submit(_ targets: [WorkspaceFetchTarget]) {
-    guard !stopped else { return }
+  @discardableResult public func submit(_ targets: [WorkspaceFetchTarget], automatic: Bool = false) -> WorkspaceFetchAcceptance {
+    let ids = Set(targets.map(\.id))
+    guard !stopped, !Task.isCancelled, !automatic || manualSessions == 0 && !jobs.contains(where: { !$0.automatic && $0.active }) else { return WorkspaceFetchAcceptance(accepted: [], rejected: ids) }
     for target in WorkspaceFetchTarget.deduplicated(targets) {
       if let index = jobs.firstIndex(where: { $0.id == target.id }) {
         guard !jobs[index].active else { continue }
-        jobs[index] = WorkspaceFetchJob(target: target)
-      } else { jobs.append(WorkspaceFetchJob(target: target)) }
+        jobs[index] = WorkspaceFetchJob(target: target, automatic: automatic)
+      } else { jobs.append(WorkspaceFetchJob(target: target, automatic: automatic)) }
     }
     pump()
+    return WorkspaceFetchAcceptance(accepted: ids, rejected: [])
   }
   private func pump() {
-    while !stopped && running.count < concurrency, let index = jobs.firstIndex(where: { $0.state == .queued }) {
-      let target = jobs[index].target; jobs[index].state = .running
-      running[target.id] = Task { [executor] in
-        let result: Result<String, Error>
-        do { result = .success(try await WorkspaceOperationBudget.shared.perform { try await executor(target) }) }
+    while !stopped && running.count < concurrency, let index = jobs.firstIndex(where: { $0.state == .queued && !$0.automatic }) ?? jobs.firstIndex(where: { $0.state == .queued && (manualSessions == 0 || !$0.automatic) }) {
+      let target = jobs[index].target, automatic = jobs[index].automatic
+      jobs[index].state = .running; jobs[index].phase = .checking
+      running[target.id] = Task(priority: automatic ? .background : .userInitiated) { [executor] in
+        let result: Result<WorkspaceFetchResult, Error>
+        do { result = .success(try await WorkspaceOperationBudget.shared.perform { try await executor(target, automatic) }) }
         catch { result = .failure(error) }
         self.finish(target.id, result: result)
       }
@@ -79,17 +110,22 @@ public actor BatchFetchCoordinator {
       let waiters = idleWaiters; idleWaiters.removeAll(); for waiter in waiters { waiter.resume() }
     }
   }
-  private func finish(_ id: String, result: Result<String, Error>) {
+  private func finish(_ id: String, result: Result<WorkspaceFetchResult, Error>) {
     guard let task = running.removeValue(forKey: id), let index = jobs.firstIndex(where: { $0.id == id }) else { return }
     if task.isCancelled { jobs[index].state = .cancelled; jobs[index].summary = "" }
     else {
       switch result {
-      case .success: jobs[index].state = .succeeded; jobs[index].summary = ""
+      case .success(let value):
+        jobs[index].state = .succeeded; jobs[index].summary = ""
+        jobs[index].referencesUpdated = value.referencesUpdated
+        jobs[index].phase = value.referencesUpdated ? .referencesUpdated : .upToDate
       case .failure(let error):
         jobs[index].state = error is CancellationError ? .cancelled : .failed
+        jobs[index].phase = RemoteCheckPhase.forFailure(error)
         jobs[index].summary = error is CancellationError ? "" : String(GitService.redact(error.localizedDescription).prefix(2000))
       }
     }
+    jobs[index].completedAt = Date()
     pump()
   }
   public func cancel(_ ids: Set<String>? = nil) {
@@ -99,6 +135,7 @@ public actor BatchFetchCoordinator {
     }
     pump()
   }
+  public func cancelAutomatic() { cancel(Set(jobs.filter(\.automatic).map(\.id))) }
   public func waitUntilIdle() async {
     if !jobs.contains(where: \.active) { return }
     await withCheckedContinuation { idleWaiters.append($0) }

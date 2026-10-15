@@ -179,6 +179,7 @@ actor CommonDirectoryQueue {
   static let shared = CommonDirectoryQueue()
   private var held: Set<String> = []
   private var waiters: [String: [(UUID, CheckedContinuation<Void, Error>)]] = [:]
+  func tryAcquire(_ key: String) -> Bool { held.insert(key).inserted }
   func acquire(_ key: String) async throws {
     try Task.checkCancellation()
     if held.insert(key).inserted { return }

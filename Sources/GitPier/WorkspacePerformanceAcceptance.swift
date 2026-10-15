@@ -109,7 +109,7 @@ extension UIAcceptance {
       // Flush cancelled operations before measuring the next independent startup.
       try await PerformanceAcceptance.wait({ GitProcessActivity.snapshot().active == 0 })
     }
-    let report: [String: Any] = ["version": "1.4.0", "configuration": "Release when invoked with the packaged Release executable; otherwise Debug",
+    let report: [String: Any] = ["version": AppResources.version, "build": AppResources.build, "configuration": "Release when invoked with the packaged Release executable; otherwise Debug",
       "os": ProcessInfo.processInfo.operatingSystemVersionString, "cpuCount": ProcessInfo.processInfo.processorCount,
       "startupMeasurement": "Each case constructs a new AppStore with empty snapshot/session caches in a warmed native test process; excludes fixture creation and process launch.",
       "fixture": ["untrackedFiles": 10000, "commitsPerClone": 1000, "linkedWorktrees": 1],
