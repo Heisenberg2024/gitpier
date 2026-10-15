@@ -2,10 +2,12 @@
 
 ## Unreleased
 
+## 1.4.0 — 2026-10-15
+
 - Add a memory-only workspace status service with bounded/coalesced local scans, visible/manual priority, generation-based cancellation and distinct unavailable states. Dashboard starts without full repository sessions, shows scanned/total and physical-repository counts, shared status summaries/combined filters, selection and expandable linked Worktrees while preserving organization/manual order.
 - Add reviewed batch Fetch with independent persistent results, bounded execution, cancellation and reviewed retries. Revalidate repository roots, common-directory identity and remote/effective URL configuration; coordinate common metadata, deduplicate matching Worktree targets and preserve Index/worktree/FETCH_HEAD, hooks, signing and existing authentication. Make cancelled worktree/common queue waiters leave promptly. No automatic or batch Pull/Push/Reset/Rebase is added.
 - Add cancellable, debounced Workspace Search across selectable repository scopes with local metadata, controlled literal tracked-path matches and bounded native commit-message/hash pagination. Results navigate to existing Diff/file history/commit details. Add native Quick Open with recent/favorite/organization matching and arrow/Return/Escape keys; ⌘⇧P excludes terminal focus. No startup history scan, source-content index, database or upload service is introduced.
-- Advance development configuration to 1.4.0 (20), retaining macOS 14, Universal packaging and the production bundle ID, update key and feed. Correct v1.3.0's released documentation; keep its assets and Latest installation entry unchanged. Add disposable Core/native workspace acceptance and repeatable 10/50/100-entry measurements with count-only process instrumentation.
+- Release 1.4.0 (20) as a Universal DMG, retaining macOS 14 and the production bundle ID, update key and feed. Correct v1.3.0's released documentation; preserve historical assets and the canonical Latest installation entry. Add disposable Core/native workspace acceptance and repeatable 10/50/100-entry measurements with count-only process instrumentation.
 
 ## 1.3.0 — 2026-10-15
 

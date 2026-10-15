@@ -10,7 +10,7 @@ The Git actor's explicit FIFO write queue spans async suspension points. Actor i
 
 Status uses porcelain v2, branch headers and NUL-delimited UTF-8 paths. Renames consume their separate original-path record. Non-UTF-8 paths fail explicitly rather than being decoded into potentially wrong paths. Literal pathspecs and `--` separators prevent filenames from becoming Git options or pathspec expressions.
 
-## Workspace overview (Unreleased v1.4.0)
+## Workspace overview (released in v1.4.0)
 
 `WorkspaceSnapshot.swift` contains local card values; `WorkspaceStatusService` owns an in-memory cache keyed by stable repository ID, separate from `RepositoryModel` and persisted configuration. Monotonic configuration revisions reject delayed metadata reconciliations, so removed/moved entries cannot be resurrected by an older app task. Card names/groups/favorites come from the current records. Six sequential Git queries verify the working-tree root, resolve Git/common directories, read porcelain v2 counts/HEAD/upstream/local tracking refs and list remote names and inspect partial-clone configuration. Operation markers are read from the working tree's metadata. It does not construct Index trees, Diffs or history, and local queries disable Git's lazy fetch. Partial clones require Git 2.43 or later for this guarantee; older Git still supports ordinary repositories and receives a clear local-query error for partial clones. Capability checks coalesce per executable identity. Deleted nested metadata cannot silently fall back to an ancestor repository.
 
