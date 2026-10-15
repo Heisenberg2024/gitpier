@@ -7,6 +7,11 @@ import SwiftTerm
       window.attachedSheet == nil, store.current?.confirmation == nil
     else { return false }
     let modifiers = event.modifierFlags.intersection([.command, .option, .control, .shift])
+    if modifiers == [.command, .shift], event.charactersIgnoringModifiers?.lowercased() == "p",
+       !terminalFocused(window.firstResponder) {
+      store.showQuickOpen = true
+      return true
+    }
     if event.keyCode == 53, modifiers.isEmpty {
       return closeHistory(store: store, responder: window.firstResponder)
     }

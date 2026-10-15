@@ -85,6 +85,8 @@ struct GitPierApp: App {
           Button(store.text("Open Repository…", "打开仓库…")) { store.openRepository() }
             .keyboardShortcut("o")
           Button(store.text("Clone Repository…", "克隆仓库…")) { store.showClone = true }
+          Button(store.text("Quick Open (⌘⇧P)…", "快速打开 (⌘⇧P)…")) { if !terminalFocused() { store.showQuickOpen = true } }
+          Button(store.text("Workspace Search…", "工作空间搜索…")) { store.showWorkspaceSearch = true }
           Button(store.text("New Workspace Window", "新建工作空间窗口")) { openWindow(id: "workspace") }
             .keyboardShortcut("n", modifiers: [.command, .shift])
           Button(store.text("Search", "搜索")) {
@@ -93,8 +95,8 @@ struct GitPierApp: App {
           }.keyboardShortcut("f")
         }
         CommandMenu(store.text("Repository", "仓库")) {
-          Button(store.text("Refresh", "刷新")) { Task { await store.current?.refresh() } }
-            .keyboardShortcut("r").disabled(store.current == nil)
+          Button(store.text("Refresh", "刷新")) { Task { await store.refreshVisibleRepositories() } }
+            .keyboardShortcut("r")
           Divider()
           Button(localizedUI("Commit")) { store.current?.setPage("commit") }.keyboardShortcut("1")
           Button(store.text("History", "历史")) { store.current?.setPage("history") }

@@ -90,6 +90,9 @@ struct RootView: View {
     .sheet(isPresented: $store.showOrganizations) {
       OrganizationsView().environmentObject(store).frame(width: 760, height: 510)
     }
+    .sheet(isPresented: $store.showWorkspaceSearch) { WorkspaceSearchView().environmentObject(store) }
+    .sheet(isPresented: $store.showQuickOpen) { QuickOpenView().environmentObject(store) }
+    .modifier(WorkspaceFetchPresentation(workspace: store.workspace))
     .alert(store.text("Create Organization", "创建组织"), isPresented: $creatingOrganization) {
       TextField(store.text("Name", "名称"), text: $organizationName)
       Button(store.text("Create", "创建")) {
@@ -331,142 +334,6 @@ struct RootView: View {
         active ? Color.accentColor.opacity(0.14) : Color.clear
       ).clipShape(RoundedRectangle(cornerRadius: 5))
     }.buttonStyle(.workspace).padding(.horizontal, 6)
-  }
-}
-
-struct DashboardView: View {
-  @EnvironmentObject var store: AppStore
-  @Environment(\.colorScheme) var scheme
-  @State private var search = ""
-  @State private var sort = "manual"
-  var filtered: [RepositoryRecord] {
-    let records = store.repositories.filter {
-      (store.dashboardOrganization == nil || $0.group == store.dashboardOrganization)
-        && (search.isEmpty || $0.name.localizedCaseInsensitiveContains(search)
-          || $0.path.localizedCaseInsensitiveContains(search)
-          || $0.group.localizedCaseInsensitiveContains(search))
-    }
-    guard sort != "manual" else { return records }
-    return records.sorted {
-      if sort == "name" { return $0.name.localizedStandardCompare($1.name) == .orderedAscending }
-      if sort == "path" { return $0.path.localizedStandardCompare($1.path) == .orderedAscending }
-      return $0.lastOpened > $1.lastOpened
-    }
-  }
-  var body: some View {
-    VStack(alignment: .leading, spacing: 0) {
-      HStack {
-        VStack(alignment: .leading, spacing: 5) {
-          Text(
-            store.dashboardOrganization.map { $0.isEmpty ? store.text("Ungrouped", "未分组") : $0 }
-              ?? store.text("Workspace", "工作空间")
-          ).font(uiFont(size: 27, weight: .semibold))
-          Text(localizedUI("All Your Repositories. One Workspace.")).font(uiFont(size: 13))
-            .foregroundStyle(
-              .secondary)
-        }
-        Spacer()
-        Button(store.text("Organizations…", "组织管理…")) { store.showOrganizations = true }
-        Button(store.text("Refresh", "刷新")) { Task { await store.refreshDashboard() } }
-        Button(store.text("Clone…", "克隆…")) { store.showClone = true }
-        Button(store.text("Open Repository…", "打开仓库…")) {
-          store.openRepository(in: store.dashboardOrganization)
-        }.buttonStyle(
-          .borderedProminent)
-      }.padding(28)
-      HStack {
-        Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
-        TextField(store.text("Search by name, path or group", "搜索名称、路径或分组"), text: $search)
-          .textFieldStyle(.plain)
-        Spacer()
-        Picker(store.text("Sort", "排序"), selection: $sort) {
-          Text(store.text("Manual", "手动排序")).tag("manual")
-          Text(store.text("Recent", "最近使用")).tag("recent")
-          Text(store.text("Name", "名称")).tag("name")
-          Text(store.text("Path", "路径")).tag("path")
-        }.frame(width: 150)
-      }.padding(.horizontal, 28).padding(.bottom, 18)
-      Divider()
-      if filtered.isEmpty {
-        EmptyState(
-          symbol: "shippingbox", title: store.text("Your repositories, together", "汇聚你的代码仓库"),
-          detail: store.text(
-            "Open an existing Git repository or clone a remote to start reviewing and committing real changes.",
-            "打开已有 Git 仓库或克隆远程仓库，开始审查和提交真实变更。"))
-      } else {
-        ScrollView {
-          LazyVStack(spacing: 0) {
-            ForEach(filtered) { record in
-              if let model = store.models[record.id] {
-                Button {
-                  store.select(record.id)
-                } label: {
-                  RepositoryRow(model: model).frame(maxWidth: .infinity).contentShape(Rectangle())
-                }.buttonStyle(.workspace)
-                  .repositoryReordering(record) { sort = "manual" }
-                Divider().padding(.leading, 28)
-              }
-            }
-          }
-        }
-      }
-      HStack {
-        Text(
-          store.text("\(store.repositories.count) repositories", "\(store.repositories.count) 个仓库"))
-        Spacer()
-        OperationProgressView(progress: store.cloneActivity) { store.cloneTask?.cancel() }
-        Text("GitPier " + AppResources.version)
-      }.font(uiFont(size: 11)).foregroundStyle(.secondary).padding(12).background(
-        Theme.panel(scheme))
-    }.task { for model in store.models.values where !model.available { await model.activate() } }
-  }
-}
-
-struct RepositoryRow: View {
-  @ObservedObject var model: RepositoryModel
-  @EnvironmentObject var store: AppStore
-  var body: some View {
-    HStack(spacing: 16) {
-      Image(systemName: "shippingbox").font(uiFont(size: 22, weight: .light)).foregroundStyle(
-        .secondary
-      ).frame(width: 36)
-      VStack(alignment: .leading, spacing: 6) {
-        HStack {
-          Text(model.title).font(repositoryFont(sizeOffset: 3, weight: .semibold))
-          if model.record.favorite {
-            Image(systemName: "star.fill").font(uiFont(size: 9)).foregroundStyle(.yellow)
-          }
-          if !model.record.group.isEmpty { Badge(text: model.record.group) }
-        }
-        Text(model.record.path).font(uiFont(size: 11, design: .monospaced)).foregroundStyle(
-          .secondary
-        ).lineLimit(1)
-      }
-      Spacer()
-      if !model.available {
-        Badge(text: store.text("Unavailable", "不可用"), color: .orange)
-      } else {
-        Label(model.status.branch, systemImage: "arrow.triangle.branch").font(uiFont(size: 11))
-          .foregroundStyle(.secondary)
-        VStack(alignment: .trailing, spacing: 5) {
-          Text(
-            store.text(
-              "\(model.trackedCount) tracked · \(model.untrackedCount) untracked",
-              "\(model.trackedCount) 已跟踪 · \(model.untrackedCount) 未跟踪")
-          ).font(uiFont(size: 11))
-          HStack {
-            Badge(text: "\(model.stagedCount) staged", color: .mint)
-            if model.status.ahead + model.status.behind > 0 {
-              Badge(text: "↑\(model.status.ahead) ↓\(model.status.behind)")
-            }
-            if model.status.files.contains(where: \.isConflicted) {
-              Badge(text: "Conflict", color: .red)
-            }
-          }
-        }
-      }
-      Image(systemName: "chevron.right").font(uiFont(size: 10)).foregroundStyle(.tertiary)
-    }.padding(.horizontal, 28).padding(.vertical, 22).contentShape(Rectangle())
   }
 }
 

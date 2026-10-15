@@ -35,9 +35,9 @@ GitPier 将仓库管理、变更审查、提交和集成终端汇集在一个专
 
 已发布的 [v1.2.0](https://github.com/Heisenberg2024/gitpier/releases/tag/v1.2.0) 增加引用日志恢复、安全的 Worktree 生命周期管理、任意本地 / 远程跟踪分支比较及 Git Blame，复用 Git 原生查询和现有 macOS 面板。恢复优先创建新分支，比较与 Blame 保持只读；未知或存在修改的工作树目录不可删除。Blame 支持最大 4 MiB 的 UTF-8 文本，每页查询 400 行。详情见[变更记录](CHANGELOG.md)及[开发验证说明](docs/development.md)。通过 GitHub Latest Release 安装，或从 v1.1.0 使用“检查更新”升级。
 
-## 开发预览 — 尚未发布
+## 提交与仓库工作流 — v1.3.0
 
-尚未发布的 v1.3.0 源码（构建号 19）已实现交互式变基，支持经过审查的 Pick/Reword/Squash/Fixup/Drop 计划、提交顺序调整、Git 原生冲突处理和需要审查的 Continue/Skip/Abort 恢复，最多处理 200 个线性提交。Hooks、签名、部分暂存和生产更新身份继续受到保护。本地验证结果见[开发指南](docs/development.md#v130-local-validation--2026-10-15)，正式下载仍为 v1.2.0。
+已发布的 [v1.3.0](https://github.com/Heisenberg2024/gitpier/releases/tag/v1.3.0)（构建号 19）增加交互式变基，支持经过审查的 Pick/Reword/Squash/Fixup/Drop 计划、提交顺序调整、Git 原生冲突处理和需要审查的 Continue/Skip/Abort 恢复，最多处理 200 个线性提交。Hooks、签名、部分暂存和生产更新身份继续受到保护。Universal DMG 是当前正式下载，本地与发布验证结果见[开发指南](docs/development.md#v130-release-validation--2026-10-15)。
 
 菜单使用不带附加指示箭头的紧凑标签，变基操作控件与拖动图标对齐，关于页完整显示在一个设置页面。开启自动检查后，会在启动时及 Sparkle 的定时计划中检查，并提供原生更新提醒；下载和安装仍需要确认。
 
@@ -46,6 +46,14 @@ GitPier 将仓库管理、变更审查、提交和集成终端汇集在一个专
 导出文件、差异块、选中行、提交或两端提交范围补丁；应用普通 Diff 补丁前先预览并校验，工作区与 Index 是独立目标。提交邮件导出使用 format-patch；邮件导入 / git am、重命名 / 复制 / 符号链接 / gitlink 导入及二进制 delta 仍交由终端处理。导入限制为 8 MiB / 200 个文件，并限制字面量二进制数据大小。
 
 Git LFS 页面检测可选工具，展示规则 / 文件 / OID / Pointer，审查根目录 .gitattributes 修改，并通过现有凭据执行需确认的 Fetch/Pull。不安装 LFS、过滤器或 Hooks，不自动转换已有文件或暂存规则。子模块展示声明 / 登记 URL 与 HEAD / Index / 父 gitlink，支持审查后的 Init/Sync/Add、独立的记录 / 远程提交检出，并可在 GitPier、编辑器或终端打开子仓库。嵌套条目先保持只读，打开其父仓库后再管理；不提供 Deinit / 移除及自动递归更新。
+
+## 工作空间总览 — v1.4.0 尚未发布
+
+开发源码（1.4.0，构建号 20）增加本地工作空间总览，显示已扫描 / 全部数量，支持修改 / 暂存 / 领先 / 落后 / 冲突 / 不可用 / 收藏筛选、多选和关联 Worktree 展开收起。卡片使用独立内存缓存及有界后台查询；打开 Dashboard 不会读取每个仓库的 Diff 或历史。启动扫描仅查询本地。领先 / 落后依据本地跟踪引用，不代表服务器实时状态；无上游及不可用仓库明确区分。可选外部监听仍只标记需要刷新。
+
+选择单个条目、组织匹配项或全部匹配项，再通过“获取已选仓库”审查每个仓库和远程。有界获取队列对远程配置一致的关联 Worktree 去重，保留工作区、Index 和 FETCH_HEAD，并独立显示成功 / 失败 / 取消结果，失败可审查后重试。不增加批量 Pull、Push、Reset 或 Rebase。
+
+“工作空间搜索”支持名称、路径、组织、分支、远程名称，以及按需查询已跟踪文件路径和提交信息 / 哈希。范围可选全部 / 当前组织 / 当前仓库 / 已选仓库，结果打开仓库、已有 Diff / 文件历史或提交详情。Git 查询可取消、分页并限制结果及输出，不建立源码内容索引或上传到第三方。**⌘⇧P** 打开快速切换，支持最近 / 收藏仓库、组织匹配、上下方向键、回车和 Esc；终端焦点保留原有按键。单独批准正式发布前，稳定下载仍为 v1.3.0。
 
 ## 界面截图
 
@@ -66,7 +74,7 @@ Git LFS 页面检测可选工具，展示规则 / 文件 / OID / Pointer，审�
 
 GitPier 要求 **macOS 14 或更高版本**。
 
-从 [GitHub Releases](https://github.com/Heisenberg2024/gitpier/releases/latest) 下载当前正式版。v1.1.0 已正式发布，请选择最新发行版附带的通用 DMG。打开 DMG，将真实的 GitPier 图标拖入 Applications，然后从 Applications 启动。
+从 [GitHub Latest Release](https://github.com/Heisenberg2024/gitpier/releases/latest) 下载当前正式版。v1.3.0 已正式发布，请选择最新发行版附带的通用 DMG。打开 DMG，将真实的 GitPier 图标拖入 Applications，然后从 Applications 启动。
 
 v1.1.0 的内置更新采用 Sparkle 2、GitHub Releases 和 EdDSA 签名 DMG；自动检查默认关闭，下载与安装需要确认。生产公钥已配置，发行资产必须在发布前完成签名和验证。v1.0.3 没有内置更新，需要手动升级一次。
 

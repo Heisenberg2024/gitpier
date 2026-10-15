@@ -35,9 +35,9 @@ Opening or selecting a repository always shows the Commit page; the current page
 
 Released [v1.2.0](https://github.com/Heisenberg2024/gitpier/releases/tag/v1.2.0) adds Reflog recovery, guarded Worktree lifecycle management, arbitrary local/remote-tracking branch comparison, and Git Blame. These use native Git queries and the existing macOS panels; recovery defaults to a new branch, comparison/Blame are read-only, and unknown or dirty worktree directories cannot be deleted. Blame supports UTF-8 text up to 4 MiB with 400-line pages. See the [changelog](CHANGELOG.md) and [development validation](docs/development.md). Install from GitHub Latest Release or use Check for Updates from v1.1.0.
 
-## Development preview — Unreleased
+## Commit and repository workflows — v1.3.0
 
-The unreleased v1.3.0 source (build 19) implements Interactive Rebase with reviewed Pick/Reword/Squash/Fixup/Drop plans, commit reordering, native conflict handling and reviewed Continue/Skip/Abort recovery for linear histories of up to 200 commits. Hooks, signing, partial staging and the production update identity remain protected. Local validation is recorded in the [development guide](docs/development.md#v130-local-validation--2026-10-15); v1.2.0 remains the stable download.
+Released [v1.3.0](https://github.com/Heisenberg2024/gitpier/releases/tag/v1.3.0) (build 19) adds Interactive Rebase with reviewed Pick/Reword/Squash/Fixup/Drop plans, commit reordering, native conflict handling and reviewed Continue/Skip/Abort recovery for linear histories of up to 200 commits. Hooks, signing, partial staging and the production update identity remain protected. The Universal DMG is the current stable download; local and release validation are recorded in the [development guide](docs/development.md#v130-release-validation--2026-10-15).
 
 Menus use compact labels without extra disclosure indicators, Rebase action controls align with the drag glyphs, and About fits on one Settings page. Opting into automatic checks enables checks at launch and on Sparkle's regular schedule, with native update reminders; downloads and installation still require confirmation.
 
@@ -46,6 +46,14 @@ Select individual changed lines in the Diff gutter and Stage/Unstage them while 
 Export file, hunk, selected-line, commit or endpoint-range patches; preview and check ordinary Diff patches before applying them to the Working Tree or Index as distinct targets. Commit email export uses format-patch; email import/git am, rename/copy/symlink/gitlink imports and binary deltas remain terminal workflows. Import is limited to 8 MiB / 200 files, with bounded literal binary data.
 
 The Git LFS page detects the optional installed tool, shows rules/files/OIDs/pointers, reviews root .gitattributes edits and offers confirmed Fetch/Pull with existing credentials. It never installs LFS, filters or hooks, converts existing files, or stages rules automatically. Submodules show declared/registered URLs and HEAD/Index/parent gitlinks, offer reviewed Init/Sync/Add and separate recorded/remote commit checkout, and open children in GitPier, editors or terminals. Nested entries are read-only until their parent repository is opened. Deinit/removal and automatic recursive updates remain unavailable.
+
+## Workspace overview — Unreleased v1.4.0
+
+The development source (1.4.0, build 20) adds a local workspace overview with scanned/total counts, modified/staged/ahead/behind/conflict/unavailable/favorite filters, selection, and expandable related Worktrees. Cards use a separate memory cache and bounded background queries; opening Dashboard does not load every repository's Diff or history. Startup scans are local. Ahead/behind describes local tracking references, not a live server check; missing upstreams and unavailable repositories remain explicit. Optional external-change watching still marks data as needing refresh.
+
+Select individual entries, organization matches or all matches, then review **Fetch Selected** with each repository and remote. Fetch uses bounded concurrency, deduplicates related Worktrees with matching remote configurations, preserves the working tree, Index and FETCH_HEAD, and keeps independent success/failure/cancellation results with reviewed retries. No batch Pull, Push, Reset or Rebase is added.
+
+**Workspace Search** searches names, paths, organizations, branches and remote names, plus tracked file paths and commit messages/hashes on demand. Choose all/current organization/current repository/selected repositories; results open the repository, existing Diff/file history or commit detail. Git queries are cancellable and paged, with bounded results and output; no source-content index or third-party upload is used. **⌘⇧P** opens Quick Open with recent/favorite repositories and organization matching, arrow navigation, Return and Esc; terminal focus retains its keys. The stable download remains v1.3.0 until a separately approved release.
 
 ## Screenshots
 
@@ -66,7 +74,7 @@ The Git LFS page detects the optional installed tool, shows rules/files/OIDs/poi
 
 GitPier requires **macOS 14 or later**.
 
-Download the current stable version from [GitHub Releases](https://github.com/Heisenberg2024/gitpier/releases/latest). v1.1.0 is released; choose the universal DMG attached to the latest release. Open the DMG, drag the real GitPier icon to Applications, and launch GitPier from Applications.
+Download the current stable version from [GitHub Latest Release](https://github.com/Heisenberg2024/gitpier/releases/latest). v1.3.0 is released; choose the universal DMG attached to the latest release. Open the DMG, drag the real GitPier icon to Applications, and launch GitPier from Applications.
 
 The v1.1.0 updater uses Sparkle 2, GitHub Releases, and EdDSA-signed DMGs. Automatic checks default to off; downloads and installation require confirmation. The production public key is configured; release assets must be signed and verified before publication. v1.0.3 requires a one-time manual upgrade.
 

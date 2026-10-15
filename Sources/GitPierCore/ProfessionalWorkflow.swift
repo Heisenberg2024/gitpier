@@ -178,14 +178,23 @@ public enum ProfessionalWorkflowParser {
 actor CommonDirectoryQueue {
   static let shared = CommonDirectoryQueue()
   private var held: Set<String> = []
-  private var waiters: [String: [CheckedContinuation<Void, Never>]] = [:]
-  func acquire(_ key: String) async {
+  private var waiters: [String: [(UUID, CheckedContinuation<Void, Error>)]] = [:]
+  func acquire(_ key: String) async throws {
+    try Task.checkCancellation()
     if held.insert(key).inserted { return }
-    await withCheckedContinuation { waiters[key, default: []].append($0) }
+    let id = UUID()
+    try await withTaskCancellationHandler {
+      try await withCheckedThrowingContinuation { waiters[key, default: []].append((id, $0)) }
+    } onCancel: { Task { await self.cancel(key, id: id) } }
+  }
+  private func cancel(_ key: String, id: UUID) {
+    if let index = waiters[key]?.firstIndex(where: { $0.0 == id }) {
+      let waiter = waiters[key]!.remove(at: index); waiter.1.resume(throwing: CancellationError())
+    }
   }
   func release(_ key: String) {
     if var queue = waiters[key], !queue.isEmpty {
-      let next = queue.removeFirst(); waiters[key] = queue; next.resume()
+      let next = queue.removeFirst(); waiters[key] = queue; next.1.resume()
     } else { held.remove(key); waiters[key] = nil }
   }
 }

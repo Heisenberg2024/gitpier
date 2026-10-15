@@ -24,13 +24,16 @@ import UserNotifications
   @Published var error: String?
   @Published var notice: String?
   lazy var updates = UpdateManager(store: self)
-  var hasRunningGitOperations: Bool { cloning || models.values.contains { $0.busy || $0.committing } }
+  lazy var workspace = WorkspaceModel(store: self)
+  var hasRunningGitOperations: Bool { cloning || workspace.fetching || models.values.contains { $0.busy || $0.committing } }
   let cloneActivity = OperationProgress()
   @Published var cloning = false
   @Published var cloneTask: Task<Void, Never>?
   @Published var showClone = false
   @Published var showCredentials = false
   @Published var showOrganizations = false
+  @Published var showWorkspaceSearch = false
+  @Published var showQuickOpen = false
   @Published var dashboardOrganization: String?
   @Published private(set) var systemColorScheme: ColorScheme = .light
   private var pendingSave: Task<Void, Never>?
@@ -88,7 +91,8 @@ import UserNotifications
     for record in configuration.repositories {
       models[record.id] = RepositoryModel(record: record, store: self)
     }
-    if let selectedID, let model = models[selectedID] { Task { await model.activate() } }
+    workspace.start()
+    if !showDashboard, let selectedID, let model = models[selectedID] { Task { await model.activate() } }
   }
   private func configureFrameworkLanguage() {
     guard Bundle.main.bundlePath.hasSuffix(".app"),
@@ -139,6 +143,7 @@ import UserNotifications
       ? nil : NSAppearance(named: settings.appearance == .dark ? .darkAqua : .aqua)
   }
   func save() {
+    workspace.sync()
     pendingSave?.cancel()
     pendingSave = nil
     guard canSave else { return }
@@ -175,6 +180,7 @@ import UserNotifications
       updateSystemAppearance()
     }
     save()
+    workspace.configureWatchers()
     for model in models.values {
       if previous.gitPath != settings.gitPath
         || previous.defaultCredentialID != settings.defaultCredentialID
@@ -229,13 +235,10 @@ import UserNotifications
       }
     }
   }
-  func refreshDashboard() async { for model in models.values { await model.refresh() } }
+  func refreshDashboard() async { await workspace.refresh() }
   func refreshVisibleRepositories() async {
     if showDashboard {
-      for record in repositories
-      where dashboardOrganization == nil || record.group == dashboardOrganization {
-        await models[record.id]?.activate(refresh: true)
-      }
+      await workspace.refresh()
     } else {
       await current?.activate(refresh: true)
     }
@@ -402,6 +405,8 @@ import UserNotifications
     return alert
   }
   func shutdown() {
+    if let foregroundObserver { NotificationCenter.default.removeObserver(foregroundObserver); self.foregroundObserver = nil }
+    workspace.shutdown()
     for model in models.values { model.shutdown() }
     cloneTask?.cancel()
     save()
@@ -447,7 +452,12 @@ struct DiffTab: Identifiable, Equatable {
   @Published var treeMode = false
   @Published var expandedDirectories: Set<String> = []
   @Published var busy = false {
-    didSet { if busy != oldValue { store.objectWillChange.send() } }
+    didSet {
+      if busy != oldValue {
+        store.objectWillChange.send()
+        store.workspace.invalidate(record.id, collect: !busy)
+      }
+    }
   }
   @Published var committing = false
   @Published var refreshing = false
@@ -546,7 +556,7 @@ struct DiffTab: Identifiable, Equatable {
     service = new
     return new
   }
-  func configure() async {
+  @discardableResult func configure() async -> Bool {
     do {
       let id =
         record.credentialID
@@ -559,7 +569,8 @@ struct DiffTab: Identifiable, Equatable {
         gitPath: store.settings.gitPath, authArguments: auth.arguments,
         authEnvironment: auth.environment)
       terminal.configure(authentication: auth)
-    } catch { self.error = error.localizedDescription }
+      return true
+    } catch { self.error = error.localizedDescription; return false }
   }
   func activate(refresh: Bool = false) async {
     activationRefreshRequested = activationRefreshRequested || refresh
@@ -638,7 +649,10 @@ struct DiffTab: Identifiable, Equatable {
           .value
         fileGeneration += 1
       }
-      if status != new { status = new }
+      if status != new {
+        status = new
+        if !busy { store.workspace.invalidate(record.id, collect: true) }
+      }
       if let target = conflictPush, new.operation == nil, new.head == target.localHead {
         conflictPush = nil
       }
@@ -686,6 +700,7 @@ struct DiffTab: Identifiable, Equatable {
       if page == "conflicts" { conflictEditor.repositoryDidRefresh() }
     } catch is CancellationError {} catch {
       available = false
+      if !busy { store.workspace.invalidate(record.id, collect: true) }
       snapshot = nil
       self.error = error.localizedDescription
     }

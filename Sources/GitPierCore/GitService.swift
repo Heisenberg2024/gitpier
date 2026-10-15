@@ -9,7 +9,7 @@ public actor GitService {
   private var authArguments: [String] = []
   private var authEnvironment: [String: String] = [:]
   private var writeBusy = false
-  private var writeWaiters: [CheckedContinuation<Void, Never>] = []
+  private var writeWaiters: [(UUID, CheckedContinuation<Void, Error>)] = []
   // Different working-tree actors can share info/exclude. Hold only across synchronous file I/O.
   private static let localExcludeLock = NSLock()
   public init(root: URL, gitPath: String = "/usr/bin/git", runner: ProcessRunner = ProcessRunner())
@@ -25,19 +25,27 @@ public actor GitService {
     self.authArguments = authArguments
     self.authEnvironment = authEnvironment
   }
-  private func acquireWrite() async {
+  public func configureExecutable(_ path: String) { gitPath = path }
+  private func acquireWrite() async throws {
+    try Task.checkCancellation()
     if !writeBusy {
       writeBusy = true
       return
     }
-    await withCheckedContinuation { writeWaiters.append($0) }
+    let id = UUID()
+    try await withTaskCancellationHandler {
+      try await withCheckedThrowingContinuation { writeWaiters.append((id, $0)) }
+    } onCancel: { Task { await self.cancelWriteWaiter(id) } }
+  }
+  private func cancelWriteWaiter(_ id: UUID) {
+    if let index = writeWaiters.firstIndex(where: { $0.0 == id }) { writeWaiters.remove(at: index).1.resume(throwing: CancellationError()) }
   }
   private func releaseWrite() {
-    if writeWaiters.isEmpty { writeBusy = false } else { writeWaiters.removeFirst().resume() }
+    if writeWaiters.isEmpty { writeBusy = false } else { writeWaiters.removeFirst().1.resume() }
   }
   // Swift 6.0/6.1 checks the async closure's result across an isolation boundary.
   private func writing<T: Sendable>(_ operation: () async throws -> T) async throws -> T {
-    await acquireWrite()
+    try await acquireWrite()
     defer { releaseWrite() }
     try Task.checkCancellation()
     return try await operation()
@@ -110,6 +118,93 @@ public actor GitService {
       status.operation = .revert
     }
     return status
+  }
+  /// Dashboard reads only porcelain counts, local tracking refs and repository identity.
+  /// Reserve the existing worktree FIFO and common-directory queue, without touching Index.
+  public func workspaceSnapshot(_ record: RepositoryRecord) async throws -> WorkspaceSnapshot {
+    do {
+      let attributes = try FileManager.default.attributesOfItem(atPath: root.path)
+      guard attributes[.type] as? FileAttributeType == .typeDirectory else {
+        throw WorkspaceFailure(.invalidRepository, "The repository path is not a directory.")
+      }
+      guard FileManager.default.isReadableFile(atPath: root.path),
+            FileManager.default.isExecutableFile(atPath: root.path) else {
+        throw WorkspaceFailure(.permissionDenied, "Permission denied while reading the repository directory.")
+      }
+      return try await writing {
+        try await validateWorkspaceRoot()
+        let directories = try await metadataDirectories()
+        let gitDirectory = directories[0].resolvingSymlinksInPath().path
+        let common = directories.last!.resolvingSymlinksInPath().path
+        try await CommonDirectoryQueue.shared.acquire(common)
+        do {
+          try Task.checkCancellation()
+          try await requireLocalWorkspaceQueries()
+          var state = try StatusParser.parse(await read(
+            ["status", "--porcelain=v2", "-z", "--branch", "--untracked-files=all"],
+            environment: ["GIT_NO_LAZY_FETCH": "1"], limit: 16 * 1024 * 1024, timeout: 20).stdout)
+          let dir = directories[0]
+          let fm = FileManager.default
+          if fm.fileExists(atPath: dir.appendingPathComponent("rebase-merge").path)
+            || fm.fileExists(atPath: dir.appendingPathComponent("rebase-apply").path) { state.operation = .rebase }
+          else if fm.fileExists(atPath: dir.appendingPathComponent("MERGE_HEAD").path) { state.operation = .merge }
+          else if fm.fileExists(atPath: dir.appendingPathComponent("CHERRY_PICK_HEAD").path) { state.operation = .cherryPick }
+          else if fm.fileExists(atPath: dir.appendingPathComponent("REVERT_HEAD").path) { state.operation = .revert }
+          let names = try await read(["remote"], limit: 256 * 1024, timeout: 15).text
+            .split(separator: "\n").map(String.init)
+          let snapshot = WorkspaceSnapshot(record: record, status: state, gitDirectory: gitDirectory,
+            commonDirectory: common, remoteNames: names)
+          await CommonDirectoryQueue.shared.release(common)
+          return snapshot
+        } catch {
+          await CommonDirectoryQueue.shared.release(common)
+          throw error
+        }
+      }
+    } catch is CancellationError { throw CancellationError() }
+    catch let failure as WorkspaceFailure { throw failure }
+    catch {
+      let ns = error as NSError
+      if ns.domain == NSCocoaErrorDomain && (ns.code == NSFileReadNoSuchFileError || ns.code == NSFileNoSuchFileError) {
+        throw WorkspaceFailure(.missingDirectory, "The repository directory does not exist.")
+      }
+      let summary = error.localizedDescription
+      if ns.code == NSFileReadNoPermissionError || summary.localizedCaseInsensitiveContains("permission denied") {
+        throw WorkspaceFailure(.permissionDenied, summary)
+      }
+      if summary.contains("not a git repository") { throw WorkspaceFailure(.invalidRepository, summary) }
+      throw WorkspaceFailure(.gitQuery, summary)
+    }
+  }
+  private func validateWorkspaceRoot() async throws {
+    let path = try Self.nativePath(try await read(["rev-parse", "--show-toplevel"],
+      environment: ["GIT_NO_LAZY_FETCH": "1"], timeout: 15).stdout)
+    guard URL(fileURLWithPath: path).standardizedFileURL.resolvingSymlinksInPath() == root else {
+      throw WorkspaceFailure(.invalidRepository, "The registered directory is no longer a Git working-tree root.")
+    }
+  }
+  private func requireLocalWorkspaceQueries() async throws {
+    let result = try await read(["config", "--null", "--get-regexp", "^(extensions\\.partialclone|remote\\..*\\.(promisor|partialclonefilter))$"],
+      allowFailure: true, limit: 64 * 1024, timeout: 15)
+    guard result.code == 0 || result.code == 1 else { throw GitPierError.command("config", result.code, Self.redact(result.errorText)) }
+    let partial = result.stdout.split(separator: 0).contains { bytes in
+      let row = String(decoding: bytes, as: UTF8.self)
+      guard let split = row.firstIndex(of: "\n") else { return row.hasSuffix(".promisor") }
+      let key = row[..<split], value = row[row.index(after: split)...].lowercased()
+      if key.hasSuffix(".promisor") { return ["true", "yes", "on", "1"].contains(value) }
+      return !value.isEmpty
+    }
+    if partial {
+      let executable = gitPath, runner = self.runner
+      let supported = try await WorkspaceGitCapabilities.shared.supportsLocalPartialClone(executable: executable) {
+        let version = try await runner.run(executable: executable, arguments: ["--version"], directory: nil, timeout: 5, limit: 64 * 1024)
+        guard version.code == 0 else { throw GitPierError.command("version", version.code, Self.redact(version.errorText)) }
+        return version.text
+      }
+      guard supported else {
+        throw WorkspaceFailure(.gitQuery, "Local workspace queries for partial clones require Git 2.43 or later to prevent implicit network access. Select a newer Git executable in Settings.")
+      }
+    }
   }
   public func snapshot(status knownStatus: RepositoryStatus? = nil) async throws -> IndexSnapshot {
     let state: RepositoryStatus
@@ -1458,6 +1553,96 @@ public actor GitService {
     let data = (try? JSONEncoder().encode([values.0, values.1])) ?? Data()
     return SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
   }
+  private func workspaceFetchIdentity(_ remote: String) async throws -> String {
+    let pattern = "^remote\\." + NSRegularExpression.escapedPattern(for: remote) + "\\."
+    let config = try await read(["config", "--null", "--get-regexp", pattern], allowFailure: true)
+    guard config.code == 0 else { throw GitPierError.invalidInput("The remote no longer exists. Review Fetch again.") }
+    let effective = try await read(["remote", "get-url", "--all", "--", remote]).stdout
+    let common = try await commonDirectory()
+    let attributes = try FileManager.default.attributesOfItem(atPath: common.path)
+    let identity = Data("\(attributes[.systemNumber] ?? ""):\(attributes[.systemFileNumber] ?? "")".utf8)
+    return SHA256.hash(data: config.stdout + effective + identity).map { String(format: "%02x", $0) }.joined()
+  }
+  public func reviewWorkspaceFetch(_ record: RepositoryRecord) async throws -> [WorkspaceFetchTarget] {
+    try await lifecycleWrite {
+      try await validateWorkspaceRoot()
+      let common = try await commonDirectory().path
+      var targets: [WorkspaceFetchTarget] = []
+      for remote in try await remotes() {
+        targets.append(WorkspaceFetchTarget(record: record, commonDirectory: common, remote: remote,
+          configurationIdentity: try await self.workspaceFetchIdentity(remote.name)))
+      }
+      return targets
+    }
+  }
+  public func workspaceFetch(_ target: WorkspaceFetchTarget) async throws -> String {
+    try InputValidation.reference(target.remote.name)
+    return try await lifecycleWrite {
+      try await validateWorkspaceRoot()
+      guard root.path == URL(fileURLWithPath: target.record.path).resolvingSymlinksInPath().path,
+            try await commonDirectory().path == target.commonDirectory,
+            try await workspaceFetchIdentity(target.remote.name) == target.configurationIdentity else {
+        throw GitPierError.invalidInput("The repository or remote configuration changed. Review Fetch again.")
+      }
+      // Preserve another client's FETCH_HEAD and never chain a pull/push/merge operation.
+      let result = try await read(["fetch", "--progress", "--no-write-fetch-head", "--recurse-submodules=no", "--no-auto-gc", "--", target.remote.name])
+      return Self.redact(result.text + result.errorText)
+    }
+  }
+  public func workspaceSearch(record: RepositoryRecord, query: String, kinds: Set<WorkspaceSearchKind>,
+                              page: Int = 0, size: Int = 25) async throws -> WorkspaceRepositorySearchPage {
+    guard !query.isEmpty, !query.utf8.contains(0), query.utf8.count <= 512, page >= 0, page <= 10000 else {
+      throw GitPierError.invalidInput("Invalid workspace search query.")
+    }
+    let count = max(1, min(size, 50)), offset = page * count
+    let environment = ["GIT_NO_LAZY_FETCH": "1"]
+    return try await lifecycleWrite {
+      try await validateWorkspaceRoot()
+      try await requireLocalWorkspaceQueries()
+      var hits: [WorkspaceSearchHit] = []; var more = false
+      if kinds.contains(.file) {
+        // Generated, controlled pathspec magic: all user glob metacharacters are literals.
+        var escaped = ""
+        for character in query {
+          if "\\*?[]".contains(character) { escaped.append("\\") }
+          escaped.append(character)
+        }
+        let data = try await read(["ls-files", "--cached", "--full-name", "-z", "--", ":(icase)*" + escaped + "*"],
+          environment: environment, limit: 4 * 1024 * 1024, timeout: 20).stdout
+        var paths: [String] = []; var seen: Set<String> = []
+        for bytes in data.split(separator: 0) {
+          guard let path = String(data: bytes, encoding: .utf8) else { throw GitPierError.invalidInput("Non-UTF-8 paths cannot be searched safely.") }
+          try InputValidation.repositoryPath(path)
+          if seen.insert(path).inserted { paths.append(path) }
+        }
+        more = paths.count > offset + count
+        hits += paths.dropFirst(offset).prefix(count).map { WorkspaceSearchHit(repositoryID: record.id, kind: .file, value: $0, detail: record.name) }
+      }
+      if kinds.contains(.commit) {
+        let format = "--format=%H%x00%P%x00%an%x00%ae%x00%at%x00%s%x00%x00%D%x00"
+        let result = try await read(["log", "--all", "--date-order", "--fixed-strings", "--regexp-ignore-case", "--grep=" + query,
+          "--skip=\(offset)", "-n", "\(count + 1)", format, "-z", "--"], environment: environment,
+          allowFailure: true, limit: 2 * 1024 * 1024, timeout: 20)
+        guard result.code == 0 else { throw GitPierError.command("log", result.code, Self.redact(result.errorText)) }
+        var commits = Self.parseHistory(result.stdout)
+        more = more || commits.count > count
+        commits = Array(commits.prefix(count))
+        // A hash query also resolves one exact local object; never interpret user text as an option/ref expression.
+        if page == 0, (4...64).contains(query.count), query.utf8.allSatisfy({ (48...57).contains($0) || (65...70).contains($0) || (97...102).contains($0) }) {
+          let resolved = try await read(["rev-parse", "--verify", "--end-of-options", query + "^{commit}"], environment: environment, allowFailure: true)
+          if resolved.code == 0 {
+            let hash = resolved.text.trimmingCharacters(in: .newlines)
+            if !commits.contains(where: { $0.hash == hash }) {
+              let data = try await read(["show", "--no-patch", format, hash, "--"], environment: environment, limit: 2 * 1024 * 1024).stdout
+              if let commit = Self.parseHistory(data).first { commits.insert(commit, at: 0) }
+            }
+          }
+        }
+        hits += commits.map { WorkspaceSearchHit(repositoryID: record.id, kind: .commit, value: $0.hash, detail: $0.subject, commit: $0) }
+      }
+      return WorkspaceRepositorySearchPage(hits: hits, hasMore: more)
+    }
+  }
   /// Edit the first fetch URL while retaining additional destinations. Multiple push URLs are
   /// intentionally read-only in this compact editor; Git's full configuration remains intact.
   public func saveRemote(name: String, fetchURL: String, pushURL: String, expected: GitRemote?) async throws {
@@ -1525,7 +1710,7 @@ public actor GitService {
     }
     if let remote { try InputValidation.reference(remote) }
     if let branch { try InputValidation.reference(branch) }
-    return try await writing {
+    return try await lifecycleWrite {
       var args = [operation, "--progress"]
       if operation == "push" { args.append("--porcelain") }
       if operation == "fetch" && remote == nil { args.append("--all") }
@@ -2136,7 +2321,7 @@ extension GitService {
   private func lifecycleWrite<T: Sendable>(_ action: () async throws -> T) async throws -> T {
     try await writing {
       let key = try await commonDirectory().path
-      await CommonDirectoryQueue.shared.acquire(key)
+      try await CommonDirectoryQueue.shared.acquire(key)
       do {
         try Task.checkCancellation()
         let result = try await action()

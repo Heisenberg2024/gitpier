@@ -100,8 +100,9 @@ public struct ProcessRunner: Sendable {
       }
     }
     let process = Process()
-    process.terminationHandler = { _ in box.exited() }
-    defer { process.terminationHandler = nil }
+    let activity = ProcessTrace.enabled && URL(fileURLWithPath: executable).lastPathComponent == "git" ? GitProcessActivity.begin() : nil
+    process.terminationHandler = { _ in if let activity { GitProcessActivity.end(activity) }; box.exited() }
+    defer { process.terminationHandler = nil; if let activity { GitProcessActivity.end(activity) } }
     process.executableURL = URL(fileURLWithPath: executable)
     process.arguments = arguments
     process.currentDirectoryURL = directory
