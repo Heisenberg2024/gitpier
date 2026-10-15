@@ -89,14 +89,19 @@ final class WorkspaceFetchTests: XCTestCase {
     let after = try await git.status(); XCTAssertEqual(state, after)
   }
   func testPartialFailureBoundedQueueAndRetry() async {
-    let probe = FetchProbe()
+    let probe = FetchProbe(pause: true)
     let service = BatchFetchCoordinator(executor: { try await probe.run($0) })
     let targets = (0..<10).map { target($0 == 3 ? "bad" : "origin", common: "common-\($0)") }
-    await service.submit(targets); await service.submit(targets); await service.waitUntilIdle()
+    await service.submit(targets); await probe.started(2)
+    // Keep both workers held until duplicate admission has been checked. A short sleep in
+    // the executor does not guarantee that the first jobs are still active on a busy runner.
+    await service.submit(targets)
+    for batch in 1...5 { await probe.started(batch * 2); await probe.release() }
+    await service.waitUntilIdle()
     let jobs = await service.current(); XCTAssertEqual(jobs.filter { $0.state == .succeeded }.count, 9); XCTAssertEqual(jobs.filter { $0.state == .failed }.count, 1)
     XCTAssertFalse(jobs[3].summary.contains("secret"))
     let stats = await probe.values(); XCTAssertEqual(stats.0, 10); XCTAssertLessThanOrEqual(stats.1, 2)
-    await service.submit([targets[3]]); await service.waitUntilIdle()
+    await service.submit([targets[3]]); await probe.started(11); await probe.release(); await service.waitUntilIdle()
     let retry = await probe.values(); XCTAssertEqual(retry.0, 11)
   }
   func testAllFailedJobsAreIndependent() async {
@@ -240,17 +245,44 @@ extension WorkspaceFetchTests {
     let rejected = await coordinator.submit([value]); XCTAssertTrue(rejected.accepted.isEmpty); XCTAssertEqual(rejected.rejected, [value.id])
   }
   func testManualAdmissionCancelsAutomaticAndBlocksFurtherAutomaticWork() async {
-    let probe = FetchProbe(pause: true)
+    // Every CI run exercises repeated handoffs without relying on which actor runs first.
+    for iteration in 0..<128 {
+      let probe = FetchProbe(pause: true)
+      let cancelled = expectation(description: "Automatic Fetch cancelled, handoff \(iteration)")
+      let coordinator = BatchFetchCoordinator(executor: { target in
+        try await withTaskCancellationHandler {
+          try await probe.run(target)
+        } onCancel: {
+          cancelled.fulfill()
+        }
+      })
+      let value = target()
+      await coordinator.submit([value], automatic: true); await probe.started(1)
+      let manual = Task { await coordinator.beginManualOperation() }
+      // Creating the manual Task is not an admission barrier. Do not release the fake
+      // transport until the coordinator has actually requested cancellation.
+      await fulfillment(of: [cancelled], timeout: 5)
+      await probe.release(); await manual.value
+      let rejected = await coordinator.submit([target(common: "other")], automatic: true)
+      XCTAssertTrue(rejected.accepted.isEmpty, "Handoff \(iteration)")
+      let jobs = await coordinator.current(); XCTAssertEqual(jobs[0].state, .cancelled, "Handoff \(iteration)")
+      await coordinator.endManualOperation()
+      await coordinator.shutdown()
+      guard jobs[0].state == .cancelled else { return }
+    }
+  }
+  func testManualAdmissionPreservesAutomaticFetchThatAlreadyFinished() async {
+    let probe = FetchProbe()
     let coordinator = BatchFetchCoordinator(executor: { try await probe.run($0) })
-    let value = target()
-    await coordinator.submit([value], automatic: true); await probe.started(1)
-    let manual = Task { await coordinator.beginManualOperation() }
-    await probe.release(); await manual.value
+    await coordinator.submit([target()], automatic: true); await coordinator.waitUntilIdle()
+    await coordinator.beginManualOperation()
+    let jobs = await coordinator.current(); XCTAssertEqual(jobs[0].state, .succeeded)
     let rejected = await coordinator.submit([target(common: "other")], automatic: true)
     XCTAssertTrue(rejected.accepted.isEmpty)
-    let jobs = await coordinator.current(); XCTAssertEqual(jobs[0].state, .cancelled)
     await coordinator.endManualOperation()
-    await coordinator.shutdown()
+    let accepted = await coordinator.submit([target(common: "other")], automatic: true)
+    XCTAssertFalse(accepted.accepted.isEmpty)
+    await coordinator.waitUntilIdle(); await coordinator.shutdown()
   }
   func testAutomaticCustomSSHIsConservativelySkipped() async throws {
     try await raw(["config", "core.sshCommand", "/usr/bin/false"])

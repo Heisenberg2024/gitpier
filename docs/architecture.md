@@ -22,7 +22,7 @@ The status actor has three workers, merges repeated requests, prioritizes visibl
 
 `WorkspaceSearchService` uses rolling groups of at most three workers and the shared budget. Metadata matching reuses current entries. User-requested tracked paths use controlled case-insensitive Git pathspecs with escaped user glob characters; NUL output is validated and capped at 4 MiB. Commit searches use literal native message matching or validated hexadecimal hashes, at most 25 results per type/repository/page by default (50 configured maximum, with one possible exact-hash hit), and 2 MiB output. Queries are bounded to 512 UTF-8 bytes, UI input is debounced 250 ms, and cancellation/generation checks reject old responses. There is no source-content index or remote search. `QuickOpenView` uses existing records, recent timestamps and favorites; native key handling belongs only to its sheet, and the workspace ⌘⇧P route excludes terminal/confirmation/sheet focus.
 
-## Automatic remote checks (v1.4.2 development)
+## Automatic remote checks (released in v1.4.2)
 
 `RemoteCheck.swift` separates remote phases and success/attempt/eligibility dates from `WorkspaceSnapshot.collectedAt`. A snapshot resolves the branch's upstream Remote and its common-directory/configuration identity with local queries; failed identity resolution does not discard local file/count data. The record key is SHA256 of the existing Fetch identity (canonical Common Directory, Remote name, full remote/effective URL config and filesystem identity). Same-configuration Worktrees share it; each Worktree retains its own branch comparison.
 

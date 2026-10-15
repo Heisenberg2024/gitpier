@@ -2,14 +2,19 @@
 
 ## Unreleased
 
-- Prepare v1.4.2 (22), not yet released. Add opt-in Automatic Remote Checks in Git settings, separate from external-change watching: current repository checks every 10/15/30/60 minutes (15 by default), other workspace repositories every 45 minutes in staggered batches, at most two Fetch operations. Check only while active and online, defer during Git writes, honor monotonic deadlines and persisted backoff, and give manual operations priority.
+- Stabilize Fetch queue regressions with explicit cancellation and worker-release barriers. Exercise 128 manual/automatic handoffs, preserve the result of already-completed Fetches, and remove timing assumptions from duplicate-admission/retry coverage.
+- 稳定 Fetch 队列回归测试：明确等待取消信号并控制工作任务放行，覆盖128轮手动/自动交接和已完成获取的结果保留，移除重复提交与重试测试中的延时假设。
+
+## 1.4.2 — 2026-10-16
+
+- Release v1.4.2 (22) with opt-in Automatic Remote Checks in Git settings, separate from external-change watching: current repository checks every 10/15/30/60 minutes (15 by default), other workspace repositories every 45 minutes in staggered batches, at most two Fetch operations. Check only while active and online, defer during Git writes, honor monotonic deadlines and persisted backoff, and give manual operations priority.
 - Reuse the reviewed Fetch engine and common-directory coordination. Check the branch's upstream remote only; deduplicate identical Worktree targets, revalidate configuration, reject Mirror/custom refspecs and interactive transports, forbid background prompts, tags, Prune and automatic maintenance, and retain TLS/SSH verification, hooks, Index and working files. Persist opaque target identities/timestamps atomically without remote URLs or server diagnostics.
 - Separate local snapshot age from successful remote-check age. Keep valid ahead/behind counts after failed checks, expose checking/overdue/failure/authentication states, update tracking counts without resetting repository browsing or drafts, and show Pull/Push counts plus divergence/upstream tooltips.
 - Add an aligned native mixed-state Select Matching checkbox including collapsed Worktrees. Clear only the selected entries accepted into a reviewed Fetch queue; preserve cancellation and unsubmitted error selections. Background checks never alter selection or open review/results trays. Collapse successful manual Fetch details after five seconds, retaining failures and reviewed retries.
 
 简体中文：
 
-- 准备 v1.4.2（22），尚未发布。Git 设置新增独立于外部监听的自动远程检查，默认关闭；当前仓库可选10/15/30/60分钟（默认15），其他仓库约45分钟、错峰最多两并发，仅活动且联网时执行，写操作期间延后，保留跨重启时间与有限退避，手动操作优先。
+- 发布 v1.4.2（22）。Git 设置新增独立于外部监听的自动远程检查，默认关闭；当前仓库可选10/15/30/60分钟（默认15），其他仓库约45分钟、错峰最多两并发，仅活动且联网时执行，写操作期间延后，保留跨重启时间与有限退避，手动操作优先。
 - 复用现有 Fetch 与 Common Directory 队列，仅检查当前分支上游远程，关联 Worktree 去重并重查配置，保守跳过 Mirror/自定义 RefSpec/交互传输。后台禁交互、标签、Prune 和自动维护，保留TLS/SSH验证、Hooks、Index和工作文件；原子保存目标摘要及时间，不保存远程URL或服务器诊断。
 - 区分本地扫描与成功远程检查时间；失败保留有效领先/落后数据，显示检查中、过期、失败和认证提示；仅回写跟踪计数，保留草稿及浏览状态。Pull/Push增加数量和分叉/无上游提示。
 - 表头增加与行对齐的原生三态“选择匹配项”，包括折叠Worktree；确认Fetch后只清除已被队列接受的选择，取消和未提交错误项保留。自动检查不干扰选择或打开审查/结果栏；手动成功详情五秒后收起，保留失败与审查重试。
