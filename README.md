@@ -51,7 +51,7 @@ The Git LFS page detects the optional installed tool, shows rules/files/OIDs/poi
 
 Released [v1.4.0](https://github.com/Heisenberg2024/gitpier/releases/tag/v1.4.0) (build 20) adds a local workspace overview with scanned/total counts, modified/staged/ahead/behind/conflict/unavailable/favorite filters, selection, and expandable related Worktrees. Cards use a separate memory cache and bounded background queries; opening Dashboard does not load every repository's Diff or history. Startup scans are local. Ahead/behind describes local tracking references, not a live server check; missing upstreams and unavailable repositories remain explicit. Optional external-change watching still marks data as needing refresh.
 
-The next Dashboard update adds a centered, adaptive layout with five clickable overview metrics, a search field and compact filter chips, aligned repository/branch/changes/sync columns, and a contextual selection bar. Metrics and filters use the same combined-match rules. Small windows keep branch information below the repository name; collapsed Worktrees remain part of matching counts and selection. Error details and refresh are available from unavailable rows. Clone, organization management and Quick Open are in the header's More menu.
+Version [v1.4.1](https://github.com/Heisenberg2024/gitpier/releases/tag/v1.4.1) (build 21) adds a centered, adaptive layout with five clickable overview metrics, a search field and compact filter chips, aligned repository/branch/changes/sync columns, and a contextual selection bar. Metrics and filters use the same combined-match rules. Small windows keep branch information below the repository name; collapsed Worktrees remain part of matching counts and selection. Error details and refresh are available from unavailable rows. Clone, organization management and Quick Open are in the header's More menu.
 
 Select individual entries, organization matches or all matches, then review **Fetch Selected** with each repository and remote. Selection is preserved when searching or filtering, including an explicit count outside the current results. Fetch uses bounded concurrency, deduplicates related Worktrees with matching remote configurations, preserves the working tree, Index and FETCH_HEAD, and keeps independent success/failure/cancellation results with reviewed retries. No batch Pull, Push, Reset or Rebase is added.
 
@@ -76,7 +76,7 @@ Select individual entries, organization matches or all matches, then review **Fe
 
 GitPier requires **macOS 14 or later**.
 
-Download the current stable version from [GitHub Latest Release](https://github.com/Heisenberg2024/gitpier/releases/latest). v1.4.0 is released; choose the universal DMG attached to the latest release. Open the DMG, drag the real GitPier icon to Applications, and launch GitPier from Applications.
+Download the current stable version from [GitHub Latest Release](https://github.com/Heisenberg2024/gitpier/releases/latest). Choose the universal DMG attached to the latest release. Open the DMG, drag the real GitPier icon to Applications, and launch GitPier from Applications.
 
 The v1.1.0 updater uses Sparkle 2, GitHub Releases, and EdDSA-signed DMGs. Automatic checks default to off; downloads and installation require confirmation. The production public key is configured; release assets must be signed and verified before publication. v1.0.3 requires a one-time manual upgrade.
 

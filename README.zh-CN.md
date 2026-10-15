@@ -51,7 +51,7 @@ Git LFS 页面检测可选工具，展示规则 / 文件 / OID / Pointer，审�
 
 已发布的 [v1.4.0](https://github.com/Heisenberg2024/gitpier/releases/tag/v1.4.0)（构建号 20）增加本地工作空间总览，显示已扫描 / 全部数量，支持修改 / 暂存 / 领先 / 落后 / 冲突 / 不可用 / 收藏筛选、多选和关联 Worktree 展开收起。卡片使用独立内存缓存及有界后台查询；打开 Dashboard 不会读取每个仓库的 Diff 或历史。启动扫描仅查询本地。领先 / 落后依据本地跟踪引用，不代表服务器实时状态；无上游及不可用仓库明确区分。可选外部监听仍只标记需要刷新。
 
-下一次 Dashboard 更新采用居中自适应布局，增加五项可点击概览、搜索框与紧凑筛选、对齐的仓库 / 分支 / 修改 / 同步信息列，以及上下文选择栏。概览与筛选沿用同时匹配规则。小窗口将分支放在仓库名称下方；折叠 Worktree 仍计入匹配数和选择范围。不可用行可查看完整错误并刷新。克隆、组织管理和快速打开位于顶部更多菜单。
+[v1.4.1](https://github.com/Heisenberg2024/gitpier/releases/tag/v1.4.1)（构建号 21）采用居中自适应布局，增加五项可点击概览、搜索框与紧凑筛选、对齐的仓库 / 分支 / 修改 / 同步信息列，以及上下文选择栏。概览与筛选沿用同时匹配规则。小窗口将分支放在仓库名称下方；折叠 Worktree 仍计入匹配数和选择范围。不可用行可查看完整错误并刷新。克隆、组织管理和快速打开位于顶部更多菜单。
 
 选择单个条目、组织匹配项或全部匹配项，再通过“获取已选仓库”审查每个仓库和远程。搜索或筛选时保留选择，并明确显示当前结果之外的所选数量。有界获取队列对远程配置一致的关联 Worktree 去重，保留工作区、Index 和 FETCH_HEAD，并独立显示成功 / 失败 / 取消结果，失败可审查后重试。不增加批量 Pull、Push、Reset 或 Rebase。
 
@@ -76,7 +76,7 @@ Git LFS 页面检测可选工具，展示规则 / 文件 / OID / Pointer，审�
 
 GitPier 要求 **macOS 14 或更高版本**。
 
-从 [GitHub Latest Release](https://github.com/Heisenberg2024/gitpier/releases/latest) 下载当前正式版。v1.4.0 已正式发布，请选择最新发行版附带的通用 DMG。打开 DMG，将真实的 GitPier 图标拖入 Applications，然后从 Applications 启动。
+从 [GitHub Latest Release](https://github.com/Heisenberg2024/gitpier/releases/latest) 下载当前正式版。请选择最新发行版附带的通用 DMG。打开 DMG，将真实的 GitPier 图标拖入 Applications，然后从 Applications 启动。
 
 v1.1.0 的内置更新采用 Sparkle 2、GitHub Releases 和 EdDSA 签名 DMG；自动检查默认关闭，下载与安装需要确认。生产公钥已配置，发行资产必须在发布前完成签名和验证。v1.0.3 没有内置更新，需要手动升级一次。
 
