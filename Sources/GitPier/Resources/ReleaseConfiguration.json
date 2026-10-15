@@ -1,6 +1,6 @@
 {
-  "version": "1.4.2",
-  "build": "22",
+  "version": "1.4.3",
+  "build": "23",
   "bundleIdentifier": "com.heisenberg2024.gitpier",
   "minimumSystemVersion": "14.0",
   "feedURL": "https://github.com/Heisenberg2024/gitpier/releases/latest/download/appcast.xml",
