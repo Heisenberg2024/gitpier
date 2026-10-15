@@ -8,234 +8,316 @@ struct DashboardView: View {
 
 private struct WorkspaceDashboard: View {
   @EnvironmentObject var store: AppStore
-  @Environment(\.colorScheme) var scheme
+  @Environment(\.colorScheme) private var scheme
   @ObservedObject var workspace: WorkspaceModel
   @State private var search = ""
   @State private var sort = "manual"
   @State private var collapsed: Set<String> = []
-  var scoped: [WorkspaceEntry] {
-    store.repositories.filter { store.dashboardOrganization == nil || $0.group == store.dashboardOrganization }
-      .map { workspace.entries[$0.id] ?? WorkspaceEntry(record: $0) }
-  }
-  var filtered: [WorkspaceEntry] {
-    let values = scoped.filter { entry in
-      let record = entry.record
-      let metadata = [record.name, record.path, record.group, entry.usable?.branch ?? ""] + (entry.usable?.remoteNames ?? [])
-      return (search.isEmpty || metadata.contains { $0.localizedCaseInsensitiveContains(search) })
-        && workspace.filters.allSatisfy { $0.matches(entry) }
-    }
-    guard sort != "manual" else { return values }
-    return values.sorted {
-      if sort == "name" { return $0.record.name.localizedStandardCompare($1.record.name) == .orderedAscending }
-      if sort == "path" { return $0.record.path.localizedStandardCompare($1.record.path) == .orderedAscending }
-      return $0.record.lastOpened > $1.record.lastOpened
-    }
-  }
-  var families: [String: [WorkspaceEntry]] { Dictionary(grouping: filtered.filter { $0.usable != nil }) { $0.usable!.commonDirectory } }
-  func leader(_ family: [WorkspaceEntry]) -> UUID? { (family.first { $0.usable?.isWorktree == false } ?? family.first)?.record.id }
-  var displayed: [WorkspaceEntry] {
-    filtered.filter { entry in
-      guard let key = entry.usable?.commonDirectory, collapsed.contains(key), let family = families[key] else { return true }
-      return leader(family) == entry.record.id
-    }
-  }
+  @FocusState private var searching: Bool
+
   var body: some View {
-    VStack(alignment: .leading, spacing: 0) {
-      header
-      summary
-      controls
-      if !workspace.fetchJobs.isEmpty { WorkspaceFetchTray(workspace: workspace) }
+    let listing = WorkspaceListing(records: store.repositories, entries: workspace.entries,
+      organization: store.dashboardOrganization, search: search, filters: workspace.filters,
+      sort: sort, collapsed: collapsed)
+    GeometryReader { geometry in
+      let compact = geometry.size.width < 850
+      let columns = DashboardColumns(width: min(geometry.size.width - 48, 1320))
+      VStack(spacing: 14) {
+        header(compact: compact)
+        overview(listing)
+        toolbar(listing, wide: columns.showsUpdated)
+        repositoryList(listing, columns: columns)
+      }
+      .padding(.horizontal, 24).padding(.top, 20).padding(.bottom, 12)
+      .frame(maxWidth: 1368, maxHeight: .infinity)
+      .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+    }.background(Theme.sidebar(scheme))
+  }
+
+  private func header(compact: Bool) -> some View {
+    HStack(alignment: .center, spacing: 16) {
+      VStack(alignment: .leading, spacing: 5) {
+        Text(store.dashboardOrganization.map { $0.isEmpty ? store.text("Ungrouped", "未分组") : $0 }
+          ?? store.text("Workspace", "工作空间"))
+          .font(uiFont(size: 27, weight: .semibold)).lineLimit(1)
+        Text(localizedUI("All Your Repositories. One Workspace."))
+          .font(uiFont(size: 12)).foregroundStyle(.secondary).lineLimit(1)
+      }
+      Spacer(minLength: 0)
+      HStack(spacing: 8) {
+        headerButton("magnifyingglass", store.text("Workspace Search", "工作空间搜索"), compact: compact) {
+          store.showWorkspaceSearch = true
+        }
+        headerButton("arrow.clockwise", store.text("Refresh Local Status", "刷新本地状态"), compact: true) {
+          Task { await workspace.refresh() }
+        }
+        headerButton("folder.badge.plus", store.text("Open Repository…", "打开仓库…"), compact: compact) {
+          store.openRepository(in: store.dashboardOrganization)
+        }.tint(.accentColor)
+        Menu {
+          Button(store.text("Clone…", "克隆…")) { store.showClone = true }
+          Button(store.text("Organizations…", "组织管理…")) { store.showOrganizations = true }
+          Divider()
+          Button(store.text("Quick Open…", "快速打开…")) { store.showQuickOpen = true }
+        } label: {
+          Image(systemName: "ellipsis").frame(width: 20, height: 22)
+        }.menuStyle(.borderlessButton).fixedSize()
+          .help(store.text("More workspace actions", "更多工作空间操作"))
+          .accessibilityLabel(store.text("More workspace actions", "更多工作空间操作"))
+      }.controlSize(.large)
+    }
+  }
+  private func headerButton(_ symbol: String, _ title: String, compact: Bool, action: @escaping () -> Void) -> some View {
+    Button(action: action) {
+      HStack(spacing: 6) {
+        Image(systemName: symbol)
+        if !compact { Text(title) }
+      }.font(uiFont(size: 12, weight: .medium)).frame(minWidth: 18, minHeight: 20)
+    }.buttonStyle(.bordered).help(title).accessibilityLabel(title)
+  }
+
+  private func overview(_ listing: WorkspaceListing) -> some View {
+    VStack(spacing: 10) {
+      HStack(spacing: 10) {
+        metric(store.text("Repositories", "仓库"), value: listing.summary.total, symbol: "shippingbox", filter: nil, color: .accentColor)
+        metric(filterName(.modified), value: listing.summary.counts[.modified] ?? 0, symbol: "pencil.line", filter: .modified, color: .orange)
+        metric(filterName(.ahead), value: listing.summary.counts[.ahead] ?? 0, symbol: "arrow.up", filter: .ahead, color: .accentColor)
+        metric(filterName(.behind), value: listing.summary.counts[.behind] ?? 0, symbol: "arrow.down", filter: .behind, color: .orange)
+        metric(filterName(.conflicts), value: listing.summary.counts[.conflicts] ?? 0, symbol: "exclamationmark.triangle", filter: .conflicts, color: .red)
+      }
+      HStack(spacing: 6) {
+        if listing.scanning > 0 { ProgressView().controlSize(.mini) }
+        else { Image(systemName: listing.summary.fresh == listing.summary.total ? "checkmark.circle" : "clock").foregroundStyle(.secondary) }
+        Text(store.text("\(listing.summary.scanned)/\(listing.summary.total) scanned · \(listing.summary.fresh) current",
+          "已扫描 \(listing.summary.scanned)/\(listing.summary.total) · \(listing.summary.fresh) 个有效状态"))
+        Text("·").foregroundStyle(.tertiary)
+        Text(store.text("\(listing.summary.physicalRepositories) physical", "\(listing.summary.physicalRepositories) 个物理仓库"))
+        if listing.summary.unknownPhysical > 0 {
+          Text(store.text("· \(listing.summary.unknownPhysical) unresolved", "· \(listing.summary.unknownPhysical) 个未识别"))
+        }
+        Spacer(minLength: 0)
+        Image(systemName: "info.circle").help(store.text(
+          "Ahead/behind uses local remote-tracking references; Fetch updates them. Refresh only reads local status.",
+          "领先 / 落后基于本地远程跟踪引用，Fetch 后更新。刷新只读取本地状态。"))
+          .accessibilityLabel(store.text("Local tracking references; Fetch to update", "本地跟踪引用，Fetch 后更新"))
+      }.font(uiFont(size: 11)).foregroundStyle(.secondary).lineLimit(1)
+        .padding(.horizontal, 2).accessibilityIdentifier("dashboard-scan-status")
+    }
+  }
+  private func metric(_ title: String, value: Int, symbol: String, filter: WorkspaceFilter?, color: Color) -> some View {
+    DashboardMetricCard(title: title, value: value, symbol: symbol, color: color,
+      selected: filter.map { workspace.filters.contains($0) } ?? workspace.filters.isEmpty) {
+        if let filter { toggle(filter) } else { workspace.filters.removeAll() }
+      }.accessibilityIdentifier("dashboard-metric-" + (filter?.rawValue ?? "all"))
+  }
+
+  @ViewBuilder private func toolbar(_ listing: WorkspaceListing, wide: Bool) -> some View {
+    if wide {
+      HStack(spacing: 12) {
+        searchField.frame(width: 280)
+        filterControls(listing)
+        sortPicker.frame(width: 144)
+      }
+    } else {
+      VStack(spacing: 8) {
+        HStack(spacing: 12) { searchField; sortPicker.frame(width: 152) }
+        filterControls(listing)
+      }
+    }
+  }
+  private var searchField: some View {
+    HStack(spacing: 8) {
+      Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
+      TextField(store.text("Search repositories, paths, organizations, branches or remotes…", "搜索仓库、路径、组织、分支或远程…"), text: $search)
+        .textFieldStyle(.plain).focused($searching).accessibilityIdentifier("dashboard-search")
+      if !search.isEmpty {
+        Button { search = ""; searching = true } label: { Image(systemName: "xmark.circle.fill") }
+          .buttonStyle(.plain).foregroundStyle(.secondary)
+          .help(store.text("Clear search", "清除搜索")).accessibilityLabel(store.text("Clear search", "清除搜索"))
+      }
+    }.font(uiFont(size: 13)).padding(.horizontal, 11).frame(height: 34)
+      .background(Theme.editor(scheme), in: RoundedRectangle(cornerRadius: 7))
+      .overlay(RoundedRectangle(cornerRadius: 7).stroke(searching ? Color.accentColor.opacity(0.65) : Color.primary.opacity(0.09)))
+  }
+  private var sortPicker: some View {
+    Picker(store.text("Sort", "排序"), selection: $sort) {
+      Text(store.text("Manual", "手动排序")).tag("manual")
+      Text(store.text("Recent", "最近使用")).tag("recent")
+      Text(store.text("Name", "名称")).tag("name")
+      Text(store.text("Path", "路径")).tag("path")
+    }.accessibilityIdentifier("dashboard-sort")
+  }
+  private func filterControls(_ listing: WorkspaceListing) -> some View {
+    ScrollView(.horizontal, showsIndicators: false) {
+      HStack(spacing: 4) {
+        filterChip(store.text("All", "全部"), count: nil, selected: workspace.filters.isEmpty) { workspace.filters.removeAll() }
+        ForEach(WorkspaceFilter.allCases, id: \.self) { filter in
+          filterChip(filterName(filter), count: listing.summary.counts[filter] ?? 0,
+            selected: workspace.filters.contains(filter)) { toggle(filter) }
+        }
+      }.padding(2)
+    }.fixedSize(horizontal: false, vertical: true)
+  }
+  private func filterChip(_ title: String, count: Int?, selected: Bool, action: @escaping () -> Void) -> some View {
+    Button(action: action) {
+      HStack(spacing: 6) {
+        Text(title)
+        if let count { Text("\(count)").monospacedDigit().foregroundStyle(selected ? Color.accentColor : .secondary) }
+      }.font(uiFont(size: 12, weight: selected ? .semibold : .regular))
+        .padding(.horizontal, 8).frame(height: 28)
+        .background(selected ? Color.accentColor.opacity(0.10) : Color.clear, in: RoundedRectangle(cornerRadius: 6))
+        .overlay(RoundedRectangle(cornerRadius: 6).stroke(selected ? Color.accentColor.opacity(0.22) : .clear))
+    }.buttonStyle(.workspace).foregroundStyle(selected ? Color.accentColor : .primary)
+      .accessibilityLabel(title + (count.map { " \($0)" } ?? ""))
+      .accessibilityAddTraits(selected ? [.isSelected] : [])
+  }
+
+  private func repositoryList(_ listing: WorkspaceListing, columns: DashboardColumns) -> some View {
+    VStack(spacing: 0) {
+      HStack {
+        Text(store.text("Repositories", "仓库列表")).fontWeight(.semibold)
+        Text("\(listing.matching.count)").monospacedDigit().foregroundStyle(.secondary)
+        if workspace.filters.count > 1 { Text(store.text("· Match all filters", "· 同时满足所选筛选")).foregroundStyle(.secondary) }
+        Spacer()
+        Button(store.text("Select Matches", "选择匹配项")) { workspace.selected.formUnion(listing.matchingIDs) }
+          .buttonStyle(.borderless).disabled(listing.matching.isEmpty)
+      }.font(uiFont(size: 12)).padding(.horizontal, 16).frame(height: 40)
       Divider()
-      if filtered.isEmpty {
-        EmptyState(symbol: "shippingbox", title: store.text("No matching repositories", "没有匹配的仓库"),
-          detail: store.text("Open a repository, or adjust your search and filters.", "打开仓库，或调整搜索与筛选。"))
+      if !workspace.fetchJobs.isEmpty {
+        WorkspaceFetchTray(workspace: workspace).padding(.top, 12)
+        Divider()
+      }
+      if listing.matching.isEmpty {
+        EmptyState(symbol: listing.scoped.isEmpty ? "folder.badge.plus" : "line.3.horizontal.decrease.circle",
+          title: listing.scoped.isEmpty ? store.text("Your workspace starts here", "从这里开始你的工作空间") : store.text("No matching repositories", "没有匹配的仓库"),
+          detail: listing.scoped.isEmpty ? store.text("Open a repository to see its local status at a glance.", "打开仓库，即可概览本地状态。") : store.text("Try another search or clear the selected filters.", "尝试其他搜索词，或清除所选筛选。"))
+        if !listing.scoped.isEmpty {
+          Button(store.text("Reset search and filters", "重置搜索和筛选")) { search = ""; workspace.filters.removeAll() }.padding(.bottom, 24)
+        }
       } else {
         ScrollView {
-          LazyVStack(spacing: 0) {
-            ForEach(displayed, id: \.record.id) { entry in
-              row(entry).repositoryReordering(entry.record) { sort = "manual" }
-                .onAppear { workspace.visible(entry.record.id) }
-              Divider().padding(.leading, 24)
+          LazyVStack(spacing: 0, pinnedViews: [.sectionHeaders]) {
+            Section {
+              ForEach(listing.rows) { row in
+              DashboardRepositoryRow(row: row, columns: columns, selected: workspace.selected.contains(row.id),
+                collapsed: row.familyKey.map { collapsed.contains($0) } ?? false,
+                select: { if $0 { workspace.selected.insert(row.id) } else { workspace.selected.remove(row.id) } },
+                disclose: { if let key = row.familyKey { if !collapsed.insert(key).inserted { collapsed.remove(key) } } })
+                .repositoryReordering(row.entry.record) { sort = "manual" }
+                .onAppear { workspace.visible(row.id) }
+                .padding(.horizontal, 6)
+              Divider().padding(.leading, 58)
+              }
+            } header: {
+              columnHeadings(columns)
             }
           }
-        }
+        }.scrollIndicators(.hidden).contentMargins(.horizontal, 0, for: .scrollContent)
+          .accessibilityIdentifier("dashboard-repositories")
       }
-      HStack {
-        Text(store.text("\(filtered.count) matching · \(workspace.selected.count) selected", "\(filtered.count) 个匹配 · 已选 \(workspace.selected.count) 个"))
+      Divider()
+      selectionBar(listing)
+    }.background(Theme.editor(scheme), in: RoundedRectangle(cornerRadius: 10))
+      .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.primary.opacity(0.08)))
+      .clipShape(RoundedRectangle(cornerRadius: 10))
+  }
+  private func columnHeadings(_ columns: DashboardColumns) -> some View {
+    HStack(spacing: 14) {
+      Text(store.text("REPOSITORY", "仓库")).frame(width: columns.identity, alignment: .leading)
+      if !columns.compact { Text(store.text("BRANCH", "分支")).frame(width: columns.branch, alignment: .leading) }
+      Text(store.text("CHANGES", "修改状态")).frame(width: columns.changes, alignment: .leading)
+      Text(store.text("SYNC", "同步")).frame(width: columns.sync, alignment: .leading)
+      if columns.showsUpdated { Text(store.text("UPDATED", "更新时间")).frame(width: columns.updated, alignment: .leading) }
+    }.font(uiFont(size: 10, weight: .medium)).foregroundStyle(.secondary)
+      .padding(.leading, 72).padding(.trailing, 44).frame(height: 26)
+      .background(Theme.panel(scheme))
+  }
+  private func selectionBar(_ listing: WorkspaceListing) -> some View {
+    let selectedMatches = workspace.selected.intersection(listing.matchingIDs).count
+    return HStack(spacing: 12) {
+      if !workspace.selected.isEmpty {
+        Image(systemName: "checkmark.circle.fill").foregroundStyle(Color.accentColor)
+        Text(store.text("\(workspace.selected.count) selected", "已选 \(workspace.selected.count) 个")).fontWeight(.medium)
+        if selectedMatches < workspace.selected.count {
+          Text(store.text("\(workspace.selected.count - selectedMatches) outside results", "\(workspace.selected.count - selectedMatches) 个在结果之外"))
+            .foregroundStyle(.secondary).help(store.text("Selection is kept when searching or filtering.", "搜索或筛选时保留已有选择。"))
+        }
+        Spacer(minLength: 0)
+        Button(store.text("Clear Selection", "清除选择")) { workspace.selected.removeAll() }.buttonStyle(.borderless)
+        Button { workspace.prepareFetch() } label: {
+          Label(store.text("Fetch Selected…", "获取已选仓库…"), systemImage: "arrow.down.circle")
+        }.buttonStyle(.borderedProminent).disabled(workspace.preparingFetch)
+      } else {
+        Text(store.text("\(listing.matching.count) matching", "\(listing.matching.count) 个匹配"))
+        if listing.hiddenCount > 0 { Text(store.text("· \(listing.hiddenCount) collapsed worktrees", "· \(listing.hiddenCount) 个折叠工作树")) }
         Spacer()
         OperationProgressView(progress: store.cloneActivity) { store.cloneTask?.cancel() }
-        Text("GitPier " + AppResources.version)
-      }.font(uiFont(size: 11)).foregroundStyle(.secondary).padding(12).background(Theme.panel(scheme))
-    }
-  }
-  private var header: some View {
-    VStack(alignment: .leading, spacing: 14) {
-      HStack {
-        VStack(alignment: .leading, spacing: 4) {
-          Text(store.dashboardOrganization.map { $0.isEmpty ? store.text("Ungrouped", "未分组") : $0 }
-            ?? store.text("Workspace", "工作空间")).font(uiFont(size: 27, weight: .semibold))
-          Text(localizedUI("All Your Repositories. One Workspace.")).font(uiFont(size: 13)).foregroundStyle(.secondary)
-        }
-        Spacer()
-        Button { store.showWorkspaceSearch = true } label: { Label(store.text("Workspace Search", "工作空间搜索"), systemImage: "magnifyingglass") }
+        Text("GitPier " + AppResources.version).foregroundStyle(.tertiary)
       }
-      ViewThatFits(in: .horizontal) {
-        HStack { actions; Spacer() }
-        VStack(alignment: .leading) { HStack { primaryActions }; HStack { secondaryActions } }
-      }
-    }.padding(24)
+    }.font(uiFont(size: 11)).foregroundStyle(.secondary).padding(.horizontal, 16).frame(height: 44)
+      .background(workspace.selected.isEmpty ? Color.clear : Color.accentColor.opacity(0.045))
   }
-  @ViewBuilder private var actions: some View { primaryActions; secondaryActions }
-  @ViewBuilder private var primaryActions: some View {
-    Button(store.text("Refresh Local Status", "刷新本地状态")) { Task { await workspace.refresh() } }
-    Button(store.text("Fetch Selected…", "获取已选仓库…")) { workspace.prepareFetch() }
-      .disabled(workspace.selected.isEmpty)
+  private func toggle(_ filter: WorkspaceFilter) {
+    if !workspace.filters.insert(filter).inserted { workspace.filters.remove(filter) }
   }
-  @ViewBuilder private var secondaryActions: some View {
-    Button(store.text("Open Repository…", "打开仓库…")) { store.openRepository(in: store.dashboardOrganization) }
-    Button(store.text("Clone…", "克隆…")) { store.showClone = true }
-    Button(store.text("Organizations…", "组织管理…")) { store.showOrganizations = true }
-  }
-  private var summary: some View {
-    let value = WorkspaceSummary(scoped)
-    return VStack(alignment: .leading, spacing: 9) {
-      HStack(spacing: 16) {
-        Text(store.text("\(value.total) workspace entries", "\(value.total) 个工作空间条目")).fontWeight(.medium)
-        Text(store.text("\(value.scanned)/\(value.total) scanned · \(value.fresh) current", "已扫描 \(value.scanned)/\(value.total) · \(value.fresh) 个有效状态"))
-        Spacer()
-      }
-      HStack(spacing: 12) {
-        Text(store.text("\(value.physicalRepositories) known physical repositories", "\(value.physicalRepositories) 个已识别物理仓库"))
-        if value.unknownPhysical > 0 { Text(store.text("\(value.unknownPhysical) unresolved", "\(value.unknownPhysical) 个尚未识别")) }
-      }.foregroundStyle(.secondary)
-      Text(store.text("Ahead/behind uses local tracking refs. Refresh is local; Fetch contacts remotes.", "领先 / 落后依据本地跟踪引用。刷新只读本地；获取才连接远程。"))
-        .foregroundStyle(.secondary)
-      LazyVGrid(columns: [GridItem(.adaptive(minimum: 102))], alignment: .leading) {
-        ForEach([WorkspaceFilter.modified, .ahead, .behind, .conflicts, .unavailable], id: \.self) { filter in
-          Text(filterName(filter) + " \(value.counts[filter] ?? 0)").fontWeight(.medium)
-        }
-      }
-    }.font(uiFont(size: 11)).padding(.horizontal, 24).padding(.bottom, 16)
-  }
-  private var controls: some View {
-    let counts = WorkspaceSummary(scoped).counts
-    return VStack(alignment: .leading, spacing: 12) {
-      HStack {
-        Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
-        TextField(store.text("Name, path, organization, branch or remote", "名称、路径、组织、分支或远程"), text: $search).textFieldStyle(.plain)
-        Picker(store.text("Sort", "排序"), selection: $sort) {
-          Text(store.text("Manual", "手动排序")).tag("manual")
-          Text(store.text("Recent", "最近使用")).tag("recent")
-          Text(store.text("Name", "名称")).tag("name")
-          Text(store.text("Path", "路径")).tag("path")
-        }.frame(width: 145)
-      }
-      LazyVGrid(columns: [GridItem(.adaptive(minimum: 88), spacing: 7)], alignment: .leading, spacing: 7) {
-        Button(store.text("All", "全部")) { workspace.filters.removeAll() }.tint(workspace.filters.isEmpty ? .accentColor : .secondary)
-        ForEach(WorkspaceFilter.allCases, id: \.self) { filter in
-          let count = counts[filter] ?? 0
-          Button(filterName(filter) + " \(count)") {
-            if workspace.filters.contains(filter) { workspace.filters.remove(filter) } else { workspace.filters.insert(filter) }
-          }.tint(workspace.filters.contains(filter) ? .accentColor : .secondary)
-        }
-      }.buttonStyle(.bordered)
-      HStack {
-        Button(store.text("Select Matches", "选择匹配项")) { workspace.selected.formUnion(filtered.map { $0.record.id }) }
-        Button(store.text("Clear Selection", "清除选择")) { workspace.selected.removeAll() }.disabled(workspace.selected.isEmpty)
-        Spacer()
-        if workspace.filters.count > 1 { Text(store.text("Match all selected filters", "同时满足所选筛选")).foregroundStyle(.secondary) }
-      }.font(uiFont(size: 11))
-    }.padding(.horizontal, 24).padding(.bottom, 16)
-  }
-  private func filterName(_ filter: WorkspaceFilter) -> String {
-    switch filter {
-    case .modified: return store.text("Modified", "有修改")
-    case .staged: return store.text("Staged", "已暂存")
-    case .ahead: return store.text("Ahead", "领先")
-    case .behind: return store.text("Behind", "落后")
-    case .conflicts: return store.text("Conflicts", "冲突")
-    case .unavailable: return store.text("Unavailable", "不可用")
-    case .favorites: return store.text("Favorites", "收藏")
-    }
-  }
-  private func row(_ entry: WorkspaceEntry) -> some View {
-    let record = entry.record
-    let family = entry.usable.flatMap { families[$0.commonDirectory] } ?? []
-    return HStack(spacing: 12) {
-      Toggle(store.text("Select", "选择") + " " + record.name, isOn: Binding(
-        get: { workspace.selected.contains(record.id) },
-        set: { if $0 { workspace.selected.insert(record.id) } else { workspace.selected.remove(record.id) } }))
-        .labelsHidden().toggleStyle(.checkbox)
-      if family.count > 1, leader(family) == record.id, let key = entry.usable?.commonDirectory {
-        Button {
-          if collapsed.contains(key) { collapsed.remove(key) } else { collapsed.insert(key) }
-        } label: { Image(systemName: collapsed.contains(key) ? "chevron.right" : "chevron.down") }
-          .buttonStyle(.plain).help(store.text("Expand / collapse related worktrees", "展开 / 收起关联工作树"))
-      } else { Image(systemName: entry.usable?.isWorktree == true ? "arrow.triangle.branch" : "shippingbox").foregroundStyle(.secondary) }
-      Button { store.select(record.id) } label: {
-        WorkspaceRepositoryRow(entry: entry, relatedCount: family.count).frame(maxWidth: .infinity).contentShape(Rectangle())
-      }.buttonStyle(.workspace)
-    }.padding(.horizontal, 24).padding(.vertical, 15)
+  private func filterName(_ filter: WorkspaceFilter) -> String { dashboardFilterName(filter, store: store) }
+}
+
+/// Shared column widths; only repository identity expands.
+struct DashboardColumns {
+  let compact: Bool
+  let showsUpdated: Bool
+  let branch: CGFloat
+  let changes: CGFloat = 132
+  let sync: CGFloat = 92
+  let updated: CGFloat = 100
+  let identity: CGFloat
+  init(width: CGFloat) {
+    compact = width < 850; showsUpdated = width >= 1100; branch = width >= 1100 ? 164 : 140
+    // 72pt leading selection/disclosure area and 44pt trailing diagnostic area.
+    let fixed = 72 + 44 + changes + sync + 28
+      + (compact ? 0 : branch + 14) + (showsUpdated ? updated + 14 : 0)
+    identity = max(80, width - fixed)
   }
 }
 
-private struct WorkspaceRepositoryRow: View {
-  @EnvironmentObject var store: AppStore
-  let entry: WorkspaceEntry
-  let relatedCount: Int
+private struct DashboardMetricCard: View {
+  @Environment(\.colorScheme) private var scheme
+  @State private var hovering = false
+  @FocusState private var focused: Bool
+  let title: String
+  let value: Int
+  let symbol: String
+  let color: Color
+  let selected: Bool
+  let action: () -> Void
   var body: some View {
-    HStack(spacing: 14) {
-      VStack(alignment: .leading, spacing: 5) {
-        HStack {
-          Text(entry.record.name).font(repositoryFont(sizeOffset: 2, weight: .semibold)).lineLimit(1)
-          if entry.record.favorite { Image(systemName: "star.fill").font(uiFont(size: 9)).foregroundStyle(.yellow) }
-          if !entry.record.group.isEmpty { Badge(text: entry.record.group) }
-          if let value = entry.snapshot, value.isWorktree { Badge(text: store.text("Worktree", "工作树")) }
-          if relatedCount > 1 { Badge(text: store.text("\(relatedCount) related", "\(relatedCount) 个关联")) }
-        }
-        Text(entry.record.path).font(uiFont(size: 11, design: .monospaced)).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
-        if let failure = entry.failure, entry.state == .failed {
-          Text(failureLabel(failure.kind) + ": " + failure.summary).foregroundStyle(.orange).lineLimit(2).help(failure.summary)
-        }
-      }
-      Spacer(minLength: 4)
-      VStack(alignment: .trailing, spacing: 5) {
-        if let value = entry.snapshot {
-          HStack {
-            if value.conflicts > 0 { Badge(text: store.text("\(value.conflicts) conflicts", "\(value.conflicts) 个冲突"), color: .red) }
-            if let operation = value.operation { Badge(text: localizedUI(operation.rawValue.capitalized), color: .orange) }
-            Label(value.detached ? store.text("Detached HEAD", "分离 HEAD") : value.branch, systemImage: "arrow.triangle.branch").lineLimit(1)
-          }
-          HStack {
-            Text(store.text("\(value.tracked + value.untracked) modified", "\(value.tracked + value.untracked) 项修改"))
-            Badge(text: store.text("\(value.staged) staged", "\(value.staged) 项暂存"), color: .mint)
-            if value.upstream != nil { Text("↑\(value.ahead) ↓\(value.behind)").help(store.text("Local remote-tracking references; use Fetch to update.", "本地远程跟踪引用，使用获取更新。")) }
-            else { Text(store.text("No upstream", "无上游")).foregroundStyle(.secondary) }
-          }
-          HStack {
-            collectionLabel
-            Text(value.collectedAt, style: .relative).foregroundStyle(.secondary)
-          }
-        } else { collectionLabel }
-      }.font(uiFont(size: 11)).frame(maxWidth: 260, alignment: .trailing)
-    }
+    Button(action: action) {
+      VStack(alignment: .leading, spacing: 6) {
+        HStack(spacing: 6) {
+          Image(systemName: symbol).foregroundStyle(value > 0 ? color : .secondary)
+          Text(title).foregroundStyle(.secondary).lineLimit(1)
+          Spacer(minLength: 0)
+        }.font(uiFont(size: 12, weight: .medium))
+        Text("\(value)").font(uiFont(size: 26, weight: .semibold)).monospacedDigit()
+      }.padding(12).frame(maxWidth: .infinity, alignment: .leading)
+        .background(hovering ? Theme.panel(scheme) : Theme.editor(scheme), in: RoundedRectangle(cornerRadius: 9))
+        .overlay(RoundedRectangle(cornerRadius: 9).stroke(
+          focused ? Color.accentColor : selected ? Color.accentColor.opacity(0.4) : Color.primary.opacity(0.08), lineWidth: focused ? 2 : 1))
+        .contentShape(RoundedRectangle(cornerRadius: 9))
+    }.buttonStyle(.plain).focused($focused).onHover { hovering = $0 }
+      .accessibilityLabel(title + " \(value)").accessibilityAddTraits(selected ? [.isSelected] : [])
   }
-  @ViewBuilder private var collectionLabel: some View {
-    switch entry.state {
-    case .collecting: HStack(spacing: 4) { ProgressView().controlSize(.mini); Text(store.text("Scanning", "正在采集")) }
-    case .queued: Text(store.text("Queued", "等待采集")).foregroundStyle(.secondary)
-    case .unscanned: Text(store.text("Not scanned", "尚未采集")).foregroundStyle(.secondary)
-    case .stale: Text(store.text("Needs refresh", "需要刷新")).foregroundStyle(.orange)
-    case .failed: Text(store.text("Unavailable", "不可用")).foregroundStyle(.orange)
-    case .fresh: EmptyView()
-    }
-  }
-  private func failureLabel(_ kind: WorkspaceFailureKind) -> String {
-    switch kind {
-    case .missingDirectory: return store.text("Directory missing", "目录不存在")
-    case .invalidRepository: return store.text("Invalid repository", "无效仓库")
-    case .permissionDenied: return store.text("Permission denied", "权限不足")
-    case .gitQuery: return store.text("Git query failed", "Git 查询失败")
-    }
+}
+
+@MainActor private func dashboardFilterName(_ filter: WorkspaceFilter, store: AppStore) -> String {
+  switch filter {
+  case .modified: return store.text("Modified", "有修改")
+  case .staged: return store.text("Staged", "已暂存")
+  case .ahead: return store.text("Ahead", "领先")
+  case .behind: return store.text("Behind", "落后")
+  case .conflicts: return store.text("Conflicts", "冲突")
+  case .unavailable: return store.text("Unavailable", "不可用")
+  case .favorites: return store.text("Favorites", "收藏")
   }
 }

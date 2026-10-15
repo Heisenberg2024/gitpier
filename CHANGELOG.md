@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Redesign the native Dashboard with a centered adaptive workspace, five clickable overview metrics, compact search/filter/sort controls, aligned repository columns, worktree indentation and contextual batch selection. Preserve AND filtering, selection outside current results, local-only snapshots, reviewed Fetch and independent repository sessions; expose full failure details and shared native repository menus. Add disposable native visual/interaction coverage and pure listing regressions.
 - Prevent a child process that closes standard input early from terminating GitPier with SIGPIPE. Disable the signal only on the parent stdin write descriptor, preserving command diagnostics, cancellation, timeouts and process-wide signal handling. Add an isolated default-SIGPIPE regression for early/partial reads and normal input delivery.
 
 ## 1.4.0 — 2026-10-15

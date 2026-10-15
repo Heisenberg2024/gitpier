@@ -153,9 +153,9 @@ struct RootView: View {
       ).padding(10)
       ScrollView {
         VStack(alignment: .leading, spacing: 2) {
-          HStack {
-            Text(store.text("ORGANIZATIONS", "组织 / 项目合集")).font(.system(size: 9, weight: .semibold))
-              .foregroundStyle(.secondary)
+          HStack(spacing: 4) {
+            Text(store.text("Organizations", "组织 / 项目合集")).font(.system(size: 9, weight: .semibold))
+              .foregroundStyle(.secondary).lineLimit(1)
             Spacer()
             IconButton(
               allOrganizationsCollapsed
@@ -281,6 +281,30 @@ struct RootView: View {
     }
   }
   func repositoryMenu(_ record: RepositoryRecord) -> NSMenu {
+    repositoryContextMenu(record, store: store) { removing = record }
+  }
+  var groupNames: [String] { [""] + store.organizations.map(\.name) }
+  var allOrganizationsCollapsed: Bool { Set(groupNames).isSubset(of: collapsedGroups) }
+  func sidebarButton(_ title: String, icon: String, active: Bool, action: @escaping () -> Void)
+    -> some View
+  {
+    Button(action: action) {
+      HStack(spacing: 9) {
+        Image(systemName: icon).frame(width: 15).foregroundStyle(
+          active ? Color.accentColor : .secondary)
+        Text(title).lineLimit(1)
+        Spacer()
+      }.font(repositoryFont()).frame(maxWidth: .infinity, alignment: .leading).padding(
+        .horizontal, 10
+      ).padding(.vertical, 9).contentShape(Rectangle()).background(
+        active ? Color.accentColor.opacity(0.14) : Color.clear
+      ).clipShape(RoundedRectangle(cornerRadius: 5))
+    }.buttonStyle(.workspace).padding(.horizontal, 6)
+  }
+}
+
+/// Dashboard and sidebar share the native editor / organization actions.
+@MainActor func repositoryContextMenu(_ record: RepositoryRecord, store: AppStore, remove: (() -> Void)? = nil) -> NSMenu {
     var items = [
       NativeMenuItems.action(
         record.favorite ? store.text("Unfavorite", "取消收藏") : store.text("Favorite", "收藏")
@@ -311,30 +335,11 @@ struct RootView: View {
       }
     }
     items.append(NativeMenuItems.submenu(store.text("Move to Organization", "移动到组织"), groups))
-    items.append(.separator())
-    items.append(
-      NativeMenuItems.action(store.text("Remove from workspace…", "从工作空间移除…")) { removing = record }
-    )
+    if let remove {
+      items.append(.separator())
+      items.append(NativeMenuItems.action(store.text("Remove from workspace…", "从工作空间移除…"), remove))
+    }
     return NativeMenuItems.menu(items)
-  }
-  var groupNames: [String] { [""] + store.organizations.map(\.name) }
-  var allOrganizationsCollapsed: Bool { Set(groupNames).isSubset(of: collapsedGroups) }
-  func sidebarButton(_ title: String, icon: String, active: Bool, action: @escaping () -> Void)
-    -> some View
-  {
-    Button(action: action) {
-      HStack(spacing: 9) {
-        Image(systemName: icon).frame(width: 15).foregroundStyle(
-          active ? Color.accentColor : .secondary)
-        Text(title).lineLimit(1)
-        Spacer()
-      }.font(repositoryFont()).frame(maxWidth: .infinity, alignment: .leading).padding(
-        .horizontal, 10
-      ).padding(.vertical, 9).contentShape(Rectangle()).background(
-        active ? Color.accentColor.opacity(0.14) : Color.clear
-      ).clipShape(RoundedRectangle(cornerRadius: 5))
-    }.buttonStyle(.workspace).padding(.horizontal, 6)
-  }
 }
 
 struct CloneSheet: View {

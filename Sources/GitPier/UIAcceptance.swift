@@ -55,6 +55,13 @@ import SwiftUI
         window.orderFront(nil)
         try await settle()
         try await waitFor { !model.refreshing && !model.diffLoading }
+        if ProcessInfo.processInfo.environment["GITPIER_UI_ACCEPTANCE_SCOPE"] == "dashboard" {
+          window.close()
+          try await verifyDashboardRedesign(root: root, output: output)
+          store.shutdown()
+          print("Native Dashboard redesign acceptance passed.")
+          exit(0)
+        }
         if ProcessInfo.processInfo.environment["GITPIER_UI_ACCEPTANCE_SCOPE"] == "workspace-performance" {
           store.shutdown(); window.close()
           try await verifyWorkspacePerformance(output: output)
