@@ -4,6 +4,18 @@ import Security
 public struct KeychainStore: Sendable {
   public let service: String
   public init(service: String = "GitPier.credentials") { self.service = service }
+  /// Call only in a dedicated credential helper process. The legacy login keychain ignores
+  /// SecItem's per-query authentication UI option; its interaction policy is process-wide.
+  public static func prepareBackgroundHelper() throws {
+    let status = SecKeychainSetUserInteractionAllowed(false)
+    guard status == errSecSuccess, backgroundAccessPrepared else {
+      throw GitPierError.configuration("Keychain lookup failed: noninteractive access is unavailable (\(status)).")
+    }
+  }
+  private static var backgroundAccessPrepared: Bool {
+    var allowed: DarwinBoolean = true
+    return SecKeychainGetUserInteractionAllowed(&allowed) == errSecSuccess && !allowed.boolValue
+  }
   private func query(_ id: UUID) -> [String: Any] {
     [
       kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: service,
@@ -25,6 +37,9 @@ public struct KeychainStore: Sendable {
     }
   }
   public func read(id: UUID, allowInteraction: Bool = true) throws -> String? {
+    if !allowInteraction, !Self.backgroundAccessPrepared {
+      throw GitPierError.configuration("Keychain lookup failed: background helper was not prepared.")
+    }
     var q = query(id)
     if !allowInteraction { q[kSecUseAuthenticationUI as String] = kSecUseAuthenticationUIFail }
     q[kSecReturnData as String] = true
@@ -39,6 +54,9 @@ public struct KeychainStore: Sendable {
   }
   /// Read an existing macOS internet credential without unlocking or authorization UI.
   public static func internetResponse(request: String) -> String? {
+    // Fail closed if invoked outside the noninteractive helper. Never toggle the process-wide
+    // policy around a query in the GUI app, where a manual credential action may run in parallel.
+    guard backgroundAccessPrepared else { return nil }
     var fields: [String: String] = [:]
     for line in request.split(separator: "\n") {
       let parts = line.split(separator: "=", maxSplits: 1).map(String.init)

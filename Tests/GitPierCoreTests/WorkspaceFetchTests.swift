@@ -338,6 +338,7 @@ extension WorkspaceFetchTests {
     let args = try String(contentsOf: capture, encoding: .utf8)
     XCTAssertTrue(args.contains("BatchMode=yes")); XCTAssertTrue(args.contains("StrictHostKeyChecking=yes"))
     XCTAssertTrue(args.contains("NumberOfPasswordPrompts=0")); XCTAssertFalse(args.contains("StrictHostKeyChecking=no"))
+    XCTAssertTrue(args.contains("UseKeychain=no"))
   }
 }
 

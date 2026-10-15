@@ -3,6 +3,18 @@ import GitPierCore
 import SwiftTerm
 import SwiftUI
 
+let backgroundCredentialInvocation = ProcessInfo.processInfo.environment["GITPIER_BACKGROUND"] == "1"
+  || CommandLine.arguments.contains("--background-keychain-helper")
+if backgroundCredentialInvocation {
+  // No GUI/askpass fallback is permitted in an automatic Git child. Disable legacy Keychain
+  // authorization UI before any credential read; this process exits after servicing the helper.
+  guard CommandLine.arguments.contains("--background-keychain-helper")
+    || CommandLine.arguments.contains("--credential-helper")
+    || CommandLine.arguments.contains("--ssh-profile") else { exit(1) }
+  do { try KeychainStore.prepareBackgroundHelper() }
+  catch { exit(1) }
+}
+
 #if DEBUG
   if CommandLine.arguments.contains("--product-screenshots") {
     ProductScreenshots.run()

@@ -1687,7 +1687,9 @@ public actor GitService {
     // with interaction forbidden. Unknown credential helpers are never invoked in the background.
     return ["GIT_TERMINAL_PROMPT": "0", "GIT_ASKPASS": "/usr/bin/false", "SSH_ASKPASS": "/usr/bin/false",
       "SSH_ASKPASS_REQUIRE": "never", "GITPIER_BACKGROUND": "1", "GCM_INTERACTIVE": "never",
-      "GIT_SSH_COMMAND": (ssh ?? "/usr/bin/ssh") + " -oBatchMode=yes -oStrictHostKeyChecking=yes -oNumberOfPasswordPrompts=0",
+      // ssh execs into a separate image, so the helper's legacy Keychain policy cannot protect
+      // Apple's SSH passphrase lookup. Existing agent identities remain available in BatchMode.
+      "GIT_SSH_COMMAND": (ssh ?? "/usr/bin/ssh") + " -oBatchMode=yes -oStrictHostKeyChecking=yes -oNumberOfPasswordPrompts=0 -oIgnoreUnknown=UseKeychain -oUseKeychain=no",
       "GIT_SSH_VARIANT": "ssh", "GIT_CONFIG_COUNT": "4",
       "GIT_CONFIG_KEY_0": "credential.interactive", "GIT_CONFIG_VALUE_0": "false",
       "GIT_CONFIG_KEY_1": "credential.helper", "GIT_CONFIG_VALUE_1": "",

@@ -4,6 +4,8 @@
 
 - Stabilize Fetch queue regressions with explicit cancellation and worker-release barriers. Exercise 128 manual/automatic handoffs, preserve the result of already-completed Fetches, and remove timing assumptions from duplicate-admission/retry coverage.
 - 稳定 Fetch 队列回归测试：明确等待取消信号并控制工作任务放行，覆盖128轮手动/自动交接和已完成获取的结果保留，移除重复提交与重试测试中的延时假设。
+- Prevent Automatic Fetch from opening legacy login-Keychain authorization dialogs. Disable interaction in dedicated credential helpers, reject unprepared background reads and Askpass fallback, and disable SSH Keychain passphrase lookup only for automatic checks. Add isolated denied-ACL and command-entry regressions.
+- 修复自动获取反复弹出传统登录钥匙串授权窗口：在专用凭证子进程禁用交互，拒绝未准备的后台读取与 Askpass 回退，仅自动检查禁用 SSH 钥匙串口令查询，并增加隔离 ACL 拒绝及命令入口回归。
 
 ## 1.4.2 — 2026-10-16
 
