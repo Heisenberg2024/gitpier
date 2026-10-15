@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Prevent a child process that closes standard input early from terminating GitPier with SIGPIPE. Disable the signal only on the parent stdin write descriptor, preserving command diagnostics, cancellation, timeouts and process-wide signal handling. Add an isolated default-SIGPIPE regression for early/partial reads and normal input delivery.
+
 ## 1.4.0 — 2026-10-15
 
 - Add a memory-only workspace status service with bounded/coalesced local scans, visible/manual priority, generation-based cancellation and distinct unavailable states. Dashboard starts without full repository sessions, shows scanned/total and physical-repository counts, shared status summaries/combined filters, selection and expandable linked Worktrees while preserving organization/manual order.

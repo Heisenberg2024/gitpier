@@ -1,3 +1,4 @@
+import Darwin
 import Foundation
 import PTYSupport
 
@@ -115,6 +116,12 @@ public struct ProcessRunner: Sendable {
     let out = Pipe()
     let err = Pipe()
     let stdin = Pipe()
+    // Git can reject input or exit before the asynchronous writer finishes.
+    // Return EPIPE on this descriptor instead of terminating the caller; keep
+    // the process-wide signal policy (and hooks/child processes) unchanged.
+    guard fcntl(stdin.fileHandleForWriting.fileDescriptor, F_SETNOSIGPIPE, 1) != -1 else {
+      throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
+    }
     process.standardOutput = out
     process.standardError = err
     process.standardInput = stdin
