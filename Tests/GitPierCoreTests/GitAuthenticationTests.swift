@@ -35,7 +35,9 @@ final class GitAuthenticationTests: XCTestCase {
     }
   }
   private func githubCLI() throws -> String {
-    guard let gh = ["/opt/homebrew/bin/gh", "/usr/local/bin/gh", "/usr/bin/gh"].first(where: FileManager.default.isExecutableFile(atPath:)) else {
+    let candidates = [ProcessInfo.processInfo.environment["GITPIER_TEST_GH_EXECUTABLE"]].compactMap { $0 }
+      + ["/opt/homebrew/bin/gh", "/usr/local/bin/gh", "/usr/bin/gh"]
+    guard let gh = candidates.first(where: FileManager.default.isExecutableFile(atPath:)) else {
       throw XCTSkip("GitHub CLI is required for its isolated credential integration")
     }
     return gh
@@ -336,6 +338,9 @@ extension GitAuthenticationTests {
       let gh = try githubCLI()
       let config = root.appendingPathComponent("gh-config")
       try FileManager.default.createDirectory(at: config, withIntermediateDirectories: true)
+      // A hosts-only fixture can trigger gh's legacy account migration and lose
+      // the active user when its token lives in Keychain rather than hosts.yml.
+      try Data("version: 1\n".utf8).write(to: config.appendingPathComponent("config.yml"))
       credentialFile = config.appendingPathComponent("hosts.yml")
       try Data(credentialText("gitpier-synthetic-token").utf8).write(to: credentialFile)
       var env = environment
