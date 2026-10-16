@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+### 1.4.4 (24) — authentication development
+
+- Preserve native Git credential helper order, URL/username/path matching and empty resets for background HTTPS; reuse authorized GitPier/system Keychain credentials and literal store/cache options without a preliminary manual Fetch. Background helpers are read-only and unknown interactive helpers remain blocked.
+- Add local credential capability/error status, explicit Keychain authorization, SSH Agent/identity inspection and preparation, and target-specific Retry Automatic Check. Recovery resets wall and monotonic scheduling state, rejects old completions and retains the last Fetch success and repository session data.
+- Reject SSH Match exec, dynamic Includes and external commands/providers before OpenSSH inspection; retain static configuration and native ProxyJump.
+- Keep SSH host verification and TLS enabled; apply the noninteractive SSH guard to native jump hosts. Ad-hoc upgrade ACL access is not guaranteed; no credentials are migrated and no access controls are relaxed.
+- 后台 HTTPS 保留 Git 原生助手顺序、URL/用户名/路径匹配与空值重置；已授权的托管/系统钥匙串凭证及受支持的 store/cache 可直接用于首次自动获取。后台只读，未知交互助手仍被阻止。
+- 增加认证能力与错误状态、主动钥匙串授权、SSH Agent 身份检查/初始化和当前目标重试；同时恢复两套调度时钟，拒绝旧结果并保留成功时间、Index 和仓库会话。
+- OpenSSH 检查前阻止 Match exec、动态 Include 与外部命令/Provider，保留静态配置和原生 ProxyJump。
+- 保留 TLS/SSH 主机校验，原生跳板机共用禁交互配置；Ad-hoc 升级后的 ACL 访问仍受系统限制，不迁移凭证或放宽授权。尚未发布。
+
 ## 1.4.3 — 2026-10-16
 
 - Stabilize Fetch queue regressions with explicit cancellation and worker-release barriers. Exercise 128 manual/automatic handoffs, preserve the result of already-completed Fetches, and remove timing assumptions from duplicate-admission/retry coverage.

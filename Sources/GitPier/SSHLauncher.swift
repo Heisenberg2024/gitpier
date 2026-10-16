@@ -35,10 +35,11 @@ enum SSHLauncher {
       }
       cursor += parameterOptions.contains(value) ? 2 : 1
     }
-    guard let target else { exit(1) }
+    guard target != nil else { exit(1) }
     let inspection = Process()
     inspection.executableURL = URL(fileURLWithPath: "/usr/bin/ssh")
-    inspection.arguments = ["-G", target]
+    // Resolve the exact alias/port/options Git supplied, including background safety options.
+    inspection.arguments = ["-G"] + sshArgs
     let out = Pipe()
     let err = Pipe()
     inspection.standardOutput = out
@@ -46,12 +47,12 @@ enum SSHLauncher {
     do { try inspection.run() } catch { exit(1) }
     let configurationData = out.fileHandleForReading.readDataToEndOfFile()
     inspection.waitUntilExit()
-    let host = String(decoding: configurationData, as: UTF8.self).split(separator: "\n").first {
-      $0.hasPrefix("hostname ")
-    }.map { String($0.dropFirst(9)).lowercased() }
+    let resolved = SSHAuthenticationConfiguration(String(decoding: configurationData, as: UTF8.self))
+    let expected = URLComponents(string: "ssh://" + profile.host)
     // An explicit profile is never silently applied to a different server.
     guard inspection.terminationStatus == 0,
-      host == profile.host.lowercased().split(separator: ":").first.map(String.init)
+      resolved.first("hostname")?.lowercased() == expected?.host?.lowercased(),
+      expected?.port == nil || resolved.first("port") == expected?.port.map(String.init)
     else {
       FileHandle.standardError.write(
         Data("GitPier: SSH profile host does not match the resolved remote host.\n".utf8))

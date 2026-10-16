@@ -286,6 +286,10 @@ extension WorkspaceFetchTests {
   }
   func testAutomaticCustomSSHIsConservativelySkipped() async throws {
     try await raw(["config", "core.sshCommand", "/usr/bin/false"])
+    // An SSH-only setting must not disable an unrelated file/HTTPS transport.
+    let local = try await git.upstreamFetchTarget(record)!
+    _ = try await git.checkedWorkspaceFetch(local, automatic: true)
+    try await raw(["remote", "set-url", "origin", "ssh://git@example.invalid/repo.git"])
     let value = try await git.upstreamFetchTarget(record)!
     do { _ = try await git.checkedWorkspaceFetch(value, automatic: true); XCTFail() }
     catch { XCTAssertTrue(error.localizedDescription.contains("Custom SSH")) }

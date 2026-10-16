@@ -26,7 +26,7 @@ import SwiftUI
     var lines = [store.text("Remote", "远程") + ": " + (target?.remote.name ?? "—"), title]
     lines.append(store.text("Last successful Fetch", "上次成功获取") + ": " + date(value.lastSuccess))
     lines.append(store.text("Last attempt", "上次尝试") + ": " + date(value.lastAttempt))
-    lines.append(store.text("Next eligible check", "下次允许检查") + ": " + (value.phase == .authenticationRequired ? store.text("Manual Fetch required", "需要手动获取") : date(value.nextEligible)))
+    lines.append(store.text("Next eligible check", "下次允许检查") + ": " + (value.phase == .authenticationRequired ? store.text("Review authentication or retry in Git settings", "请在 Git 设置中检查认证或重试") : date(value.nextEligible)))
     lines.append(store.text("Local snapshot", "本地状态") + ": " + date(workspace.entries[id]?.snapshot?.collectedAt))
     if stale { lines.append(store.text("Ahead/Behind uses local tracking references; remote data may be outdated.", "领先/落后根据本地跟踪引用计算，远端数据可能过期。")) }
     if let error = value.diagnostic { lines.append(error) }
@@ -138,7 +138,7 @@ struct AutomaticRemoteCheckSettings: View {
         }))
         LabeledContent(store.text("Last Remote Check", "最近远程检查"), value: workspace.remoteCheck(current.record.id).lastSuccess?.formatted(date: .abbreviated, time: .shortened) ?? store.text("Never", "从未"))
           .help(RemoteCheckText(workspace: workspace, id: current.record.id).help)
-        Button(store.text("Fetch Manually", "手动获取")) { current.network("fetch") }.disabled(current.busy)
+        AutomaticAuthenticationSettings(workspace: workspace, model: current)
       }
       if let error = workspace.remoteMetadataError { Text(error).foregroundStyle(.orange) }
     }
@@ -147,5 +147,99 @@ struct AutomaticRemoteCheckSettings: View {
     Binding(get: { store.settings[keyPath: key] }, set: { value in
       var settings = store.settings; settings[keyPath: key] = value; store.updateSettings(settings)
     })
+  }
+}
+
+struct AutomaticAuthenticationSettings: View {
+  @EnvironmentObject var store: AppStore
+  @ObservedObject var workspace: WorkspaceModel
+  @ObservedObject var model: RepositoryModel
+  @State private var confirmation = false
+  @State private var authorizationTarget: String?
+  @State private var authorizationRepository: UUID?
+  @State private var authorizationRemote = ""
+  @State private var authorizationIsSSH = false
+  private var info: BackgroundAuthentication? { workspace.authenticationInfo(model.record.id) }
+  private var state: BackgroundAuthenticationState? { info?.state }
+  private var sshPreparation: Bool { state == .sshIdentityNotLoaded || state == .sshAgentUnavailable }
+  private var busy: Bool { workspace.authenticationIsBusy(model.record.id) || model.busy }
+  var body: some View {
+    VStack(alignment: .leading, spacing: 8) {
+      if let target = workspace.entries[model.record.id]?.snapshot?.remoteTarget {
+        Text(target.remote.name + " · " + GitService.redact(target.remote.fetchURL))
+          .font(.caption).textSelection(.enabled).lineLimit(2)
+        if let info {
+          Text(info.transport + " · " + source(info.source)).font(.callout)
+          Text(status(info.state)).font(.callout).foregroundStyle(info.state == .ready ? Color.secondary : Color.orange)
+          if info.state == .ready {
+            Text(store.text("Credentials are available locally. Server access is verified only by Fetch.", "本地凭证已就绪；服务器权限仅能由获取结果确认。"))
+              .font(.caption).foregroundStyle(.secondary)
+          }
+        } else {
+          Text(store.text("Background authentication has not been checked.", "尚未检查后台认证能力。"))
+            .font(.callout).foregroundStyle(.secondary)
+        }
+        HStack {
+          Button(store.text("Retry Automatic Check", "重新检查自动认证")) { workspace.retryAuthentication(model.record.id) }
+          if state == .requiresForegroundAuthorization || sshPreparation {
+            Button(sshPreparation ? store.text("Prepare SSH Authentication…", "初始化 SSH 认证…") : store.text("Authorize Background Access…", "配置后台认证…")) {
+              authorizationTarget = target.id; authorizationRepository = model.record.id
+              authorizationRemote = info?.remote ?? target.remote.fetchURL; authorizationIsSSH = sshPreparation
+              confirmation = true
+            }
+          }
+          if busy { ProgressView().controlSize(.small) }
+        }.disabled(busy)
+      }
+    }
+    .alert(authorizationIsSSH ? store.text("Prepare SSH Authentication", "初始化 SSH 认证") : store.text("Authorize Background Access", "配置后台认证"), isPresented: $confirmation) {
+      Button(store.text("Continue", "继续")) {
+        guard authorizationRepository == model.record.id,
+          workspace.entries[model.record.id]?.snapshot?.remoteTarget?.id == authorizationTarget else {
+          store.notice = store.text("The remote changed. Review authentication again.", "远程已变化，请重新审查认证。")
+          return
+        }
+        workspace.retryAuthentication(model.record.id, authorize: !authorizationIsSSH, prepareSSH: authorizationIsSSH)
+      }
+      Button(store.text("Cancel", "取消"), role: .cancel) {}
+    } message: {
+      Text(authorizationRemote + "\n\n" + (authorizationIsSSH
+        ? store.text("SSH Agent will load this remote's configured identity. macOS may ask for its passphrase. GitPier does not save the passphrase or change SSH configuration. No Fetch is required to prepare it.", "SSH Agent 将加载此远程配置的身份，macOS 可能请求私钥口令。GitPier 不保存口令或修改 SSH 配置，初始化无需先执行获取。")
+        : store.text("GitPier will request macOS access to the existing credential for this remote, then verify background access again. No new managed credential is saved and no access controls are changed by GitPier. For legacy items, macOS may offer Always Allow; choosing Allow once may still leave background access blocked.", "GitPier 将请求 macOS 授权访问此远程已有凭证，再验证后台访问能力。不会保存新的托管凭证，也不会自行修改访问控制。传统项目的系统授权窗可能提供“始终允许”；仅选择一次“允许”后后台访问仍可能受阻。")))
+    }
+  }
+  private func source(_ value: String) -> String {
+    value.components(separatedBy: " + ").map { source in
+      switch source {
+      case "managedKeychain": return store.text("GitPier Keychain", "GitPier 钥匙串")
+      case "systemKeychain": return store.text("System Keychain", "系统钥匙串")
+      case "store": return store.text("Git credential store", "Git 凭证文件")
+      case "cache": return store.text("Git credential cache", "Git 凭证缓存")
+      case "sshAgent": return store.text("SSH Agent / SSH Config", "SSH Agent / SSH 配置")
+      case "sshIdentity": return store.text("SSH Identity / SSH Config", "SSH 身份 / SSH 配置")
+      case "sshConfig": return store.text("SSH Config", "SSH 配置")
+      case "unsupportedHelper": return store.text("Unsupported helper", "不支持的助手")
+      default: return store.text("Source unavailable", "凭证来源尚不可用")
+      }
+    }.joined(separator: " + ")
+  }
+  private func status(_ value: BackgroundAuthenticationState) -> String {
+    switch value {
+    case .ready: return store.text("Ready for Automatic Fetch", "自动获取认证已就绪")
+    case .requiresForegroundAuthorization: return store.text("Background access not authorized", "后台访问尚未获准")
+    case .credentialMissing: return store.text("No matching saved credential. Configure an account or supported helper.", "未找到匹配凭证，请配置账号或受支持的凭证助手。")
+    case .unsupportedHelper: return store.text("This credential helper has no supported silent interface. Use a GitPier account or a supported helper.", "此凭证助手没有受支持的静默接口，请使用 GitPier 账号或受支持的助手。")
+    case .sshAgentUnavailable: return store.text("SSH Agent is unavailable. Prepare authentication to start a private agent if needed.", "SSH Agent 不可用，请初始化认证，必要时启动专属 Agent。")
+    case .sshIdentityNotLoaded: return store.text("The configured SSH identity is not loaded", "配置的 SSH 身份尚未加载")
+    case .accessDenied: return store.text("Authorization was denied or cancelled", "授权被拒绝或已取消")
+    case .serverRejected: return store.text("The server rejected the saved credential or SSH identity", "服务器拒绝了已保存凭证或 SSH 身份")
+    case .hostVerificationFailed: return store.text("SSH host verification failed. Review known hosts before retrying.", "SSH 主机验证失败，请检查已知主机后重试。")
+    case .networkFailure: return store.text("Network check failed; existing backoff applies", "网络检查失败，将遵循现有退避策略")
+    case .configurationInvalid:
+      if info?.source == "sshConfig" {
+        return store.text("SSH configuration contains external commands, a provider or a dynamic Include. Automatic authentication cannot guarantee silent operation; use manual SSH or a static configuration.", "SSH 配置包含外部命令、Provider 或动态 Include，无法保证静默认证；请使用手动 SSH 或静态配置。")
+      }
+      return store.text("Authentication configuration changed or is unsupported. Review the remote and SSH configuration.", "认证配置已变化或不受支持，请检查远程和 SSH 配置。")
+    }
   }
 }

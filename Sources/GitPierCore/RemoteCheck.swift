@@ -6,12 +6,7 @@ public enum RemoteCheckPhase: String, Codable, Sendable {
   public static func forFailure(_ error: Error) -> RemoteCheckPhase {
     if case AutomaticFetchError.skipped = error { return .skipped }
     if case AutomaticFetchError.authenticationRequired = error { return .authenticationRequired }
-    let message = error.localizedDescription.lowercased()
-    let authentication = ["authentication failed", "could not read username", "terminal prompts disabled",
-      "permission denied (publickey", "host key verification failed", "could not read password",
-      "invalid username or token", "could not get password", "unable to get password", "keychain lookup failed",
-      "ssh identity is not readable", "authentication could not be configured"]
-    return authentication.contains { message.contains($0) } ? .authenticationRequired : .failed
+    return AuthenticationFailure(AuthenticationFailure.classify(error)).blocksAutomaticRetry ? .authenticationRequired : .failed
   }
 }
 
@@ -24,6 +19,7 @@ public struct RemoteCheckRecord: Codable, Equatable, Sendable {
   public var nextEligible: Date?
   public var failures = 0
   public var diagnostic: String?
+  public var authenticationFailure: BackgroundAuthenticationState?
   public init() {}
   public func isStale(now: Date = Date(), interval: TimeInterval) -> Bool {
     guard let lastSuccess else { return true }
@@ -73,6 +69,12 @@ public struct RemoteCheckSchedule: Sendable {
   public mutating func attempted(_ key: String, delay: TimeInterval, uptime: TimeInterval) {
     deadlines[key] = (uptime + delay, delay)
   }
+  /// Explicit recovery changes both persisted wall state and the in-process monotonic gate.
+  public mutating func retry(_ key: String, record: inout RemoteCheckRecord, now: Date, uptime: TimeInterval) {
+    record.phase = .notChecked; record.nextEligible = now; record.failures = 0
+    record.diagnostic = nil; record.authenticationFailure = nil
+    deadlines[key] = (uptime, 0)
+  }
   public mutating func retain(_ keys: Set<String>) { deadlines = deadlines.filter { keys.contains($0.key) } }
 }
 
@@ -118,8 +120,9 @@ public struct RemoteCheckStore: Sendable {
 public struct WorkspaceFetchResult: Sendable {
   public var output: String
   public var referencesUpdated: Bool
-  public init(output: String = "", referencesUpdated: Bool = false) {
-    self.output = output; self.referencesUpdated = referencesUpdated
+  public var authentication: BackgroundAuthentication?
+  public init(output: String = "", referencesUpdated: Bool = false, authentication: BackgroundAuthentication? = nil) {
+    self.output = output; self.referencesUpdated = referencesUpdated; self.authentication = authentication
   }
 }
 public enum AutomaticFetchError: Error, LocalizedError, Sendable {
@@ -127,7 +130,7 @@ public enum AutomaticFetchError: Error, LocalizedError, Sendable {
   public var errorDescription: String? {
     switch self {
     case .skipped(let reason): return reason
-    case .authenticationRequired: return "Authentication required. Run Fetch manually to continue."
+    case .authenticationRequired: return "Authentication required. Review authentication settings or retry the automatic check."
     }
   }
 }

@@ -68,6 +68,13 @@ import SwiftUI
           print("Native workspace performance acceptance passed.")
           exit(0)
         }
+        if ProcessInfo.processInfo.environment["GITPIER_UI_ACCEPTANCE_SCOPE"] == "version144" {
+          window.close()
+          try await verifyVersion144(root: root, output: output)
+          store.shutdown()
+          print("Native 1.4.4 authentication acceptance passed.")
+          exit(0)
+        }
         if ProcessInfo.processInfo.environment["GITPIER_UI_ACCEPTANCE_SCOPE"] == "version142" {
           window.close()
           try await verifyVersion142(root: root, output: output)

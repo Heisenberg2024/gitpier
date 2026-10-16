@@ -15,6 +15,10 @@ import GitPierCore
   @Published private(set) var fetchReviewErrors: [String] = []
   @Published private(set) var fetchJobs: [WorkspaceFetchJob] = []
   @Published private(set) var remoteChecks: [String: RemoteCheckRecord] = [:]
+  @Published private(set) var authentication: [String: BackgroundAuthentication] = [:]
+  @Published private(set) var authenticationBusy: Set<String> = []
+  private var authenticationGeneration: [String: UUID] = [:]
+  private var authenticationTasks: [String: Task<Void, Never>] = [:]
   @Published private(set) var remoteMetadataError: String?
   @Published private(set) var fetchTrayExpanded = true
   private var allFetchJobs: [WorkspaceFetchJob] = []
@@ -69,7 +73,7 @@ import GitPierCore
         guard allowed else { throw AutomaticFetchError.skipped("Automatic check deferred.") }
       }
       guard await model.configure(reportErrors: !automatic) else {
-        if automatic { throw AutomaticFetchError.authenticationRequired }
+        if automatic { throw AuthenticationFailure(.configurationInvalid) }
         throw GitPierError.invalidInput(await model.error ?? "Authentication could not be configured.")
       }
       return try await model.git().checkedWorkspaceFetch(target, automatic: automatic)
@@ -77,7 +81,8 @@ import GitPierCore
     status = WorkspaceStatusService { [weak store] record in
       let gitPath = await store?.settings.gitPath ?? "/usr/bin/git"
       let service = await GitServiceRegistry.shared.service(for: URL(fileURLWithPath: record.path), gitPath: gitPath)
-      await service.configureExecutable(gitPath)
+      if let model = await store?.models[record.id] { _ = await model.configure(reportErrors: false) }
+      else { await service.configureExecutable(gitPath) }
       return try await service.workspaceSnapshot(record)
     }
   }
@@ -171,6 +176,7 @@ import GitPierCore
   }
   func shutdown() {
     stopped = true
+    for task in authenticationTasks.values { task.cancel() }
     scheduler?.cancel(); evaluationRequest?.cancel(); trayCollapse?.cancel(); networkMonitor.cancel()
     for observer in lifecycleObservers { NotificationCenter.default.removeObserver(observer) }
     lifecycleObservers.removeAll()
@@ -253,6 +259,94 @@ extension WorkspaceModel {
 }
 
 extension WorkspaceModel {
+  func authenticationInfo(_ id: UUID) -> BackgroundAuthentication? {
+    guard let target = entries[id]?.snapshot?.remoteTarget else { return nil }
+    let key = RemoteCheckStore.key(target)
+    if var info = authentication[key] {
+      if let failure = remoteChecks[key]?.authenticationFailure { info.state = failure }
+      return info
+    }
+    guard let failure = remoteChecks[key]?.authenticationFailure else { return nil }
+    return BackgroundAuthentication(transport: target.remote.fetchURL.hasPrefix("https://") ? "HTTPS" : "SSH",
+      source: target.remote.fetchURL.hasPrefix("https://") ? "none" : "sshAgent", state: failure, remote: target.remote.fetchURL)
+  }
+  func authenticationIsBusy(_ id: UUID) -> Bool {
+    guard let target = entries[id]?.snapshot?.remoteTarget else { return false }
+    return authenticationBusy.contains(RemoteCheckStore.key(target)) || allFetchJobs.contains { $0.id == target.id && $0.active }
+  }
+  /// Explicit user action only. Never poll Keychain or SSH on a timer or selection change.
+  func retryAuthentication(_ id: UUID, authorize: Bool = false, prepareSSH: Bool = false) {
+    guard let target = entries[id]?.snapshot?.remoteTarget, let model = store.models[id],
+      !model.busy, !stopped, !authenticationIsBusy(id) else { return }
+    let key = RemoteCheckStore.key(target)
+    guard authenticationBusy.insert(key).inserted else { return }
+    let generation = UUID(); authenticationGeneration[key] = generation
+    let task = Task {
+      await fetch.beginManualOperation()
+      defer { authenticationBusy.remove(key); authenticationTasks[key] = nil }
+      do {
+        guard await model.configure(reportErrors: false) else { throw AuthenticationFailure(.configurationInvalid) }
+        let git = await model.git()
+        let info: BackgroundAuthentication
+        if prepareSSH { info = try await git.prepareSSHAuthentication(target) }
+        else { info = try await git.backgroundAuthentication(target, authorize: authorize) }
+        guard !stopped, store.models[id] === model,
+          authenticationGeneration[key] == generation,
+          entries[id]?.snapshot?.remoteTarget?.id == target.id else { throw CancellationError() }
+        authentication[key] = info
+        resetAuthenticationBlock(key)
+      } catch {
+        if !(error is CancellationError), authenticationGeneration[key] == generation {
+          let state = AuthenticationFailure.classify(error)
+          let transport = target.remote.fetchURL.hasPrefix("https://") ? "HTTPS" : "SSH"
+          authentication[key] = BackgroundAuthentication(transport: transport,
+            source: (error as? AuthenticationFailure)?.source ?? (transport == "SSH" ? "sshAgent" : "none"), state: state,
+            remote: target.remote.fetchURL)
+          var value = remoteChecks[key] ?? RemoteCheckRecord()
+          value.repositoryIDs.formUnion(target.repositoryIDs)
+          value.phase = AuthenticationFailure(state).blocksAutomaticRetry ? .authenticationRequired : .failed
+          value.authenticationFailure = state
+          value.lastAttempt = Date()
+          if value.phase == .authenticationRequired { value.nextEligible = nil }
+          else {
+            value.failures += 1
+            let delay = RemoteCheckPolicy.backoff(value.failures)
+            value.nextEligible = Date().addingTimeInterval(delay)
+            schedule.attempted(key, delay: delay, uptime: ProcessInfo.processInfo.systemUptime)
+          }
+          remoteChecks[key] = value; persistRemoteChecks()
+        }
+        await fetch.endManualOperation()
+        return
+      }
+      await fetch.endManualOperation()
+      await evaluateRemoteChecks(only: id)
+    }
+    authenticationTasks[key] = task
+  }
+  private func resetAuthenticationBlock(_ key: String) {
+    var value = remoteChecks[key] ?? RemoteCheckRecord()
+    let uptime = ProcessInfo.processInfo.systemUptime
+    // Reject retained jobs and completions from before this explicit recovery event.
+    _ = attemptOrder.accepts(target: key, attempt: UUID(), startedUptime: uptime)
+    schedule.retry(key, record: &value, now: Date(), uptime: uptime)
+    remoteChecks[key] = value; persistRemoteChecks()
+  }
+  func credentialsChanged(_ ids: Set<UUID>) {
+    let targets = entries.values.filter { ids.contains($0.record.id) }.compactMap { $0.snapshot?.remoteTarget }
+    for target in targets {
+      let key = RemoteCheckStore.key(target)
+      authentication[key] = nil
+      authenticationGeneration[key] = UUID()
+      authenticationTasks[key]?.cancel()
+      resetAuthenticationBlock(key)
+    }
+    Task {
+      await fetch.cancel(Set(targets.map(\.id)))
+      await refresh(Array(ids))
+      requestRemoteEvaluation()
+    }
+  }
   func remoteCheck(_ id: UUID) -> RemoteCheckRecord {
     guard let target = entries[id]?.snapshot?.remoteTarget else { return RemoteCheckRecord() }
     return remoteChecks[RemoteCheckStore.key(target)] ?? RemoteCheckRecord()
@@ -308,12 +402,12 @@ extension WorkspaceModel {
     }
     requestRemoteEvaluation()
   }
-  func evaluateRemoteChecks(now: Date = Date(), uptime: TimeInterval = ProcessInfo.processInfo.systemUptime) async {
+  func evaluateRemoteChecks(now: Date = Date(), uptime: TimeInterval = ProcessInfo.processInfo.systemUptime, only: UUID? = nil) async {
     guard !stopped, canSaveRemoteMetadata, !quiescingAutomatic, !evaluating,
       RemoteCheckPolicy.mayEvaluate(store.settings, active: NSApp.isActive, online: networkAvailable, writing: store.hasRunningGitOperations) else { return }
     evaluating = true
     defer { evaluating = false }
-    let records = store.repositories
+    let records = store.repositories.filter { only == nil || $0.id == only }
     guard !records.isEmpty else { return }
     var candidates: [RepositoryRecord] = []
     if let current = store.selectedID.flatMap({ id in records.first { $0.id == id } }) { candidates.append(current) }
@@ -347,6 +441,7 @@ extension WorkspaceModel {
     let liveIDs = Set(store.repositories.map(\.id))
     let key = RemoteCheckStore.key(job.target)
     guard attemptOrder.accepts(target: key, attempt: job.attemptID, startedUptime: job.startedUptime) else { return }
+    if let info = job.authentication { authentication[key] = info }
     let related = entries.values.filter { liveIDs.contains($0.record.id) && $0.snapshot?.remoteTarget?.id == job.target.id }.map { $0.record.id }
     let members = job.target.repositoryIDs.union(related).intersection(liveIDs)
     guard !members.isEmpty else {
@@ -373,12 +468,14 @@ extension WorkspaceModel {
     let delay: TimeInterval
     if job.state == .succeeded {
       value.phase = job.phase; value.lastSuccess = now; value.failures = 0; value.diagnostic = nil
+      value.authenticationFailure = nil
       delay = remoteInterval(job.target.record.id)
     } else if job.state == .cancelled {
       value.phase = .skipped; value.diagnostic = store.text("Check cancelled or deferred.", "检查已取消或延后。")
       delay = 60
     } else {
       value.phase = job.phase; value.diagnostic = String(GitService.redact(job.summary).prefix(500))
+      value.authenticationFailure = job.authenticationFailure
       if job.phase == .skipped { delay = 60 }
       else { value.failures += 1; delay = RemoteCheckPolicy.backoff(value.failures) }
     }

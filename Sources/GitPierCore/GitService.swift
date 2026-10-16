@@ -6,26 +6,33 @@ public actor GitService {
   public nonisolated let root: URL
   private let runner: ProcessRunner
   private var gitPath: String
+  private let sshConfigurationPath: String?
   private var authArguments: [String] = []
   private var authEnvironment: [String: String] = [:]
+  private var authenticationRevision = UUID()
   private var writeBusy = false
   private var writeWaiters: [(UUID, CheckedContinuation<Void, Error>)] = []
   // Different working-tree actors can share info/exclude. Hold only across synchronous file I/O.
   private static let localExcludeLock = NSLock()
-  public init(root: URL, gitPath: String = "/usr/bin/git", runner: ProcessRunner = ProcessRunner())
+  public init(root: URL, gitPath: String = "/usr/bin/git", runner: ProcessRunner = ProcessRunner(), sshConfigurationPath: String? = nil)
   {
-    self.root = root.standardizedFileURL.resolvingSymlinksInPath()
+    self.root = URL(fileURLWithPath: root.path, isDirectory: true).standardizedFileURL.resolvingSymlinksInPath()
     self.gitPath = gitPath
     self.runner = runner
+    self.sshConfigurationPath = sshConfigurationPath
   }
   public func configure(
     gitPath: String, authArguments: [String] = [], authEnvironment: [String: String] = [:]
   ) {
+    if self.gitPath != gitPath || self.authArguments != authArguments || self.authEnvironment != authEnvironment { authenticationRevision = UUID() }
     self.gitPath = gitPath
     self.authArguments = authArguments
     self.authEnvironment = authEnvironment
   }
-  public func configureExecutable(_ path: String) { gitPath = path }
+  public func configureExecutable(_ path: String) {
+    if gitPath != path { authenticationRevision = UUID() }
+    gitPath = path
+  }
   private func acquireWrite() async throws {
     try Task.checkCancellation()
     if !writeBusy {
@@ -1568,7 +1575,9 @@ public actor GitService {
     let common = try await commonDirectory()
     let attributes = try FileManager.default.attributesOfItem(atPath: common.path)
     let identity = Data("\(attributes[.systemNumber] ?? ""):\(attributes[.systemFileNumber] ?? "")".utf8)
-    return SHA256.hash(data: config.stdout + effective + identity).map { String(format: "%02x", $0) }.joined()
+    let authentication = try await read(["config", "--null", "--get-regexp", "^(credential\\.|url\\.|core\\.sshcommand|ssh\\.)"], allowFailure: true).stdout
+    let profile = Data((authEnvironment["GITPIER_AUTH_IDENTITY"] ?? "").utf8)
+    return SHA256.hash(data: config.stdout + effective + identity + authentication + profile).map { String(format: "%02x", $0) }.joined()
   }
   public func reviewWorkspaceFetch(_ record: RepositoryRecord) async throws -> [WorkspaceFetchTarget] {
     try await lifecycleWrite {
@@ -1631,8 +1640,12 @@ public actor GitService {
             try await workspaceFetchIdentity(target.remote.name) == target.configurationIdentity else {
         throw GitPierError.invalidInput("The repository or remote configuration changed. Review Fetch again.")
       }
+      let revision = authenticationRevision
       var arguments = ["fetch", "--progress", "--no-write-fetch-head", "--recurse-submodules=no", "--no-auto-gc"]
       var environment: [String: String] = [:]
+      var capability: BackgroundAuthentication?
+      var sshGuard: SSHBackgroundConfiguration?
+      defer { sshGuard?.remove() }
       if automatic {
         let state: RepositoryStatus
         do { state = try await status(localOnly: true) }
@@ -1641,17 +1654,48 @@ public actor GitService {
           throw AutomaticFetchError.skipped("Resolve the current Git operation before automatic Fetch.")
         }
         environment = try await automaticFetchEnvironment(target)
+        let url = try await read(["remote", "get-url", "--", target.remote.name]).text.trimmingCharacters(in: .newlines)
+        if url.hasPrefix("https://") {
+          capability = try await authenticationCapability(url: url)
+          arguments = try await safeCredentialArguments() + arguments
+        }
+        if Self.sshDestination(url) != nil {
+          // Arbitrary ProxyCommand executables can open their own dialogs; only native
+          // OpenSSH/ProxyJump has the guarded noninteractive contract.
+          if authEnvironment["GIT_SSH_COMMAND"] == nil || authEnvironment["GITPIER_SSH_IDENTITY"] != nil {
+            capability = try await sshAuthenticationCapability(url: url)
+          }
+          sshGuard = try SSHBackgroundConfiguration(userConfiguration: sshConfigurationPath)
+          environment["GIT_SSH_COMMAND"] = (environment["GIT_SSH_COMMAND"] ?? "/usr/bin/ssh") + " -F " + InputValidation.shellQuote(sshGuard!.path)
+        }
+        guard revision == authenticationRevision else { throw AuthenticationFailure(.configurationInvalid) }
+        arguments = ["-c", "maintenance.auto=false", "-c", "credential.interactive=false"] + arguments
         arguments += ["--no-tags", "--no-prune", "--no-prune-tags"]
       }
       let refs = ["for-each-ref", "--format=%(refname)%00%(objectname)", "refs/remotes/" + target.remote.name + "/"]
       let before = try await read(refs).stdout
-      let result = try await read(arguments + ["--", target.remote.name], environment: environment, timeout: automatic ? 60 : 120)
+      let result: CommandResult
+      do { result = try await read(arguments + ["--", target.remote.name], environment: environment, timeout: automatic ? 60 : 120) }
+      catch {
+        if automatic, !(error is CancellationError) {
+          var state = AuthenticationFailure.classify(error)
+          if state == .serverRejected, capability?.transport == "SSH",
+            capability?.state == .sshIdentityNotLoaded || capability?.state == .sshAgentUnavailable {
+            state = capability!.state
+          }
+          throw AuthenticationFailure(state, source: capability?.source)
+        }
+        throw error
+      }
       let after = try await read(refs).stdout
       // A changed URL/refspec cannot inherit the old result even if transport succeeded.
       guard try await workspaceFetchIdentity(target.remote.name) == target.configurationIdentity else {
         throw GitPierError.invalidInput("Remote configuration changed during Fetch. Check again.")
       }
-      return WorkspaceFetchResult(output: Self.redact(result.text + result.errorText), referencesUpdated: before != after)
+      if capability?.transport == "SSH", capability?.state != .ready {
+        capability?.state = .ready; capability?.source = "sshIdentity"
+      }
+      return WorkspaceFetchResult(output: Self.redact(result.text + result.errorText), referencesUpdated: before != after, authentication: capability)
     }
   }
   private func automaticFetchEnvironment(_ target: WorkspaceFetchTarget) async throws -> [String: String] {
@@ -1679,32 +1723,174 @@ public actor GitService {
     }
     let ssh = authEnvironment["GIT_SSH_COMMAND"]
     let custom = try await read(["config", "--get", "core.sshCommand"], allowFailure: true).text
-    guard ssh != nil || custom.isEmpty && ProcessInfo.processInfo.environment["GIT_SSH_COMMAND"] == nil
+    guard Self.sshDestination(url) == nil || ssh != nil || custom.isEmpty && ProcessInfo.processInfo.environment["GIT_SSH_COMMAND"] == nil
       && ProcessInfo.processInfo.environment["GIT_SSH"] == nil else {
       throw AutomaticFetchError.skipped("Custom SSH commands require manual Fetch.")
     }
     // Command-scoped overrides preserve TLS and host verification. App helpers read Keychain
     // with interaction forbidden. Unknown credential helpers are never invoked in the background.
     return ["GIT_TERMINAL_PROMPT": "0", "GIT_ASKPASS": "/usr/bin/false", "SSH_ASKPASS": "/usr/bin/false",
-      "SSH_ASKPASS_REQUIRE": "never", "GITPIER_BACKGROUND": "1", "GCM_INTERACTIVE": "never",
+      "SSH_ASKPASS_REQUIRE": "never", "GITPIER_BACKGROUND": "1", "GCM_INTERACTIVE": "never", "GITPIER_AUTH_PROBE": "0",
       // ssh execs into a separate image, so the helper's legacy Keychain policy cannot protect
       // Apple's SSH passphrase lookup. Existing agent identities remain available in BatchMode.
       "GIT_SSH_COMMAND": (ssh ?? "/usr/bin/ssh") + " -oBatchMode=yes -oStrictHostKeyChecking=yes -oNumberOfPasswordPrompts=0 -oIgnoreUnknown=UseKeychain -oUseKeychain=no",
-      "GIT_SSH_VARIANT": "ssh", "GIT_CONFIG_COUNT": "4",
-      "GIT_CONFIG_KEY_0": "credential.interactive", "GIT_CONFIG_VALUE_0": "false",
-      "GIT_CONFIG_KEY_1": "credential.helper", "GIT_CONFIG_VALUE_1": "",
-      "GIT_CONFIG_KEY_2": "credential.helper", "GIT_CONFIG_VALUE_2": try await automaticCredentialHelper(url),
-      "GIT_CONFIG_KEY_3": "maintenance.auto", "GIT_CONFIG_VALUE_3": "false"]
+      "GIT_SSH_VARIANT": "ssh"]
   }
-  private func automaticCredentialHelper(_ url: String) async throws -> String {
-    // Explicit GitPier HTTPS profiles already install an app helper via command-line -c.
-    if authEnvironment["GITPIER_CREDENTIAL_ID"] != nil { return "" }
-    let configured = try await read(["config", "--get-urlmatch", "credential.helper", url], allowFailure: true).text.trimmingCharacters(in: .newlines)
-    if configured == "store" || configured == "cache" { return configured }
-    if configured == "osxkeychain", let executable = authEnvironment["GITPIER_HELPER_EXECUTABLE"] {
-      return "!" + InputValidation.shellQuote(executable) + " --background-keychain-helper"
+
+  /// Rebuild the helper multivar in original order, after a final command-line reset. Git's
+  /// credential machinery still performs URL/user/path matching and empty-entry resets.
+  /// `config --get-urlmatch` cannot do this: it returns only the last helper.
+  private func safeCredentialArguments(authorize: Bool = false) async throws -> [String] {
+    let data = try await read(["config", "--null", "--list"], limit: 2 * 1024 * 1024).stdout
+    let execPath = try await read(["--exec-path"]).text.trimmingCharacters(in: .newlines)
+    let executable = authEnvironment["GITPIER_HELPER_EXECUTABLE"]
+    let managed = authArguments.first { $0.hasPrefix("credential.helper=!") }.map { String($0.dropFirst("credential.helper=".count)) }
+    var result = ["-c", "credential.helper="]
+    for entry in data.split(separator: 0) {
+      let pair = String(decoding: entry, as: UTF8.self).split(separator: "\n", maxSplits: 1, omittingEmptySubsequences: false)
+      guard pair.count == 2 else { continue }
+      let key = String(pair[0]), value = String(pair[1])
+      guard key == "credential.helper" || key.hasPrefix("credential.") && key.hasSuffix(".helper") else { continue }
+      var replacement = ""
+      if !value.isEmpty {
+        if value == managed { replacement = value }
+        else if let words = SafeCredentialHelper.supported(value) {
+          if words[0] == "osxkeychain", let executable {
+            replacement = "!" + InputValidation.shellQuote(executable) + (authorize ? " --foreground-keychain-helper" : " --background-keychain-helper")
+          } else if words[0] != "osxkeychain", execPath.hasPrefix("/") {
+            let invocation = ([execPath + "/git-credential-" + words[0]] + words.dropFirst()).map(InputValidation.shellQuote).joined(separator: " ")
+            // Automatic Fetch must not store or erase a user's existing credentials on rejection.
+            replacement = "!f() { if test \"$1\" = get; then if test \"$GITPIER_AUTH_PROBE\" = 1; then echo gitpier-source:" + words[0] + " >&2; fi; " + invocation + " get; fi; }; f"
+          } else { replacement = Self.unsupportedCredentialHelper }
+        } else { replacement = Self.unsupportedCredentialHelper }
+      }
+      // URL sections may include embedded passwords. Do not put such keys in process arguments.
+      guard !key.contains("\n"), !key.contains("\r"), !key.contains("\0"),
+        !key.contains("://") || URLComponents(string: String(key.dropFirst(11).dropLast(7)))?.password == nil else {
+        throw AuthenticationFailure(.configurationInvalid)
+      }
+      result += ["-c", key + "=" + replacement]
     }
-    return ""
+    return result
+  }
+  private static let unsupportedCredentialHelper = "!f() { if test \"$1\" = get && test \"$GITPIER_AUTH_PROBE\" = 1; then echo gitpier-source:unsupportedHelper >&2; fi; }; f"
+
+  private func silentAuthenticationEnvironment() -> [String: String] {
+    ["GIT_TERMINAL_PROMPT": "0", "GIT_ASKPASS": "/usr/bin/false", "SSH_ASKPASS": "/usr/bin/false",
+     "SSH_ASKPASS_REQUIRE": "never", "GITPIER_BACKGROUND": "1", "GCM_INTERACTIVE": "never"]
+  }
+  private func authenticationCapability(url: String, authorize: Bool = false) async throws -> BackgroundAuthentication {
+    if url.hasPrefix("https://") {
+      let arguments = try await safeCredentialArguments(authorize: authorize)
+      var environment = silentAuthenticationEnvironment()
+      environment["GITPIER_AUTH_PROBE"] = "1"
+      if authorize { environment["GITPIER_BACKGROUND"] = "0" }
+      // Passwords exist only in pipes and this short-lived result. Never return/log/store it.
+      let result = try await read(arguments + ["credential", "fill"], input: Data(("url=" + url + "\n\n").utf8),
+        environment: environment, allowFailure: true, limit: 128 * 1024, timeout: authorize ? 120 : 15)
+      let sources = result.errorText.split(separator: "\n").filter { $0.hasPrefix("gitpier-source:") }.map { String($0.dropFirst(15)) }
+      let source = sources.isEmpty ? "none" : sources.joined(separator: " + ")
+      guard result.code == 0, result.text.split(separator: "\n").contains(where: { $0.hasPrefix("password=") && $0.count > 9 }) else {
+        let state = AuthenticationFailure.classify(GitPierError.configuration(result.errorText))
+        if state == .requiresForegroundAuthorization || state == .accessDenied { throw AuthenticationFailure(state, source: source) }
+        throw AuthenticationFailure(sources.contains("unsupportedHelper") ? .unsupportedHelper : .credentialMissing, source: source)
+      }
+      return BackgroundAuthentication(transport: "HTTPS", source: source, state: .ready, remote: Self.redact(url))
+    }
+    if Self.sshDestination(url) != nil { return try await sshAuthenticationCapability(url: url) }
+    return BackgroundAuthentication(transport: "Local", source: "none", state: .ready, remote: Self.redact(url))
+  }
+  public func backgroundAuthentication(_ target: WorkspaceFetchTarget, authorize: Bool = false) async throws -> BackgroundAuthentication {
+    try await lifecycleWrite {
+      guard try await workspaceFetchIdentity(target.remote.name) == target.configurationIdentity else { throw AuthenticationFailure(.configurationInvalid) }
+      let revision = authenticationRevision
+      let url = try await read(["remote", "get-url", "--", target.remote.name]).text.trimmingCharacters(in: .newlines)
+      let result = try await authenticationCapability(url: url, authorize: authorize)
+      guard revision == authenticationRevision, try await workspaceFetchIdentity(target.remote.name) == target.configurationIdentity else { throw AuthenticationFailure(.configurationInvalid) }
+      let verified = authorize && result.transport == "HTTPS" ? try await authenticationCapability(url: url) : result
+      guard revision == authenticationRevision, try await workspaceFetchIdentity(target.remote.name) == target.configurationIdentity else { throw AuthenticationFailure(.configurationInvalid) }
+      return verified
+    }
+  }
+  private static func sshDestination(_ url: String) -> [String]? {
+    if url.hasPrefix("ssh://"), let parsed = URLComponents(string: url), let host = parsed.host {
+      return (parsed.port.map { ["-p", String($0)] } ?? []) + [(parsed.user.map { $0 + "@" } ?? "") + host]
+    }
+    if !url.contains("://"), !url.hasPrefix("/"), let colon = url.firstIndex(of: ":") { return [String(url[..<colon])] }
+    return nil
+  }
+  private func sshAuthenticationCapability(url: String) async throws -> BackgroundAuthentication {
+    guard let destination = Self.sshDestination(url) else { throw AuthenticationFailure(.configurationInvalid) }
+    try SSHConfigurationSafety.validate(userConfiguration: sshConfigurationPath)
+    let configured = try await read(["config", "--get", "core.sshCommand"], allowFailure: true).text
+    guard configured.isEmpty, ProcessInfo.processInfo.environment["GIT_SSH_COMMAND"] == nil,
+      ProcessInfo.processInfo.environment["GIT_SSH"] == nil else { throw AuthenticationFailure(.configurationInvalid) }
+    let inspection = try await runner.run(executable: "/usr/bin/ssh", arguments: ["-G"] + (sshConfigurationPath.map { ["-F", $0] } ?? []) + destination,
+      directory: root, environment: authEnvironment, timeout: 10, limit: 512 * 1024)
+    guard inspection.code == 0 else { throw AuthenticationFailure(.configurationInvalid) }
+    let configuration = SSHAuthenticationConfiguration(inspection.text)
+    if let proxy = configuration.first("proxycommand"), proxy != "none" { throw AuthenticationFailure(.configurationInvalid, source: "sshConfig") }
+    if configuration.first("permitlocalcommand") == "yes", let command = configuration.first("localcommand"), command != "none" { throw AuthenticationFailure(.configurationInvalid, source: "sshConfig") }
+    if let provider = configuration.first("pkcs11provider"), provider != "none" { throw AuthenticationFailure(.configurationInvalid, source: "sshConfig") }
+    if let provider = configuration.first("securitykeyprovider") {
+      let inherited = authEnvironment["SSH_SK_PROVIDER"] ?? ProcessInfo.processInfo.environment["SSH_SK_PROVIDER"]
+      let builtin = provider == "internal" || provider == "none"
+        || provider == "$SSH_SK_PROVIDER" && (inherited == nil || inherited == "internal")
+      if !builtin { throw AuthenticationFailure(.configurationInvalid, source: "sshConfig") }
+    }
+    var info = BackgroundAuthentication(transport: "SSH", source: "sshAgent", state: .sshAgentUnavailable, remote: Self.redact(url))
+    info.identityFiles = authEnvironment["GITPIER_SSH_IDENTITY"].map { [$0] } ?? configuration.identityFiles
+    if let socket = configuration.agentSocket(environment: ProcessInfo.processInfo.environment.merging(authEnvironment) { _, new in new }) {
+      let result = try await runner.run(executable: "/usr/bin/ssh-add", arguments: ["-l"], directory: root,
+        environment: authEnvironment.merging(["SSH_AUTH_SOCK": socket]) { _, new in new }, timeout: 5, limit: 128 * 1024)
+      info.state = result.code == 0 ? .ready : result.code == 1 ? .sshIdentityNotLoaded : .sshAgentUnavailable
+      if info.state == .ready, authEnvironment["GITPIER_SSH_IDENTITY"] != nil || configuration.first("identitiesonly") == "yes" {
+        let loaded = Set(result.text.split(separator: "\n").compactMap { $0.split(separator: " ").dropFirst().first.map(String.init) })
+        var matched = false
+        for file in info.identityFiles {
+          let path = (file as NSString).expandingTildeInPath
+          guard FileManager.default.isReadableFile(atPath: path) else { continue }
+          let fingerprint = try await runner.run(executable: "/usr/bin/ssh-keygen", arguments: ["-l", "-f", path],
+            directory: root, environment: ["SSH_ASKPASS": "/usr/bin/false", "SSH_ASKPASS_REQUIRE": "never"], timeout: 5, limit: 4096)
+          if let hash = fingerprint.text.split(separator: " ").dropFirst().first, loaded.contains(String(hash)) { matched = true; break }
+        }
+        if !matched { info.state = .sshIdentityNotLoaded }
+      }
+    }
+    // Agent readiness permits an attempt; only Fetch can prove access to this remote.
+    return info
+  }
+  public func prepareSSHAuthentication(_ target: WorkspaceFetchTarget) async throws -> BackgroundAuthentication {
+    try await lifecycleWrite {
+      let revision = authenticationRevision
+      guard try await workspaceFetchIdentity(target.remote.name) == target.configurationIdentity else { throw AuthenticationFailure(.configurationInvalid) }
+      let url = try await read(["remote", "get-url", "--", target.remote.name]).text.trimmingCharacters(in: .newlines)
+      var info = try await sshAuthenticationCapability(url: url)
+      if info.state == .ready {
+        guard revision == authenticationRevision, try await workspaceFetchIdentity(target.remote.name) == target.configurationIdentity else { throw AuthenticationFailure(.configurationInvalid) }
+        return info
+      }
+      let destination = Self.sshDestination(url)!
+      let inspected = try await runner.run(executable: "/usr/bin/ssh", arguments: ["-G"] + (sshConfigurationPath.map { ["-F", $0] } ?? []) + destination,
+        directory: root, environment: authEnvironment, timeout: 10, limit: 512 * 1024)
+      let configuration = SSHAuthenticationConfiguration(inspected.text)
+      if info.state == .sshAgentUnavailable {
+        // An explicit IdentityAgent path/none belongs to the user's configuration.
+        guard configuration.first("identityagent") == nil || configuration.first("identityagent") == "SSH_AUTH_SOCK" else { throw AuthenticationFailure(.configurationInvalid) }
+        authEnvironment["SSH_AUTH_SOCK"] = try await SSHAgentSession.shared.prepareSocket()
+        info = try await sshAuthenticationCapability(url: url)
+      }
+      let files = info.identityFiles.map { ($0 as NSString).expandingTildeInPath }.filter { FileManager.default.isReadableFile(atPath: $0) }
+      guard !files.isEmpty else { throw AuthenticationFailure(.sshIdentityNotLoaded) }
+      var env = authEnvironment
+      if let socket = configuration.agentSocket(environment: ProcessInfo.processInfo.environment.merging(env) { _, new in new }) { env["SSH_AUTH_SOCK"] = socket }
+      env["SSH_ASKPASS_REQUIRE"] = "force"; env["GITPIER_BACKGROUND"] = "0"
+      let result = try await runner.run(executable: "/usr/bin/ssh-add", arguments: files, directory: root,
+        environment: env, timeout: 120, limit: 64 * 1024)
+      guard result.code == 0 else { throw AuthenticationFailure(.accessDenied) }
+      guard revision == authenticationRevision, try await workspaceFetchIdentity(target.remote.name) == target.configurationIdentity else { throw AuthenticationFailure(.configurationInvalid) }
+      return try await sshAuthenticationCapability(url: url)
+    }
   }
   public func workspaceSearch(record: RepositoryRecord, query: String, kinds: Set<WorkspaceSearchKind>,
                               page: Int = 0, size: Int = 25) async throws -> WorkspaceRepositorySearchPage {

@@ -56,6 +56,28 @@ printf '\nReview the Index before committing.\n' >> "$task_repo/README.md"
 printf '{"theme":"system"}\n' > "$task_repo/settings.json"
 export CLANG_MODULE_CACHE_PATH="$task_root/.cache/clang"
 export SWIFTPM_MODULECACHE_OVERRIDE="$task_root/.cache/swift"
-swift build --build-system native --disable-sandbox --cache-path "$task_root/.cache/swiftpm" --product GitPier
-task_bin="$(swift build --build-system native --disable-sandbox --cache-path "$task_root/.cache/swiftpm" --show-bin-path)"
-ZDOTDIR="$task_temp/home" GITPIER_WORKSPACE_FILE="$task_temp/workspace.json" "${GITPIER_UI_ACCEPTANCE_EXECUTABLE:-$task_bin/GitPier}" --ui-acceptance --repository "$task_repo" --output "${1:-$task_root/.cache/ui-acceptance}"
+task_bin=""
+if [[ -n "${GITPIER_UI_ACCEPTANCE_EXECUTABLE:-}" ]]; then
+  [[ -x "$GITPIER_UI_ACCEPTANCE_EXECUTABLE" ]] || { echo 'The acceptance executable is missing.' >&2; exit 1; }
+else
+  swift build --build-system native --disable-sandbox --cache-path "$task_root/.cache/swiftpm" --product GitPier
+  task_bin="$(swift build --build-system native --disable-sandbox --cache-path "$task_root/.cache/swiftpm" --show-bin-path)"
+fi
+task_output="${1:-$task_root/.cache/ui-acceptance}"
+if [[ "${GITPIER_UI_ACCEPTANCE_LAUNCH_BUNDLE:-0}" == 1 ]]; then
+  task_executable="${GITPIER_UI_ACCEPTANCE_EXECUTABLE:?Bundle launch requires the disposable application copy}"
+  task_app="${task_executable%/Contents/MacOS/GitPier}"
+  task_id="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$task_app/Contents/Info.plist")"
+  [[ "$task_id" == com.heisenberg2024.gitpier.workspace-test.* && "${GITPIER_UI_ACCEPTANCE_SCOPE:-}" == version144 ]] || { echo 'Bundle launch requires the isolated authentication fixture.' >&2; exit 1; }
+  mkdir -p "$task_output"
+  task_output="$(cd "$task_output" && pwd)"
+  task_launch_env=(--env "ZDOTDIR=$task_temp/home" --env "GITPIER_WORKSPACE_FILE=$task_temp/workspace.json" --env GIT_CONFIG_NOSYSTEM=1 --env GIT_CONFIG_GLOBAL=/dev/null)
+  for task_key in GITPIER_AUTH_ACCEPTANCE_URL GITPIER_AUTH_ACCEPTANCE_CERT GITPIER_UI_ACCEPTANCE_SCOPE GITPIER_UI_ACCEPTANCE_INTERACTIVE_V144; do
+    task_launch_env+=(--env "$task_key=${!task_key:-}")
+  done
+  /usr/bin/open -n -W --stdout "$task_output/launch-stdout.log" --stderr "$task_output/launch-stderr.log" "${task_launch_env[@]}" -a "$task_app" --args --ui-acceptance --repository "$task_repo" --output "$task_output"
+  # Launch Services returns independently of the application exit status.
+  [[ -f "$task_output/v144-results.txt" ]] || { echo 'Authentication application did not complete acceptance.' >&2; exit 1; }
+else
+  ZDOTDIR="$task_temp/home" GITPIER_WORKSPACE_FILE="$task_temp/workspace.json" "${GITPIER_UI_ACCEPTANCE_EXECUTABLE:-$task_bin/GitPier}" --ui-acceptance --repository "$task_repo" --output "$task_output"
+fi

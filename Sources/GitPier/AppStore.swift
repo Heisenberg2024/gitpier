@@ -164,9 +164,13 @@ import UserNotifications
     guard let i = configuration.repositories.firstIndex(where: { $0.id == record.id }),
       configuration.repositories[i] != record
     else { return }
+    let old = configuration.repositories[i]
     configuration.repositories[i] = record
     configuration.reconcileOrganizations()
     if debounce { saveSoon() } else { save() }
+    if old.credentialID != record.credentialID || old.useDefaultCredential != record.useDefaultCredential {
+      workspace.credentialsChanged([record.id])
+    }
   }
   func updateSettings(_ settings: AppSettings) {
     let previous = configuration.settings
@@ -183,6 +187,11 @@ import UserNotifications
     save()
     workspace.configureWatchers()
     workspace.remoteSettingsChanged()
+    if previous.defaultCredentialID != settings.defaultCredentialID || previous.gitPath != settings.gitPath {
+      workspace.credentialsChanged(Set(repositories.filter {
+        previous.gitPath != settings.gitPath || $0.credentialID == nil && $0.useDefaultCredential
+      }.map(\.id)))
+    }
     for model in models.values {
       if previous.gitPath != settings.gitPath
         || previous.defaultCredentialID != settings.defaultCredentialID
@@ -356,8 +365,14 @@ import UserNotifications
     }
     save()
     for model in models.values { Task { await model.configure() } }
+    workspace.credentialsChanged(Set(repositories.filter {
+      ($0.credentialID ?? ($0.useDefaultCredential ? settings.defaultCredentialID : nil)) == profile.id
+    }.map(\.id)))
   }
   func deleteCredential(_ id: UUID) throws {
+    let affected = Set(repositories.filter {
+      ($0.credentialID ?? ($0.useDefaultCredential ? settings.defaultCredentialID : nil)) == id
+    }.map(\.id))
     try KeychainStore().delete(id: id)
     configuration.credentials.removeAll { $0.id == id }
     if configuration.settings.defaultCredentialID == id {
@@ -372,6 +387,7 @@ import UserNotifications
       Task { await model.configure() }
     }
     save()
+    workspace.credentialsChanged(affected)
   }
   var unsavedConflictDrafts: [String] {
     models.values.flatMap { model in
@@ -570,9 +586,10 @@ struct DiffTab: Identifiable, Equatable {
         record.credentialID
         ?? (record.useDefaultCredential ? store.settings.defaultCredentialID : nil)
       let profile = store.configuration.credentials.first { $0.id == id }
-      let auth = try AuthenticationContext.make(
+      var auth = try AuthenticationContext.make(
         profile: profile, executable: Bundle.main.executablePath ?? CommandLine.arguments[0],
         configurationPath: store.persistence.url.path)
+      if let socket = await SSHAgentSession.shared.currentSocket() { auth.environment["SSH_AUTH_SOCK"] = socket }
       await git().configure(
         gitPath: store.settings.gitPath, authArguments: auth.arguments,
         authEnvironment: auth.environment)

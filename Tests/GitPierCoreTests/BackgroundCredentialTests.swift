@@ -30,12 +30,16 @@ final class BackgroundCredentialTests: XCTestCase {
     let base: [String: Any] = [kSecClass as String: kSecClassInternetPassword,
       kSecAttrServer as String: host, kSecAttrProtocol as String: kSecAttrProtocolHTTPS,
       kSecUseAuthenticationUI as String: kSecUseAuthenticationUIFail]
-    defer { SecItemDelete(base as CFDictionary) }
+    var created: [[String: Any]] = []
+    defer { for query in created { XCTAssertEqual(SecItemDelete(query as CFDictionary), errSecSuccess) } }
     func add(_ auth: CFString, port: Int, user: String, secret: String) throws {
       var query = base
       query[kSecAttrAuthenticationType as String] = auth; query[kSecAttrPort as String] = port
       query[kSecAttrAccount as String] = user; query[kSecValueData as String] = Data(secret.utf8)
       try requireFixture(SecItemAdd(query as CFDictionary, nil))
+      query.removeValue(forKey: kSecValueData as String)
+      query.removeValue(forKey: kSecUseAuthenticationUI as String)
+      created.append(query)
     }
     try add(kSecAttrAuthenticationTypeHTMLForm, port: 0, user: "browser", secret: "synthetic-browser-password")
     try add(kSecAttrAuthenticationTypeDefault, port: 8443, user: "port-user", secret: "synthetic-port-token")
@@ -125,10 +129,38 @@ final class BackgroundCredentialTests: XCTestCase {
       let result = try await runner.run(executable: executable.path, arguments: arguments,
         directory: nil, environment: env, input: request, timeout: 5)
       XCTAssertEqual(result.code, 0, result.errorText); XCTAssertTrue(result.stdout.isEmpty)
+      XCTAssertFalse(result.errorText.contains("gitpier-source:"), "Internal capability markers must not leak into normal Git output")
     }
     let refused = try await runner.run(executable: executable.path, arguments: ["Password for synthetic.invalid:"],
       directory: nil, environment: background.merging(["GITPIER_ASKPASS": "1"]) { _, value in value }, timeout: 5)
     XCTAssertEqual(refused.code, 1); XCTAssertTrue(refused.stdout.isEmpty)
+    print("KEYCHAIN_PROBE_COMPLETED")
+  }
+}
+
+extension BackgroundCredentialTests {
+  func testInternetCredentialPreservesAccountAndHttpPathSelection() async throws {
+    let name = "testInternetCredentialPreservesAccountAndHttpPathSelection"
+    guard ProcessInfo.processInfo.environment[probeKey] == name else { try await isolatedProbe(name); return }
+    try KeychainStore.prepareBackgroundHelper()
+    let host = "gitpier-path-" + UUID().uuidString.lowercased() + ".invalid"
+    let base: [String: Any] = [kSecClass as String: kSecClassInternetPassword,
+      kSecAttrServer as String: host, kSecAttrProtocol as String: kSecAttrProtocolHTTPS,
+      kSecAttrAuthenticationType as String: kSecAttrAuthenticationTypeDefault, kSecAttrPort as String: 8443]
+    var created: [[String: Any]] = []
+    defer { for query in created { XCTAssertEqual(SecItemDelete(query as CFDictionary), errSecSuccess) } }
+    for (user, path, secret) in [("alice", "team/repo.git", "synthetic-a"), ("bob", "team/repo.git", "synthetic-b"), ("alice", "other/repo.git", "synthetic-c")] {
+      var query = base; query[kSecAttrAccount as String] = user; query[kSecAttrPath as String] = path
+      query[kSecValueData as String] = Data(secret.utf8)
+      try requireFixture(SecItemAdd(query as CFDictionary, nil))
+      query.removeValue(forKey: kSecValueData as String)
+      created.append(query)
+    }
+    let prefix = "protocol=https\nhost=\(host):8443\n"
+    XCTAssertEqual(try KeychainStore.internetCredential(request: prefix + "username=bob\npath=team/repo.git\n\n"), "username=bob\npassword=synthetic-b\n\n")
+    XCTAssertEqual(try KeychainStore.internetCredential(request: prefix + "username=alice\npath=other/repo.git\n\n"), "username=alice\npassword=synthetic-c\n\n")
+    XCTAssertNil(try KeychainStore.internetCredential(request: prefix + "username=charlie\npath=team/repo.git\n\n"))
+    XCTAssertNil(try KeychainStore.internetCredential(request: prefix + "username=alice\npath=missing\n\n"))
     print("KEYCHAIN_PROBE_COMPLETED")
   }
 }

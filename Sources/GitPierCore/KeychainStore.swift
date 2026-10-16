@@ -1,5 +1,6 @@
 import Foundation
 import Security
+import CryptoKit
 
 public struct KeychainStore: Sendable {
   public let service: String
@@ -47,6 +48,10 @@ public struct KeychainStore: Sendable {
     var value: CFTypeRef?
     let status = SecItemCopyMatching(q as CFDictionary, &value)
     if status == errSecItemNotFound { return nil }
+    if status == errSecInteractionNotAllowed || status == errSecAuthFailed {
+      throw AuthenticationFailure(allowInteraction ? .accessDenied : .requiresForegroundAuthorization)
+    }
+    if status == errSecUserCanceled { throw AuthenticationFailure(.accessDenied) }
     guard status == errSecSuccess, let data = value as? Data else {
       throw GitPierError.configuration("Keychain lookup failed (\(status)).")
     }
@@ -54,27 +59,37 @@ public struct KeychainStore: Sendable {
   }
   /// Read an existing macOS internet credential without unlocking or authorization UI.
   public static func internetResponse(request: String) -> String? {
+    try? internetCredential(request: request)
+  }
+  public static func internetCredential(request: String, allowInteraction: Bool = false) throws -> String? {
     // Fail closed if invoked outside the noninteractive helper. Never toggle the process-wide
     // policy around a query in the GUI app, where a manual credential action may run in parallel.
-    guard backgroundAccessPrepared else { return nil }
+    guard allowInteraction || backgroundAccessPrepared else { return nil }
     var fields: [String: String] = [:]
     for line in request.split(separator: "\n") {
-      let parts = line.split(separator: "=", maxSplits: 1).map(String.init)
+      let parts = line.split(separator: "=", maxSplits: 1, omittingEmptySubsequences: false).map(String.init)
       if parts.count == 2 { fields[parts[0]] = parts[1] }
     }
-    guard fields["protocol"] == "https", let host = fields["host"], !host.contains("\r") else { return nil }
+    guard fields["protocol"] == "https", let host = fields["host"], !host.contains("\r"),
+      !host.contains("/"), !host.contains("@"), !host.contains("?"), !host.contains("#") else { return nil }
     let components = URLComponents(string: "https://" + host)
     guard let server = components?.host else { return nil }
     var query: [String: Any] = [kSecClass as String: kSecClassInternetPassword,
       kSecAttrServer as String: server, kSecAttrProtocol as String: kSecAttrProtocolHTTPS,
       kSecAttrAuthenticationType as String: kSecAttrAuthenticationTypeDefault,
       kSecAttrPort as String: components?.port ?? 0,
-      kSecUseAuthenticationUI as String: kSecUseAuthenticationUIFail,
       kSecReturnData as String: true, kSecReturnAttributes as String: true, kSecMatchLimit as String: kSecMatchLimitOne]
+    if !allowInteraction { query[kSecUseAuthenticationUI as String] = kSecUseAuthenticationUIFail }
     if let user = fields["username"] { query[kSecAttrAccount as String] = user }
     if let path = fields["path"] { query[kSecAttrPath as String] = path }
     var result: CFTypeRef?
-    guard SecItemCopyMatching(query as CFDictionary, &result) == errSecSuccess,
+    let status = SecItemCopyMatching(query as CFDictionary, &result)
+    if status == errSecItemNotFound { return nil }
+    if status == errSecInteractionNotAllowed || status == errSecAuthFailed {
+      throw AuthenticationFailure(allowInteraction ? .accessDenied : .requiresForegroundAuthorization)
+    }
+    if status == errSecUserCanceled { throw AuthenticationFailure(.accessDenied) }
+    guard status == errSecSuccess,
       let values = result as? [String: Any], let data = values[kSecValueData as String] as? Data,
       let secret = String(data: data, encoding: .utf8), let user = values[kSecAttrAccount as String] as? String,
       !secret.contains("\n"), !secret.contains("\r"), !user.contains("\n"), !user.contains("\r") else { return nil }
@@ -90,7 +105,7 @@ public struct KeychainStore: Sendable {
 
 public struct AuthenticationContext: Sendable {
   public let arguments: [String]
-  public let environment: [String: String]
+  public var environment: [String: String]
   public static func make(
     profile: CredentialProfile?, executable: String, configurationPath: String
   ) throws -> AuthenticationContext {
@@ -100,8 +115,10 @@ public struct AuthenticationContext: Sendable {
     ]
     var arguments: [String] = []
     if let profile {
+      let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys]
+      environment["GITPIER_AUTH_IDENTITY"] = SHA256.hash(data: try encoder.encode(profile)).map { String(format: "%02x", $0) }.joined()
       guard !profile.host.isEmpty, !profile.host.contains("\n"), !profile.host.contains("/"),
-        !profile.host.contains("@")
+        !profile.host.contains("\r"), !profile.host.contains("@"), !profile.host.contains("\0")
       else {
         throw GitPierError.invalidInput("Enter only the server hostname, optionally with a port.")
       }
@@ -123,6 +140,7 @@ public struct AuthenticationContext: Sendable {
           InputValidation.shellQuote(executable) + " --ssh-profile "
           + InputValidation.shellQuote(profile.id.uuidString)
         environment["GIT_SSH_VARIANT"] = "ssh"
+        environment["GITPIER_SSH_IDENTITY"] = profile.identityPath
       }
     }
     return AuthenticationContext(arguments: arguments, environment: environment)
@@ -136,7 +154,8 @@ public struct AuthenticationContext: Sendable {
       if parts.count == 2 { fields[String(parts[0])] = String(parts[1]) }
     }
     guard fields["protocol"] == "https",
-      fields["host"]?.lowercased() == profile.host.lowercased(), !profile.username.contains("\n"),
+      fields["host"]?.lowercased() == profile.host.lowercased(), !profile.username.contains("\n"), !profile.username.contains("\r"),
+      fields["username"] == nil || fields["username"] == (profile.username.isEmpty ? "git" : profile.username),
       !secret.contains("\n"), !secret.contains("\r")
     else { return nil }
     return "username=\(profile.username.isEmpty ? "git" : profile.username)\npassword=\(secret)\n\n"

@@ -29,6 +29,8 @@ public struct WorkspaceFetchJob: Identifiable, Sendable {
   public var automatic = false
   public var referencesUpdated = false
   public var phase: RemoteCheckPhase = .queued
+  public var authenticationFailure: BackgroundAuthenticationState?
+  public var authentication: BackgroundAuthentication?
   public var attemptID = UUID()
   public var startedAt = Date()
   public var startedUptime = ProcessInfo.processInfo.systemUptime
@@ -118,10 +120,17 @@ public actor BatchFetchCoordinator {
       case .success(let value):
         jobs[index].state = .succeeded; jobs[index].summary = ""
         jobs[index].referencesUpdated = value.referencesUpdated
+        jobs[index].authentication = value.authentication
         jobs[index].phase = value.referencesUpdated ? .referencesUpdated : .upToDate
       case .failure(let error):
         jobs[index].state = error is CancellationError ? .cancelled : .failed
         jobs[index].phase = RemoteCheckPhase.forFailure(error)
+        jobs[index].authenticationFailure = jobs[index].phase == .skipped ? nil : AuthenticationFailure.classify(error)
+        if let failure = error as? AuthenticationFailure {
+          let target = jobs[index].target
+          jobs[index].authentication = BackgroundAuthentication(transport: target.remote.fetchURL.hasPrefix("https://") ? "HTTPS" : "SSH",
+            source: failure.source ?? "none", state: failure.state, remote: target.remote.fetchURL)
+        }
         jobs[index].summary = error is CancellationError ? "" : String(GitService.redact(error.localizedDescription).prefix(2000))
       }
     }

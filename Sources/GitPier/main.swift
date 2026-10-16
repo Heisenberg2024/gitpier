@@ -5,6 +5,7 @@ import SwiftUI
 
 let backgroundCredentialInvocation = ProcessInfo.processInfo.environment["GITPIER_BACKGROUND"] == "1"
   || CommandLine.arguments.contains("--background-keychain-helper")
+let credentialCapabilityProbe = ProcessInfo.processInfo.environment["GITPIER_AUTH_PROBE"] == "1"
 if backgroundCredentialInvocation {
   // No GUI/askpass fallback is permitted in an automatic Git child. Disable legacy Keychain
   // authorization UI before any credential read; this process exits after servicing the helper.
@@ -23,10 +24,18 @@ if backgroundCredentialInvocation {
 
 if CommandLine.arguments.contains("--ssh-profile") {
   SSHLauncher.run()
-} else if CommandLine.arguments.contains("--background-keychain-helper") {
+} else if CommandLine.arguments.contains("--background-keychain-helper") || CommandLine.arguments.contains("--foreground-keychain-helper") {
   if CommandLine.arguments.last == "get" {
+    if credentialCapabilityProbe { FileHandle.standardError.write(Data("gitpier-source:systemKeychain\n".utf8)) }
     let request = String(decoding: FileHandle.standardInput.readDataToEndOfFile(), as: UTF8.self)
-    if let response = KeychainStore.internetResponse(request: request) { FileHandle.standardOutput.write(Data(response.utf8)) }
+    do {
+      if let response = try KeychainStore.internetCredential(request: request,
+        allowInteraction: CommandLine.arguments.contains("--foreground-keychain-helper") && !backgroundCredentialInvocation) {
+        FileHandle.standardOutput.write(Data(response.utf8))
+      }
+    } catch let failure as AuthenticationFailure {
+      FileHandle.standardError.write(Data(((backgroundCredentialInvocation || credentialCapabilityProbe ? failure.helperDiagnostic : failure.localizedDescription) + "\n").utf8))
+    } catch { exit(1) }
   }
   exit(0)
 } else if CommandLine.arguments.contains("--credential-helper") {
@@ -38,14 +47,18 @@ if CommandLine.arguments.contains("--ssh-profile") {
     let url = ProcessInfo.processInfo.environment["GITPIER_CONFIGURATION"].map {
       URL(fileURLWithPath: $0)
     }
-    if let configuration = try? ConfigurationStore(url: url).load(),
-      let profile = configuration.credentials.first(where: { $0.id == id }),
-      let secret = try? KeychainStore().read(id: id, allowInteraction: ProcessInfo.processInfo.environment["GITPIER_BACKGROUND"] != "1"),
-      let response = AuthenticationContext.helperResponse(
-        request: request, profile: profile, secret: secret)
-    {
-      FileHandle.standardOutput.write(Data(response.utf8))
-    }
+    if credentialCapabilityProbe { FileHandle.standardError.write(Data("gitpier-source:managedKeychain\n".utf8)) }
+    do {
+      if let configuration = try? ConfigurationStore(url: url).load(),
+        let profile = configuration.credentials.first(where: { $0.id == id && $0.kind == .https }),
+        AuthenticationContext.helperResponse(request: request, profile: profile, secret: "probe") != nil,
+        let secret = try KeychainStore().read(id: id, allowInteraction: !backgroundCredentialInvocation),
+        let response = AuthenticationContext.helperResponse(request: request, profile: profile, secret: secret) {
+        FileHandle.standardOutput.write(Data(response.utf8))
+      }
+    } catch let failure as AuthenticationFailure {
+      FileHandle.standardError.write(Data(((backgroundCredentialInvocation || credentialCapabilityProbe ? failure.helperDiagnostic : failure.localizedDescription) + "\n").utf8))
+    } catch { exit(1) }
   }
   exit(0)
 } else if ProcessInfo.processInfo.environment["GITPIER_ASKPASS"] == "1"
@@ -228,12 +241,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
           sender.reply(toApplicationShouldTerminate: false)
           return
         }
+        await SSHAgentSession.shared.shutdown()
         store.shutdown()
         sender.reply(toApplicationShouldTerminate: true)
       }
       return .terminateLater
     }
     store.shutdown()
-    return .terminateNow
+    Task {
+      await SSHAgentSession.shared.shutdown()
+      sender.reply(toApplicationShouldTerminate: true)
+    }
+    return .terminateLater
   }
 }
