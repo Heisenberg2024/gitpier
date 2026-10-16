@@ -273,8 +273,12 @@ extension GitAuthenticationTests {
     let portFile = root.appendingPathComponent("port")
     if FileManager.default.fileExists(atPath: portFile.path) { try FileManager.default.removeItem(at: portFile) }
     let fixture = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("Fixtures/authenticated-https.py")
+    // The system Git on older supported macOS versions predates authtype. A
+    // native helper must negotiate capabilities and fall back to Basic there.
+    let capabilities = try await ProcessRunner().run(executable: "/usr/bin/git", arguments: ["credential", "capability"], directory: root, environment: environment)
+    let bearer = customHelper == "bearer" && capabilities.code == 0 && capabilities.text.split(separator: "\n").contains("capability authtype")
     let process = Process(); process.executableURL = URL(fileURLWithPath: "/usr/bin/python3")
-    process.arguments = [fixture.path, root.path, cert.path, key.path, portFile.path, scheme, usePublic ? "public" : "private", customHelper == "bearer" ? "bearer" : "basic"]
+    process.arguments = [fixture.path, root.path, cert.path, key.path, portFile.path, scheme, usePublic ? "public" : "private", bearer ? "bearer" : "basic"]
     process.standardOutput = FileHandle.nullDevice; process.standardError = FileHandle.nullDevice
     try process.run()
     addTeardownBlock {
@@ -314,8 +318,14 @@ extension GitAuthenticationTests {
     }
     func replaceToken(_ token: String) async throws {
       if let nativeKeychainHelper {
+        // Older Apple helpers silently ignore store for an existing item. Only
+        // replace this fixture's exact identity, then verify the replacement.
+        let erased = try await nativeKeychain(nativeKeychainHelper, "erase")
+        XCTAssertEqual(erased.code, 0)
         let result = try await nativeKeychain(nativeKeychainHelper, "store", token: token)
         XCTAssertEqual(result.code, 0, "Cannot update this test's native credential")
+        let read = try await nativeKeychain(nativeKeychainHelper, "get")
+        XCTAssertTrue(read.text.split(separator: "\n").contains(Substring("password=" + token)), "Native fixture replacement must take effect before testing rejection")
       } else if let keychainService {
         let encoded = String(decoding: tokenData(token), as: UTF8.self)
         let result = try await security("add-generic-password -U -s " + InputValidation.shellQuote(keychainService) + " -a alice -w " + InputValidation.shellQuote(encoded))
@@ -339,13 +349,21 @@ extension GitAuthenticationTests {
         let name = "gh:127.0.0.1:" + port
         let encoded = String(decoding: tokenData("gitpier-synthetic-token"), as: UTF8.self)
         // No -U on creation: a preexisting item must never be changed or deleted.
-        let created = try await security("add-generic-password -s " + InputValidation.shellQuote(name) + " -a alice -w " + InputValidation.shellQuote(encoded))
+        let created = try await security("add-generic-password -s " + InputValidation.shellQuote(name) + " -a alice -T /usr/bin/security -w " + InputValidation.shellQuote(encoded))
         guard created.code == 0 else { return XCTFail("Cannot create isolated native gh credential") }
         keychainService = name
         addTeardownBlock {
           let result = try await ProcessRunner().run(executable: "/usr/bin/security",
             arguments: ["delete-generic-password", "-s", name, "-a", "alice"], directory: nil, timeout: 10)
           XCTAssertEqual(result.code, 0, "Cannot remove this test's native credential")
+        }
+        let read = try await security("find-generic-password -s " + InputValidation.shellQuote(name) + " -a alice -w")
+        guard read.code == 0, read.text.trimmingCharacters(in: .newlines) == encoded else {
+          return XCTFail("Native security fixture readback failed (exit \(read.code)); no credential output is logged")
+        }
+        let native = try await ProcessRunner().run(executable: gh, arguments: ["auth", "git-credential", "get"], directory: root, environment: env, input: Data((nativeQuery + "\n").utf8))
+        guard native.code == 0, native.text.split(separator: "\n").contains("password=gitpier-synthetic-token") else {
+          return XCTFail("Original gh cannot read its isolated fixture (exit \(native.code)); automatic Fetch has not run")
         }
       }
     }
@@ -389,7 +407,7 @@ extension GitAuthenticationTests {
       request = sys.stdin.read()
       if sys.argv[-1] == 'get':
           token = urllib.parse.urlsplit(pathlib.Path(\(String(reflecting: credentialFile.path))).read_text().strip()).password
-          if '--bearer' in sys.argv:
+          if '--bearer' in sys.argv and 'capability[]=authtype' in request.splitlines():
               print('capability[]=authtype\\nauthtype=Bearer\\ncredential=' + token)
           else:
               if '--password-only' not in sys.argv: print('username=alice')

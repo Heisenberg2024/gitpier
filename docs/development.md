@@ -413,6 +413,8 @@ The final audit also included configured core.askPass, GIT_ASKPASS and SSH_ASKPA
 
 The Askpass regression identified an additional product restriction: command-scoped credential.interactive=false prevents Git from calling configured Askpass at all. Automatic Fetch now preserves the user's setting, while GIT_TERMINAL_PROMPT=0 and refusal of the application fallback keep new terminal/GitPier login disabled. Original core.askPass/GIT_ASKPASS/SSH_ASKPASS providers are delegated in native order.
 
+The macOS CI fixtures also support older system Git/helper versions: query `git credential capability` and negotiate `authtype` before emitting Bearer fields, falling back to Basic when unavailable. Older native osxkeychain helpers may ignore `store` for existing entries, so rejection tests replace only their exact synthetic identity and verify its new value before Fetch. The gh fixture trusts only its original `/usr/bin/security` client and checks both native readers before automatic Fetch, without logging credentials. CI records system Git and gh versions alongside Swift.
+
 An explicitly selected GitPier HTTPS Token remains exclusive: native Askpass must not substitute another account when that Token cannot be read. A server-challenged negative regression verifies this with a valid original Askpass provider and an unavailable selected Token.
 
 The frozen delivery source passed **308 Core tests, zero failures/skips (222.538 seconds)**, including 22 HTTP/HTTPS provider/isolation combinations. All ten release gates passed. Universal 1.4.4 (24) passed both architectures and nested/deep signature verification. These supersede the earlier 222.028-second and pre-exclusive-Askpass runs; no diagnostic fixture remains in the test target.

@@ -11,7 +11,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Toolchain
-        run: swift --version
+        run: |
+          swift --version
+          /usr/bin/git --version
+          gh --version
       - name: Real Git repository tests
         run: Scripts/test.sh
       - name: Release metadata and signing gates
