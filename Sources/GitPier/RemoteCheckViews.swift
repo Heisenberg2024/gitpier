@@ -170,9 +170,19 @@ struct AutomaticAuthenticationSettings: View {
           .font(.caption).textSelection(.enabled).lineLimit(2)
         if let info {
           Text(info.transport + " · " + source(info.source)).font(.callout)
+          if info.transport == "HTTP" {
+            Text(store.text("This remote uses unencrypted HTTP. Credentials and repository data travel without encryption.", "此远程使用未加密的 HTTP，凭证和仓库数据会明文传输。"))
+              .font(.caption).foregroundStyle(.orange)
+          }
           Text(status(info.state)).font(.callout).foregroundStyle(info.state == .ready ? Color.secondary : Color.orange)
+          if info.source.components(separatedBy: " + ").contains(where: { ["githubCLI", "systemKeychain"].contains($0) }) {
+            Text(store.text("Uses your existing Git credential helper. macOS may request authorization when needed.", "复用现有 Git 凭证助手；macOS 可能在需要时请求系统授权。"))
+              .font(.caption).foregroundStyle(.secondary)
+          }
           if info.state == .ready {
-            Text(store.text("Credentials are available locally. Server access is verified only by Fetch.", "本地凭证已就绪；服务器权限仅能由获取结果确认。"))
+            Text(info.verifiedByFetch
+              ? store.text("Remote access was verified by Fetch using the existing Git authentication.", "已使用现有 Git 认证完成获取并确认远程访问。")
+              : store.text("Fetch reuses the existing Git authentication. Public repositories need no saved credential; only Fetch verifies remote access.", "获取会复用现有 Git 认证；公开仓库无需已保存凭证，远程访问由实际获取确认。"))
               .font(.caption).foregroundStyle(.secondary)
           }
         } else {
@@ -213,6 +223,8 @@ struct AutomaticAuthenticationSettings: View {
       switch source {
       case "managedKeychain": return store.text("GitPier Keychain", "GitPier 钥匙串")
       case "systemKeychain": return store.text("System Keychain", "系统钥匙串")
+      case "githubCLI": return store.text("GitHub CLI", "GitHub CLI")
+      case "gitConfiguration": return store.text("Existing Git authentication", "原有 Git 认证")
       case "store": return store.text("Git credential store", "Git 凭证文件")
       case "cache": return store.text("Git credential cache", "Git 凭证缓存")
       case "sshAgent": return store.text("SSH Agent / SSH Config", "SSH Agent / SSH 配置")

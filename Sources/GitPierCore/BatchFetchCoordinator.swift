@@ -128,7 +128,7 @@ public actor BatchFetchCoordinator {
         jobs[index].authenticationFailure = jobs[index].phase == .skipped ? nil : AuthenticationFailure.classify(error)
         if let failure = error as? AuthenticationFailure {
           let target = jobs[index].target
-          jobs[index].authentication = BackgroundAuthentication(transport: target.remote.fetchURL.hasPrefix("https://") ? "HTTPS" : "SSH",
+          jobs[index].authentication = BackgroundAuthentication(transport: BackgroundAuthentication.transport(for: target.remote.fetchURL),
             source: failure.source ?? "none", state: failure.state, remote: target.remote.fetchURL)
         }
         jobs[index].summary = error is CancellationError ? "" : String(GitService.redact(error.localizedDescription).prefix(2000))

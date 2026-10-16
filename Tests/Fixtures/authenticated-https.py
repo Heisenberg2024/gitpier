@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Disposable TLS + Basic-auth smart Git server. Never use with real credentials."""
+"""Disposable TLS/HTTP + Basic-auth smart Git server. Never use with real credentials."""
 import base64
 import http.server
 import os
@@ -16,7 +16,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
 
     def serve(self):
         expected = "Basic " + base64.b64encode(b"alice:gitpier-synthetic-token").decode()
-        if self.headers.get("Authorization") != expected:
+        if len(sys.argv) > 7 and sys.argv[7] == "bearer": expected = "Bearer gitpier-synthetic-token"
+        public = len(sys.argv) > 6 and sys.argv[6] == "public"
+        if not public and self.headers.get("Authorization") != expected:
             self.send_response(401)
             self.send_header("WWW-Authenticate", 'Basic realm="GitPier synthetic fixture"')
             self.send_header("Content-Length", "0")
@@ -52,8 +54,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
 
 
 server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
-context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
-context.load_cert_chain(sys.argv[2], sys.argv[3])
-server.socket = context.wrap_socket(server.socket, server_side=True)
+if len(sys.argv) < 6 or sys.argv[5] != "http":
+    context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    context.load_cert_chain(sys.argv[2], sys.argv[3])
+    server.socket = context.wrap_socket(server.socket, server_side=True)
 Path(sys.argv[4]).write_text(str(server.server_port))
 server.serve_forever()

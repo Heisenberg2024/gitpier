@@ -72,7 +72,7 @@ if [[ "${GITPIER_UI_ACCEPTANCE_LAUNCH_BUNDLE:-0}" == 1 ]]; then
   mkdir -p "$task_output"
   task_output="$(cd "$task_output" && pwd)"
   task_launch_env=(--env "ZDOTDIR=$task_temp/home" --env "GITPIER_WORKSPACE_FILE=$task_temp/workspace.json" --env GIT_CONFIG_NOSYSTEM=1 --env GIT_CONFIG_GLOBAL=/dev/null)
-  for task_key in GITPIER_AUTH_ACCEPTANCE_URL GITPIER_AUTH_ACCEPTANCE_CERT GITPIER_UI_ACCEPTANCE_SCOPE GITPIER_UI_ACCEPTANCE_INTERACTIVE_V144; do
+  for task_key in GITPIER_AUTH_ACCEPTANCE_URL GITPIER_AUTH_ACCEPTANCE_CERT GIT_SSL_CAINFO GITPIER_UI_ACCEPTANCE_SCOPE GITPIER_UI_ACCEPTANCE_INTERACTIVE_V144; do
     task_launch_env+=(--env "$task_key=${!task_key:-}")
   done
   /usr/bin/open -n -W --stdout "$task_output/launch-stdout.log" --stderr "$task_output/launch-stderr.log" "${task_launch_env[@]}" -a "$task_app" --args --ui-acceptance --repository "$task_repo" --output "$task_output"

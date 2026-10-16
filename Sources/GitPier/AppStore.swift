@@ -281,7 +281,7 @@ import UserNotifications
       Task { for url in urls { await addRepository(url, group: group) } }
     }
   }
-  func addRepository(_ url: URL, group: String? = nil) async {
+  func addRepository(_ url: URL, group: String? = nil, credential: UUID? = nil) async {
     do {
       let initial = await GitServiceRegistry.shared.service(for: url, gitPath: settings.gitPath)
       let root = try await initial.validate()
@@ -299,6 +299,7 @@ import UserNotifications
       }
       var record = RepositoryRecord(path: root.path)
       record.group = group ?? ""
+      record.credentialID = credential
       configuration.repositories.append(record)
       let model = RepositoryModel(record: record, store: self)
       models[record.id] = model
@@ -338,12 +339,7 @@ import UserNotifications
           url: url, destination: destination, gitPath: settings.gitPath,
           environment: auth.environment, authArguments: auth.arguments, progress: progress)
         showClone = false
-        await addRepository(destination)
-        if let current {
-          current.record.credentialID = credential
-          update(current.record)
-          await current.configure()
-        }
+        await addRepository(destination, credential: credential)
         notice = text("Clone completed.", "克隆已完成。")
         notifyCompletion(notice!)
       } catch is CancellationError {
@@ -589,7 +585,9 @@ struct DiffTab: Identifiable, Equatable {
       var auth = try AuthenticationContext.make(
         profile: profile, executable: Bundle.main.executablePath ?? CommandLine.arguments[0],
         configurationPath: store.persistence.url.path)
-      if let socket = await SSHAgentSession.shared.currentSocket() { auth.environment["SSH_AUTH_SOCK"] = socket }
+      let canonical = URL(fileURLWithPath: record.path).resolvingSymlinksInPath().path
+      if let socket = await SSHAgentSession.shared.currentSocket(repository: canonical,
+        authenticationIdentity: auth.environment["GITPIER_AUTH_IDENTITY"] ?? "") { auth.environment["SSH_AUTH_SOCK"] = socket }
       await git().configure(
         gitPath: store.settings.gitPath, authArguments: auth.arguments,
         authEnvironment: auth.environment)

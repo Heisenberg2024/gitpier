@@ -9,6 +9,16 @@ public actor SSHAgentSession {
   private var directory: URL?
   private var preparation: Task<String, Error>?
   private var preparationID: UUID?
+  private var bindings: [String: String] = [:]
+  public func bind(repository: String, authenticationIdentity: String) {
+    let canonical = URL(fileURLWithPath: repository).standardized.resolvingSymlinksInPath().path
+    if currentSocket() != nil { bindings[canonical] = authenticationIdentity }
+  }
+  public func currentSocket(repository: String, authenticationIdentity: String) -> String? {
+    let canonical = URL(fileURLWithPath: repository).standardized.resolvingSymlinksInPath().path
+    guard bindings[canonical] == authenticationIdentity else { return nil }
+    return currentSocket()
+  }
   public func currentSocket() -> String? {
     guard process?.isRunning == true else { return nil }
     guard let path = directory?.appendingPathComponent("socket").path,
@@ -64,6 +74,7 @@ public actor SSHAgentSession {
       }
     }
     process = nil
+    bindings.removeAll()
     if let directory { try? FileManager.default.removeItem(at: directory) }
     directory = nil
   }

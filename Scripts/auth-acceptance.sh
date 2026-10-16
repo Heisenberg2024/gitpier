@@ -31,6 +31,7 @@ for task_attempt in {1..100}; do [[ -f "$task_temp/port" ]] && break; sleep 0.02
 [[ -f "$task_temp/port" ]] || { echo 'TLS fixture failed to start' >&2; exit 1; }
 export GITPIER_AUTH_ACCEPTANCE_URL="https://127.0.0.1:$(cat "$task_temp/port")/remote.git"
 export GITPIER_AUTH_ACCEPTANCE_CERT="$task_temp/cert.pem"
+export GIT_SSL_CAINFO="$task_temp/cert.pem"
 export GITPIER_UI_ACCEPTANCE_LAUNCH_BUNDLE=1
 python3 - "$task_temp" "$task_root/dist/GitPier.app/Contents/MacOS/GitPier" <<'PY'
 import json, os, pathlib, subprocess, sys, uuid

@@ -69,36 +69,54 @@ extension UIAcceptance {
     try await waitFor { store.workspace.remoteCheck(record.id).lastSuccess != beforeRetry && !store.workspace.authenticationIsBusy(record.id) }
     print("v144: repository credential and Retry recovered without manual Fetch")
     enable(false); await store.workspace.stopAutomaticChecks()
-    let internet: [String: Any] = [kSecClass as String: kSecClassInternetPassword,
-      kSecAttrServer as String: "127.0.0.1", kSecAttrPort as String: parts.port!,
-      kSecAttrProtocol as String: kSecAttrProtocolHTTPS, kSecAttrAuthenticationType as String: kSecAttrAuthenticationTypeDefault,
-      kSecAttrAccount as String: "alice"]
-    var add = internet; add[kSecValueData as String] = Data("gitpier-synthetic-token".utf8)
-    guard SecItemAdd(add as CFDictionary, nil) == errSecSuccess else { throw GitPierError.invalidInput("Synthetic Internet Password fixture unavailable") }
-    defer { SecItemDelete(internet as CFDictionary) }
-    _ = try await git.perform(["config", "credential.helper", "osxkeychain"])
-    record = model.record; record.credentialID = nil; record.useDefaultCredential = false; model.record = record; store.update(record)
-    _ = await model.configure(); await store.workspace.refresh([record.id])
-    enable(true)
-    try await waitFor { store.workspace.remoteCheck(record.id).lastSuccess != nil && store.workspace.authenticationInfo(record.id)?.source == "systemKeychain" }
-    print("v144: packaged system Keychain first automatic HTTPS Fetch passed")
+    let execPath = try await git.perform(["--exec-path"]).trimmingCharacters(in: .newlines)
+    let nativeHelper = execPath + "/git-credential-osxkeychain"
+    let query = "protocol=https\nhost=127.0.0.1:\(parts.port!)\nusername=alice\n"
+    func nativeCredential(_ operation: String, token: String? = nil) async throws -> CommandResult {
+      try await ProcessRunner().run(executable: nativeHelper, arguments: [operation], directory: nil,
+        input: Data((query + (token.map { "password=" + $0 + "\n" } ?? "") + "\n").utf8), timeout: 10)
+    }
+    let existing = try await nativeCredential("get")
+    guard existing.code == 0, !existing.text.contains("password=") else { throw GitPierError.invalidInput("Synthetic native credential already exists") }
+    let created = try await nativeCredential("store", token: "gitpier-synthetic-token")
+    guard created.code == 0 else { throw GitPierError.invalidInput("Synthetic native credential unavailable") }
+    do {
+      _ = try await git.perform(["config", "credential.helper", "osxkeychain"])
+      record = model.record; record.credentialID = nil; record.useDefaultCredential = false; model.record = record; store.update(record)
+      _ = await model.configure(); await store.workspace.refresh([record.id])
+      enable(true)
+      try await waitFor { store.workspace.remoteCheck(record.id).lastSuccess != nil && store.workspace.authenticationInfo(record.id)?.source == "gitConfiguration" }
+      print("v144: packaged native osxkeychain first automatic HTTPS Fetch passed")
+    } catch {
+      enable(false); await store.workspace.stopAutomaticChecks()
+      let erased = try await nativeCredential("erase")
+      guard erased.code == 0 else { throw GitPierError.invalidInput("Cannot clean this fixture's native credential") }
+      throw error
+    }
     enable(false); await store.workspace.stopAutomaticChecks()
-    // A separate synthetic ACL-blocked item must never produce authorization UI in background.
-    let blockedHost = "gitpier-native-blocked-" + UUID().uuidString.lowercased() + ".invalid"
+    let erased = try await nativeCredential("erase")
+    guard erased.code == 0 else { throw GitPierError.invalidInput("Cannot clean this fixture's native credential") }
+    // GitPier-owned readers still must never show authorization UI in background.
     var access: SecAccess?
     guard SecAccessCreate("GitPier synthetic ACL refusal" as CFString, [] as CFArray, &access) == errSecSuccess, let access else { throw GitPierError.invalidInput("Synthetic ACL unavailable") }
-    let blocked: [String: Any] = [kSecClass as String: kSecClassInternetPassword, kSecAttrServer as String: blockedHost,
-      kSecAttrPort as String: 0, kSecAttrProtocol as String: kSecAttrProtocolHTTPS,
-      kSecAttrAuthenticationType as String: kSecAttrAuthenticationTypeDefault, kSecAttrAccount as String: "alice"]
+    let blockedProfile = CredentialProfile(name: "Synthetic ACL refusal", host: profile.host, username: "alice")
+    let blocked: [String: Any] = [kSecClass as String: kSecClassGenericPassword,
+      kSecAttrService as String: "GitPier.credentials", kSecAttrAccount as String: blockedProfile.id.uuidString]
     var blockedAdd = blocked; blockedAdd[kSecAttrAccess as String] = access; blockedAdd[kSecValueData as String] = Data("synthetic-blocked".utf8)
     guard SecItemAdd(blockedAdd as CFDictionary, nil) == errSecSuccess else { throw GitPierError.invalidInput("Synthetic blocked item unavailable") }
     defer { SecItemDelete(blocked as CFDictionary) }
-    _ = try await git.perform(["remote", "set-url", "origin", "https://alice@" + blockedHost + "/repo.git"])
+    try store.saveCredential(blockedProfile, token: "")
+    record = model.record; record.credentialID = blockedProfile.id; model.record = record; store.update(record)
+    _ = await model.configure()
+    _ = try await git.perform(["remote", "set-url", "origin", remoteURL])
+    let blockedTarget = try await model.git().upstreamFetchTarget(record)!
     await store.workspace.refresh([record.id])
     // Workspace refresh requests collection; it does not await publication of a new snapshot.
-    try await waitFor { store.workspace.entries[record.id]?.usable?.remoteTarget?.remote.fetchURL.contains(blockedHost) == true }
+    try await waitFor { store.workspace.entries[record.id]?.usable?.remoteTarget?.id == blockedTarget.id }
+    enable(true)
     store.workspace.retryAuthentication(record.id)
     try await waitFor { store.workspace.authenticationInfo(record.id)?.state == .requiresForegroundAuthorization && !store.workspace.authenticationIsBusy(record.id) }
+    enable(false); await store.workspace.stopAutomaticChecks()
     let scrolls = descendants(host).compactMap { $0 as? NSScrollView }
     for scroll in scrolls {
       if let document = scroll.documentView { document.scroll(NSPoint(x: 0, y: document.bounds.height)); scroll.reflectScrolledClipView(scroll.contentView) }
@@ -113,11 +131,48 @@ extension UIAcceptance {
       }
     }
     print("v144: ACL refusal, retry and bilingual settings rendered; no foreground ACL approval automated")
+    // No network request or credential write: render an HTTP target with no saved item.
+    let httpHost = "gitpier-http-" + UUID().uuidString.lowercased() + ".invalid"
+    _ = try await git.perform(["remote", "set-url", "origin", "http://" + httpHost + "/repo.git"])
+    record = model.record; record.credentialID = nil; model.record = record; store.update(record)
+    _ = await model.configure(); await store.workspace.refresh([record.id])
+    try await waitFor { store.workspace.entries[record.id]?.usable?.remoteTarget?.remote.fetchURL.contains(httpHost) == true }
+    store.workspace.retryAuthentication(record.id)
+    try await waitFor { store.workspace.authenticationInfo(record.id)?.state == .ready && !store.workspace.authenticationIsBusy(record.id) }
+    guard store.workspace.authenticationInfo(record.id)?.transport == "HTTP" else { throw GitPierError.invalidInput("HTTP target was mislabeled") }
+    guard store.workspace.authenticationInfo(record.id)?.verifiedByFetch == false else { throw GitPierError.invalidInput("Local Retry falsely verified server access") }
+    for language in [AppLanguage.english, .simplifiedChinese] {
+      for appearance in [AppearanceMode.light, .dark] {
+        var settings = store.settings; settings.language = language; settings.appearance = appearance; store.updateSettings(settings)
+        try await settle()
+        for scroll in descendants(host).compactMap({ $0 as? NSScrollView }) {
+          if let document = scroll.documentView { document.scroll(NSPoint(x: 0, y: document.bounds.height)); scroll.reflectScrolledClipView(scroll.contentView) }
+        }
+        let name = "v144-http-\(language.rawValue)-\(appearance.rawValue)"
+        try capture(host, to: output.appendingPathComponent(name + ".png"))
+        try accessibilityLabels(host).write(to: output.appendingPathComponent(name + "-ax.txt"), atomically: true, encoding: .utf8)
+      }
+    }
+    print("v144: HTTP native readiness without a password prerequisite and unencrypted-transport warning rendered in both languages and appearances")
+    // Clone's selected profile must exist in the record before its first automatic job.
+    let cloneDestination = fixture.appendingPathComponent("app-cloned")
+    var cloneSettings = store.settings
+    cloneSettings.remoteCheckExcludedRepositories.insert(record.id)
+    store.updateSettings(cloneSettings)
+    enable(true)
+    store.clone(url: remoteURL, destination: cloneDestination, credential: repositoryProfile.id)
+    try await waitFor { !store.cloning }
+    guard let cloned = store.current, cloned.record.path == cloneDestination.path,
+      cloned.record.credentialID == repositoryProfile.id else { throw GitPierError.invalidInput("Clone lost its selected credential binding") }
+    try await waitFor { store.workspace.remoteCheck(cloned.record.id).lastSuccess != nil }
+    guard store.workspace.authenticationInfo(cloned.record.id)?.verifiedByFetch == true else { throw GitPierError.invalidInput("Clone's first automatic Fetch was not verified") }
+    print("v144: AppStore Clone preserved its selected account before first automatic Fetch")
+    enable(false); await store.workspace.stopAutomaticChecks(); store.select(record.id)
     if env["GITPIER_UI_ACCEPTANCE_INTERACTIVE_V144"] == "1" {
       let finish = output.appendingPathComponent("finish-gui")
       try Data("Disposable authentication fixture ready\n".utf8).write(to: output.appendingPathComponent("ready-gui"))
       while !FileManager.default.fileExists(atPath: finish.path) { try await Task.sleep(for: .milliseconds(250)) }
     }
-    try Data("Managed default/repository and system Keychain first automatic HTTPS Fetch; Retry; unchanged Index/draft/page; ACL refusal and bilingual settings passed. Foreground ACL approval, cross-version ACL transfer and real private servers are not claimed.\n".utf8).write(to: output.appendingPathComponent("v144-results.txt"))
+    try Data("Managed default/repository and native osxkeychain first automatic HTTPS Fetch; AppStore Clone account binding and first automatic Fetch; Retry without local password prerequisite; unchanged Index/draft/page; managed ACL refusal; bilingual HTTP labeling/warning/native readiness settings passed. Real private-server Fetch and cross-version ACL transfer are not claimed.\n".utf8).write(to: output.appendingPathComponent("v144-results.txt"))
   }
 }

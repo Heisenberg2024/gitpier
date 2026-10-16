@@ -20,6 +20,9 @@ public struct RemoteCheckRecord: Codable, Equatable, Sendable {
   public var failures = 0
   public var diagnostic: String?
   public var authenticationFailure: BackgroundAuthenticationState?
+  /// Version 3 delegates authentication to native Fetch across helpers and transports.
+  public static let currentHelperCompatibilityVersion = 3
+  public var helperCompatibilityVersion: Int? = currentHelperCompatibilityVersion
   public init() {}
   public func isStale(now: Date = Date(), interval: TimeInterval) -> Bool {
     guard let lastSuccess else { return true }
@@ -101,6 +104,18 @@ public struct RemoteCheckStore: Sendable {
     return envelope.records.mapValues { record in
       var record = record
       if record.phase == .checking || record.phase == .queued { record.phase = record.lastSuccess == nil ? .notChecked : .upToDate }
+      if (record.helperCompatibilityVersion ?? 0) < RemoteCheckRecord.currentHelperCompatibilityVersion {
+        record.helperCompatibilityVersion = RemoteCheckRecord.currentHelperCompatibilityVersion
+        // Reevaluate blocks created by the old unsupported/alternate-identity path
+        // once, after helper support changes. Keep successful Fetch history and
+        // normal intervals; actual rejection/cancellation remains paused.
+        if record.phase == .skipped || record.phase == .authenticationRequired &&
+          [BackgroundAuthenticationState.unsupportedHelper, .requiresForegroundAuthorization, .credentialMissing,
+           .configurationInvalid, .sshAgentUnavailable, .sshIdentityNotLoaded].contains(record.authenticationFailure ?? .ready) {
+          record.phase = .notChecked; record.authenticationFailure = nil
+          record.nextEligible = Date(); record.failures = 0; record.diagnostic = nil
+        }
+      }
       return record
     }
   }

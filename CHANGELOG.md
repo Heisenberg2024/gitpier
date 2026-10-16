@@ -4,14 +4,12 @@
 
 ### 1.4.4 (24) — authentication development
 
-- Preserve native Git credential helper order, URL/username/path matching and empty resets for background HTTPS; reuse authorized GitPier/system Keychain credentials and literal store/cache options without a preliminary manual Fetch. Background helpers are read-only and unknown interactive helpers remain blocked.
-- Add local credential capability/error status, explicit Keychain authorization, SSH Agent/identity inspection and preparation, and target-specific Retry Automatic Check. Recovery resets wall and monotonic scheduling state, rejects old completions and retains the last Fetch success and repository session data.
-- Reject SSH Match exec, dynamic Includes and external commands/providers before OpenSSH inspection; retain static configuration and native ProxyJump.
-- Keep SSH host verification and TLS enabled; apply the noninteractive SSH guard to native jump hosts. Ad-hoc upgrade ACL access is not guaranteed; no credentials are migrated and no access controls are relaxed.
-- 后台 HTTPS 保留 Git 原生助手顺序、URL/用户名/路径匹配与空值重置；已授权的托管/系统钥匙串凭证及受支持的 store/cache 可直接用于首次自动获取。后台只读，未知交互助手仍被阻止。
-- 增加认证能力与错误状态、主动钥匙串授权、SSH Agent 身份检查/初始化和当前目标重试；同时恢复两套调度时钟，拒绝旧结果并保留成功时间、Index 和仓库会话。
-- OpenSSH 检查前阻止 Match exec、动态 Include 与外部命令/Provider，保留静态配置和原生 ProxyJump。
-- 保留 TLS/SSH 主机校验，原生跳板机共用禁交互配置；Ad-hoc 升级后的 ACL 访问仍受系统限制，不迁移凭证或放宽授权。尚未发布。
+- Unify Automatic Fetch with native Git authentication across HTTP/HTTPS/SSH/Git/local transports and hosting platforms. Reuse configured helper forms and original SSH commands/configuration, Agent/file identities and wallets; remove saved-password/Agent prerequisites so public repositories work anonymously. Preserve get-only helper delegation, native matching and full OAuth/partial responses.
+- Use Git's default remote when no upstream is set, retain Clone account bindings before automatic admission, and scope a prepared private Agent to its repository/authentication identity. Reevaluate legacy authentication-policy blocks once while preserving success history and actual rejection/cancellation.
+- Show HTTP's unencrypted transport warning and distinguish readiness from verified Fetch. Retain managed HTTPS Token isolation/no-UI reads, TLS/host verification, Index/FETCH_HEAD, queues and safe tracking-ref restrictions. Fix installer layout/unmount ownership with older same-name volumes mounted.
+- 自动获取统一复用 Git 原生认证，覆盖 HTTP/HTTPS/SSH/Git/本地及各托管平台；支持全部原有助手形式、SSH 命令/配置、Agent/文件身份和钱包，不再以已保存密码或 Agent 作为获取前提，公开仓库可匿名获取。保留只读 get、原生匹配及完整 OAuth/分段响应。
+- 无上游时沿用 Git 默认远程；Clone 在自动检查前保存所选账号；专属 Agent 按仓库及认证身份隔离。旧策略阻塞仅重查一次，保留成功历史及真实拒绝/取消。增加 HTTP 明文提示与实际获取验证状态，保留托管 HTTPS Token、TLS/主机验证、Index/FETCH_HEAD 和安全跟踪引用边界；修复同名安装卷布局和卸载归属校验。
+- Development only; no public v1.4.4 release has been made. 开发中，尚未正式发布。
 
 ## 1.4.3 — 2026-10-16
 

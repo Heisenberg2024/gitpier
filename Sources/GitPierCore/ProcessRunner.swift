@@ -111,6 +111,11 @@ public struct ProcessRunner: Sendable {
     for key in excludingEnvironmentKeys { env[key] = nil }
     // GUI launches need standard CLI locations; user shell configuration is left to the PTY.
     env["PATH"] = env["PATH"] ?? "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+    // Finder's PATH often contains only system directories. Preserve its precedence,
+    // while making standard macOS CLI helpers available to both manual and automatic Git.
+    for location in ["/opt/homebrew/bin", "/usr/local/bin"] {
+      if !env["PATH"]!.split(separator: ":").contains(Substring(location)) { env["PATH"]! += ":" + location }
+    }
     for (key, value) in environment { env[key] = value }
     process.environment = env
     let out = Pipe()

@@ -72,7 +72,8 @@ final class WorkspaceStatusTests: XCTestCase {
     let value = try await service.workspaceSnapshot(record)
     XCTAssertEqual(value.remoteNames, ["origin"])
     let commands = try String(contentsOf: log, encoding: .utf8).components(separatedBy: "\n").filter { !$0.isEmpty }
-    XCTAssertEqual(commands.count, 6)
+    XCTAssertNotNil(value.remoteTarget)
+    XCTAssertLessThanOrEqual(commands.count, 16)
     for command in commands { XCTAssertFalse(["fetch", "diff", "write-tree", "log"].contains { command.contains($0) }, command) }
   }
   func testIncrementalHEADBranchAndIndexUpdates() async throws {

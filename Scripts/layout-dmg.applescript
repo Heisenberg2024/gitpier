@@ -1,7 +1,8 @@
 on run argv
   set mountPath to item 1 of argv
+  set volumeName to item 2 of argv
   tell application "Finder"
-    set mountedDisk to disk "GitPier"
+    set mountedDisk to disk volumeName
     if POSIX path of (mountedDisk as alias) is not mountPath & "/" then error "A different GitPier disk is already mounted"
     tell mountedDisk
       open

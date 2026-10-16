@@ -267,8 +267,9 @@ extension WorkspaceModel {
       return info
     }
     guard let failure = remoteChecks[key]?.authenticationFailure else { return nil }
-    return BackgroundAuthentication(transport: target.remote.fetchURL.hasPrefix("https://") ? "HTTPS" : "SSH",
-      source: target.remote.fetchURL.hasPrefix("https://") ? "none" : "sshAgent", state: failure, remote: target.remote.fetchURL)
+    let transport = BackgroundAuthentication.transport(for: target.remote.fetchURL)
+    return BackgroundAuthentication(transport: transport,
+      source: transport == "SSH" ? "sshAgent" : "none", state: failure, remote: target.remote.fetchURL)
   }
   func authenticationIsBusy(_ id: UUID) -> Bool {
     guard let target = entries[id]?.snapshot?.remoteTarget else { return false }
@@ -289,7 +290,8 @@ extension WorkspaceModel {
         let git = await model.git()
         let info: BackgroundAuthentication
         if prepareSSH { info = try await git.prepareSSHAuthentication(target) }
-        else { info = try await git.backgroundAuthentication(target, authorize: authorize) }
+        else if authorize { info = try await git.backgroundAuthentication(target, authorize: true) }
+        else { info = try await git.automaticAuthenticationConfiguration(target) }
         guard !stopped, store.models[id] === model,
           authenticationGeneration[key] == generation,
           entries[id]?.snapshot?.remoteTarget?.id == target.id else { throw CancellationError() }
@@ -298,7 +300,7 @@ extension WorkspaceModel {
       } catch {
         if !(error is CancellationError), authenticationGeneration[key] == generation {
           let state = AuthenticationFailure.classify(error)
-          let transport = target.remote.fetchURL.hasPrefix("https://") ? "HTTPS" : "SSH"
+          let transport = BackgroundAuthentication.transport(for: target.remote.fetchURL)
           authentication[key] = BackgroundAuthentication(transport: transport,
             source: (error as? AuthenticationFailure)?.source ?? (transport == "SSH" ? "sshAgent" : "none"), state: state,
             remote: target.remote.fetchURL)

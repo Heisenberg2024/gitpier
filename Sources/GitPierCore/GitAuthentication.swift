@@ -48,18 +48,45 @@ public struct AuthenticationFailure: Error, LocalizedError, Sendable {
 }
 
 public struct BackgroundAuthentication: Equatable, Sendable {
+  public static func transport(for url: String) -> String {
+    if url.hasPrefix("https://") { return "HTTPS" }
+    if url.hasPrefix("http://") { return "HTTP" }
+    if url.hasPrefix("ssh://") || !url.contains("://") && !url.hasPrefix("/") && url.contains(":") { return "SSH" }
+    if url.hasPrefix("git://") { return "Git" }
+    if let scheme = URLComponents(string: url)?.scheme { return scheme.uppercased() }
+    return "Local"
+  }
   public var transport: String
   public var source: String
   public var state: BackgroundAuthenticationState
   public var remote: String
+  public var verifiedByFetch = false
   public var identityFiles: [String] = []
   public init(transport: String, source: String, state: BackgroundAuthenticationState, remote: String) {
     self.transport = transport; self.source = source; self.state = state; self.remote = remote
   }
 }
 
-/// Parse only literal helper words; shell expansions/operators are never accepted in background.
+/// Delegate configured helpers as native Git does; literal recognition is only for display.
 public enum SafeCredentialHelper {
+  /// Git's documented helper command transformation, with only get delegated.
+  /// Preserve shell snippets, options, partial responses and native helper identities.
+  public static func getOnly(_ value: String, source: String) -> String {
+    let command = value.hasPrefix("!") ? String(value.dropFirst())
+      : value.hasPrefix("/") ? value : "git credential-" + value
+    return "!f() { if test \"$1\" = get; then if test \"$GITPIER_AUTH_PROBE\" = 1; then echo gitpier-source:" + source
+      + " >&2; fi; /bin/sh -c " + InputValidation.shellQuote(command + " get") + "; fi; }; f"
+  }
+  /// gh setup-git installs a shell-form helper. Accept exactly that command, never
+  /// a general shell fragment or extra flags/subcommands.
+  public static func githubCLI(_ value: String) -> String? {
+    let shellForm = value.hasPrefix("!")
+    guard let parts = words(shellForm ? String(value.dropFirst()) : value), parts.count == 3,
+      parts[1] == "auth", parts[2] == "git-credential",
+      parts[0] == "gh" && shellForm || parts[0].hasPrefix("/") && URL(fileURLWithPath: parts[0]).lastPathComponent == "gh"
+    else { return nil }
+    return parts[0]
+  }
   public static func words(_ value: String) -> [String]? {
     var words: [String] = [], word = "", quote: Character?, escaped = false, started = false
     for ch in value {

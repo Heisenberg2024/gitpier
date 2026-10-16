@@ -198,13 +198,22 @@ extension WorkspaceFetchTests {
     do { _ = try await git.checkedWorkspaceFetch(target, automatic: true); XCTFail() }
     catch { XCTAssertTrue(error.localizedDescription.contains("Mirror")) }
   }
-  func testLocalSnapshotSelectsUpstreamRemoteAndNeverGuessesWithoutUpstream() async throws {
+  func testLocalSnapshotSelectsGitDefaultRemoteWithoutUpstream() async throws {
     try await raw(["remote", "add", "unused", fixture.appendingPathComponent("missing.git").path])
     let snapshot = try await git.workspaceSnapshot(record)
     XCTAssertEqual(snapshot.remoteTarget?.remote.name, "origin")
     try await raw(["branch", "--unset-upstream"])
     let noUpstream = try await git.workspaceSnapshot(record)
-    XCTAssertNil(noUpstream.remoteTarget); XCTAssertNil(noUpstream.upstream)
+    XCTAssertEqual(noUpstream.remoteTarget?.remote.name, "origin"); XCTAssertNil(noUpstream.upstream)
+    try await raw(["checkout", "--detach"])
+    let detached = try await git.upstreamFetchTarget(record)
+    XCTAssertEqual(detached?.remote.name, "origin")
+    try await raw(["remote", "remove", "origin"])
+    let single = try await git.upstreamFetchTarget(record)
+    XCTAssertEqual(single?.remote.name, "unused")
+    try await raw(["remote", "add", "ambiguous", fixture.appendingPathComponent("other.git").path])
+    let ambiguous = try await git.upstreamFetchTarget(record)
+    XCTAssertNil(ambiguous)
   }
   func testWorktreeUpstreamsDeduplicateButDifferentRemoteIdentitiesDoNot() async throws {
     let linked = fixture.appendingPathComponent("auto-linked")
@@ -284,7 +293,7 @@ extension WorkspaceFetchTests {
     XCTAssertFalse(accepted.accepted.isEmpty)
     await coordinator.waitUntilIdle(); await coordinator.shutdown()
   }
-  func testAutomaticCustomSSHIsConservativelySkipped() async throws {
+  func testAutomaticCustomSSHUsesTheOriginalCommand() async throws {
     try await raw(["config", "core.sshCommand", "/usr/bin/false"])
     // An SSH-only setting must not disable an unrelated file/HTTPS transport.
     let local = try await git.upstreamFetchTarget(record)!
@@ -292,12 +301,12 @@ extension WorkspaceFetchTests {
     try await raw(["remote", "set-url", "origin", "ssh://git@example.invalid/repo.git"])
     let value = try await git.upstreamFetchTarget(record)!
     do { _ = try await git.checkedWorkspaceFetch(value, automatic: true); XCTFail() }
-    catch { XCTAssertTrue(error.localizedDescription.contains("Custom SSH")) }
+    catch { XCTAssertFalse(error is AutomaticFetchError); XCTAssertEqual(AuthenticationFailure.classify(error), .networkFailure) }
   }
 }
 
 extension WorkspaceFetchTests {
-  func testBackgroundDoesNotInvokeInteractiveCredentialOrAskpassHelpers() async throws {
+  func testBackgroundInvokesConfiguredCredentialHelperButDisablesAskpass() async throws {
     let marker = fixture.appendingPathComponent("interactive-helper-was-run")
     let wrapper = fixture.appendingPathComponent("git-background-fixture")
     let source = """
@@ -327,22 +336,21 @@ extension WorkspaceFetchTests {
     await coordinator.submit([target], automatic: true); await coordinator.waitUntilIdle()
     let jobs = await coordinator.current()
     XCTAssertEqual(jobs[0].phase, .authenticationRequired, jobs[0].summary)
-    XCTAssertFalse(FileManager.default.fileExists(atPath: marker.path), "Background Fetch launched an interactive credential helper")
+    XCTAssertTrue(FileManager.default.fileExists(atPath: marker.path), "Background Fetch did not reuse the configured native helper")
   }
-  func testSSHBackgroundOptionsRemainNoninteractiveAndKeepHostVerification() async throws {
+  func testSSHBackgroundRetainsOriginalCommandAndOptions() async throws {
     let capture = fixture.appendingPathComponent("ssh-arguments")
     let ssh = fixture.appendingPathComponent("noninteractive-ssh")
     let source = "#!/bin/sh\nprintf '%s\\n' \"$@\" >> " + InputValidation.shellQuote(capture.path) + "\nprintf 'Permission denied (publickey).\\n' >&2\nexit 1\n"
     try source.write(to: ssh, atomically: true, encoding: .utf8)
     try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: ssh.path)
     try await raw(["remote", "set-url", "origin", "ssh://git@example.invalid/repository.git"])
-    await git.configure(gitPath: "/usr/bin/git", authEnvironment: ["GIT_SSH_COMMAND": InputValidation.shellQuote(ssh.path), "GIT_SSH_VARIANT": "ssh"])
+    await git.configure(gitPath: "/usr/bin/git", authEnvironment: ["GIT_SSH_COMMAND": InputValidation.shellQuote(ssh.path) + " -oStrictHostKeyChecking=yes -oUseKeychain=yes", "GIT_SSH_VARIANT": "ssh"])
     let target = try await git.upstreamFetchTarget(record)!
     do { _ = try await git.checkedWorkspaceFetch(target, automatic: true); XCTFail() } catch {}
     let args = try String(contentsOf: capture, encoding: .utf8)
-    XCTAssertTrue(args.contains("BatchMode=yes")); XCTAssertTrue(args.contains("StrictHostKeyChecking=yes"))
-    XCTAssertTrue(args.contains("NumberOfPasswordPrompts=0")); XCTAssertFalse(args.contains("StrictHostKeyChecking=no"))
-    XCTAssertTrue(args.contains("UseKeychain=no"))
+    XCTAssertTrue(args.contains("StrictHostKeyChecking=yes")); XCTAssertFalse(args.contains("StrictHostKeyChecking=no"))
+    XCTAssertTrue(args.contains("UseKeychain=yes")); XCTAssertFalse(args.contains("UseKeychain=no"))
   }
 }
 
@@ -405,12 +413,12 @@ extension WorkspaceFetchTests {
 
 
 extension WorkspaceFetchTests {
-  func testAutomaticFetchSkipsCustomRemoteHelperConfiguration() async throws {
+  func testAutomaticFetchDelegatesConfiguredRemoteHelpersToNativeGit() async throws {
     for option in ["vcs", "uploadpack"] {
       try await raw(["config", "remote.origin." + option, "unsupported-helper"])
       let target = try await git.upstreamFetchTarget(record)!
       do { _ = try await git.checkedWorkspaceFetch(target, automatic: true); XCTFail() }
-      catch { guard case AutomaticFetchError.skipped = error else { return XCTFail(error.localizedDescription) } }
+      catch { XCTAssertFalse(error is AutomaticFetchError); XCTAssertEqual(AuthenticationFailure.classify(error), .networkFailure) }
       try await raw(["config", "--unset", "remote.origin." + option])
     }
   }
