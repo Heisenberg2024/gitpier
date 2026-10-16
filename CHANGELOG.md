@@ -2,14 +2,14 @@
 
 ## Unreleased
 
-### 1.4.4 (24) — authentication development
+## 1.4.4 — 2026-10-16
 
 - Unify Automatic Fetch with native Git authentication across HTTP/HTTPS/SSH/Git/local transports and hosting platforms. Reuse configured helper forms and original SSH commands/configuration, Agent/file identities and wallets; remove saved-password/Agent prerequisites so public repositories work anonymously. Preserve get-only helper delegation, native matching and full OAuth/partial responses.
 - Use Git's default remote when no upstream is set, retain Clone account bindings before automatic admission, and scope a prepared private Agent to its repository/authentication identity. Reevaluate legacy authentication-policy blocks once while preserving success history and actual rejection/cancellation.
 - Show HTTP's unencrypted transport warning and distinguish readiness from verified Fetch. Retain managed HTTPS Token isolation/no-UI reads, TLS/host verification, Index/FETCH_HEAD, queues and safe tracking-ref restrictions. Fix installer layout/unmount ownership with older same-name volumes mounted.
 - 自动获取统一复用 Git 原生认证，覆盖 HTTP/HTTPS/SSH/Git/本地及各托管平台；支持全部原有助手形式、SSH 命令/配置、Agent/文件身份和钱包，不再以已保存密码或 Agent 作为获取前提，公开仓库可匿名获取。保留只读 get、原生匹配及完整 OAuth/分段响应。
 - 无上游时沿用 Git 默认远程；Clone 在自动检查前保存所选账号；专属 Agent 按仓库及认证身份隔离。旧策略阻塞仅重查一次，保留成功历史及真实拒绝/取消。增加 HTTP 明文提示与实际获取验证状态，保留托管 HTTPS Token、TLS/主机验证、Index/FETCH_HEAD 和安全跟踪引用边界；修复同名安装卷布局和卸载归属校验。
-- Development only; no public v1.4.4 release has been made. 开发中，尚未正式发布。
+- Release v1.4.4 (24) as a Universal DMG with the existing production update signature identity. 发布 v1.4.4（24）Universal DMG，保留生产更新签名身份。
 
 ## 1.4.3 — 2026-10-16
 
