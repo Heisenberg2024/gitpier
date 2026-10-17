@@ -1,8 +1,8 @@
 # Changelog
 
-## Unreleased
+## 1.5.1 — 2026-10-17
 
-### 1.5.1 (26) — Hosting stability and compatibility
+### Hosting stability and compatibility (26)
 
 - Disconnect sessions before cleanup, journal disconnected credential copies and retain explicit retries after macOS denies deletion. Keep active Local Vault use independent from old Keychain copies.
 - Load request Overview and selected detail modules independently; isolate failures, page large requests and reject stale results after selection changes. Show denied CI access explicitly and keep remote Diff read-only.
