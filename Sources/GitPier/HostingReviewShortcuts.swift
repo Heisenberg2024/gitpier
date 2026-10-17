@@ -53,55 +53,88 @@ struct HostingReviewDashboardView: View {
   private var account: HostingAccount? { accountID.flatMap { hosting.account($0) } }
   var body: some View {
     VStack(alignment: .leading, spacing: 12) {
-      HStack { Text(store.text("Account Review Inbox", "账号审查收件箱")).font(.title2.weight(.semibold)); Spacer(); Button(store.text("Done", "完成")) { dismiss() } }
+      header
       Text(store.text("Account-wide platform results, including repositories outside this workspace. Queries run only when you choose Load. No Git Fetch or repository scan.", "显示整个平台账号的结果，包含当前工作空间之外的仓库。仅点击加载后查询，不执行 Git Fetch 或仓库扫描。"))
         .font(.callout).foregroundStyle(.secondary)
-      HStack {
-        Picker(store.text("Account", "账号"), selection: $accountID) {
-          Text(store.text("Select Account", "选择账号")).tag(UUID?.none)
-          ForEach(hosting.metadata.accounts) { account in
-            Text(account.instance.provider.title + " · @" + account.user.login + " · " + (account.instance.baseURL.host ?? "")).tag(Optional(account.id))
-          }
-        }.frame(maxWidth: 420)
-        Picker(store.text("Filter", "筛选"), selection: $kind) {
-          Text(store.text("Review Requested", "请求我审查")).tag(HostingReviewDashboardKind.requestedReviews)
-          Text(store.text("My Open PR / MR", "我打开的 PR / MR")).tag(HostingReviewDashboardKind.myOpenRequests)
-        }.frame(maxWidth: 260)
-        Button(store.text("Load", "加载")) { if let account { inbox.load(hosting: hosting, account: account, kind: kind) } }
-          .disabled(inbox.loading || account == nil || account?.instance.provider == .gitea)
-        Button { if let account { inbox.load(hosting: hosting, account: account, kind: kind, refresh: true) } } label: { Image(systemName: "arrow.clockwise") }
-          .disabled(inbox.loading || account == nil || account?.instance.provider == .gitea)
-      }
-      if let account, account.instance.provider == .gitea {
-        Text(store.text("This Gitea instance has no verified account-wide review query. Open its dashboard in your browser.", "尚未验证此 Gitea 实例的账号级待审查查询，请在浏览器中查看平台工作台。"))
-        Link(store.text("Open Platform", "打开平台"), destination: account.instance.baseURL)
-      }
-      if account?.instance.provider == .gitlab, kind == .requestedReviews {
-        Text(store.text("GitLab lists open merge requests where this account is assigned as a reviewer; it does not mean every item is unreviewed.", "GitLab 列出当前账号被分配为审查者的打开 MR，不代表每一项都尚未审查。"))
-          .font(.caption).foregroundStyle(.secondary)
-      }
-      if let error = inbox.error { Text(error).foregroundStyle(.orange).textSelection(.enabled) }
-      if inbox.incomplete { Text(store.text("The provider returned a partial or capped search snapshot. Open the platform to see more.", "平台返回了不完整或达到上限的查询快照，请在平台查看完整结果。")) .font(.caption).foregroundStyle(.orange) }
-      if let date = inbox.fetchedAt { Text(store.text("Platform snapshot: ", "平台快照时间：") + date.formatted(date: .abbreviated, time: .standard)).font(.caption).foregroundStyle(.secondary) }
-      if inbox.loading { ProgressView().controlSize(.small) }
-      List(inbox.items) { item in
-        HStack(alignment: .top, spacing: 12) {
-          VStack(alignment: .leading, spacing: 4) {
-            Text(item.repository + " #\(item.number) · " + item.title).fontWeight(.medium)
-            Text("@" + item.author + " · " + item.updatedAt).font(.caption).foregroundStyle(.secondary)
-          }
-          Spacer()
-          if let onOpen, hosting.metadata.bindings.contains(where: { $0.accountID == item.accountID && $0.repository == item.repository }),
-            hosting.account(item.accountID)?.instance == item.instance {
-            Button(store.text("Open in GitPier", "在 GitPier 中打开")) { onOpen(item) }
-          }
-          Link(store.text("Open in Browser", "在浏览器中打开"), destination: item.webURL)
-        }.padding(.vertical, 5)
-      }
+      queryControls
+      providerExplanation
+      queryStatus
+      requestList
       if inbox.nextPage != nil { Button(store.text("Load More", "加载更多")) { if let account { inbox.load(hosting: hosting, account: account, kind: kind, more: true) } }.disabled(inbox.loading) }
     }.padding(20).frame(minWidth: 780, idealWidth: 960, minHeight: 440, idealHeight: 620)
       .onChange(of: accountID) { _, _ in inbox.reset() }.onChange(of: kind) { _, _ in inbox.reset() }
       .onChange(of: hosting.revision) { _, _ in inbox.reset() }.onDisappear { inbox.reset() }
+  }
+  private var header: some View {
+    HStack {
+      Text(store.text("Account Review Inbox", "账号审查收件箱")).font(.title2.weight(.semibold))
+      Spacer()
+      Button(store.text("Done", "完成")) { dismiss() }
+    }
+  }
+  private var accountPicker: some View {
+    Picker(store.text("Account", "账号"), selection: $accountID) {
+      Text(store.text("Select Account", "选择账号")).tag(UUID?.none)
+      ForEach(hosting.metadata.accounts) { account in
+        Text(accountLabel(account)).tag(Optional(account.id))
+      }
+    }.frame(maxWidth: 420)
+  }
+  private func accountLabel(_ account: HostingAccount) -> String {
+    let provider = account.instance.provider.title
+    let host = account.instance.baseURL.host ?? ""
+    return "\(provider) · @\(account.user.login) · \(host)"
+  }
+  private var filterPicker: some View {
+    Picker(store.text("Filter", "筛选"), selection: $kind) {
+      Text(store.text("Review Requested", "请求我审查")).tag(HostingReviewDashboardKind.requestedReviews)
+      Text(store.text("My Open PR / MR", "我打开的 PR / MR")).tag(HostingReviewDashboardKind.myOpenRequests)
+    }.frame(maxWidth: 260)
+  }
+  private var queryControls: some View {
+    HStack {
+      accountPicker
+      filterPicker
+      Button(store.text("Load", "加载")) { if let account { inbox.load(hosting: hosting, account: account, kind: kind) } }
+        .disabled(inbox.loading || account == nil || account?.instance.provider == .gitea)
+      Button { if let account { inbox.load(hosting: hosting, account: account, kind: kind, refresh: true) } } label: { Image(systemName: "arrow.clockwise") }
+        .disabled(inbox.loading || account == nil || account?.instance.provider == .gitea)
+    }
+  }
+  @ViewBuilder private var providerExplanation: some View {
+    if let account, account.instance.provider == .gitea {
+      Text(store.text("This Gitea instance has no verified account-wide review query. Open its dashboard in your browser.", "尚未验证此 Gitea 实例的账号级待审查查询，请在浏览器中查看平台工作台。"))
+      Link(store.text("Open Platform", "打开平台"), destination: account.instance.baseURL)
+    }
+    if account?.instance.provider == .gitlab, kind == .requestedReviews {
+      Text(store.text("GitLab lists open merge requests where this account is assigned as a reviewer; it does not mean every item is unreviewed.", "GitLab 列出当前账号被分配为审查者的打开 MR，不代表每一项都尚未审查。"))
+        .font(.caption).foregroundStyle(.secondary)
+    }
+  }
+  @ViewBuilder private var queryStatus: some View {
+    if let error = inbox.error { Text(error).foregroundStyle(.orange).textSelection(.enabled) }
+    if inbox.incomplete { Text(store.text("The provider returned a partial or capped search snapshot. Open the platform to see more.", "平台返回了不完整或达到上限的查询快照，请在平台查看完整结果。")) .font(.caption).foregroundStyle(.orange) }
+    if let date = inbox.fetchedAt { Text(store.text("Platform snapshot: ", "平台快照时间：") + date.formatted(date: .abbreviated, time: .standard)).font(.caption).foregroundStyle(.secondary) }
+    if inbox.loading { ProgressView().controlSize(.small) }
+  }
+  private var requestList: some View {
+    List(inbox.items) { item in requestRow(item) }
+  }
+  private func requestRow(_ item: HostingReviewDashboardItem) -> some View {
+    let title: String = "\(item.repository) #\(item.number) · \(item.title)"
+    let subtitle: String = "@\(item.author) · \(item.updatedAt)"
+    return HStack(alignment: .top, spacing: 12) {
+      VStack(alignment: .leading, spacing: 4) {
+        Text(title).fontWeight(.medium)
+        Text(subtitle).font(.caption).foregroundStyle(.secondary)
+      }
+      Spacer()
+      if let onOpen, hosting.metadata.bindings.contains(where: { $0.accountID == item.accountID && $0.repository == item.repository }),
+        hosting.account(item.accountID)?.instance == item.instance {
+        Button(store.text("Open in GitPier", "在 GitPier 中打开")) { onOpen(item) }
+      }
+      Link(store.text("Open in Browser", "在浏览器中打开"), destination: item.webURL)
+    }.padding(.vertical, 5)
   }
 }
 
