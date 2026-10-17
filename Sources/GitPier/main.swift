@@ -184,6 +184,15 @@ struct GitPierApp: App {
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
   nonisolated(unsafe) private var keyMonitor: Any?
+  func application(_ application: NSApplication, open urls: [URL]) {
+    let callbacks = urls.filter { $0.scheme == "gitpier" && $0.host == "oauth" && $0.path == "/gitlab" }
+    guard !callbacks.isEmpty else { return }
+    Task { @MainActor in
+      for url in callbacks {
+        if await AppStore.shared.hosting.receiveOAuthCallback(url) { break }
+      }
+    }
+  }
   func applicationDidFinishLaunching(_ notification: Notification) {
     keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
       let consumed = MainActor.assumeIsolated {

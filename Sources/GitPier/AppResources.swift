@@ -30,4 +30,16 @@ enum AppResources {
     }
     return NSImage(contentsOf: url)
   }()
+
+  @MainActor private static let hostingLogos: [String: NSImage] = {
+    var images: [String: NSImage] = [:]
+    for name in ["hosting-github-light", "hosting-github-dark", "hosting-gitlab", "hosting-gitea"] {
+      let ext = name.hasPrefix("hosting-github") ? "pdf" : "svg"
+      if let url = bundle.url(forResource: name, withExtension: ext), let image = NSImage(contentsOf: url) { images[name] = image }
+    }
+    return images
+  }()
+  @MainActor static func hostingLogo(_ provider: HostingProvider, dark: Bool) -> NSImage? {
+    hostingLogos["hosting-" + provider.rawValue + (provider == .github ? (dark ? "-dark" : "-light") : "")]
+  }
 }

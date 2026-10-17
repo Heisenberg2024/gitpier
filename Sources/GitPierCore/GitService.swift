@@ -33,6 +33,13 @@ public actor GitService {
     if gitPath != path { authenticationRevision = UUID() }
     gitPath = path
   }
+  /// Read the explicitly selected PR/MR source branch without switching HEAD or fetching.
+  public func hostingCreationState(sourceBranch: String) async throws -> RepositoryStatus {
+    var state = try await status(localOnly: true)
+    guard let source = try await branches().first(where: { !$0.remote && $0.name == sourceBranch }) else { throw HostingError.branchMissing }
+    state.branch = source.name; state.head = source.hash
+    return state
+  }
   private func acquireWrite() async throws {
     try Task.checkCancellation()
     if !writeBusy {

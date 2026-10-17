@@ -4,8 +4,18 @@ import SwiftUI
 
 /// Exercises the actual application against a throwaway repository; no fixture is loaded by normal launches.
 @MainActor enum UIAcceptance {
+  private static var hostingBrowserDelegate: AppDelegate?
   static func run() {
     _ = NSApplication.shared
+    if ProcessInfo.processInfo.environment["GITPIER_UI_ACCEPTANCE_SCOPE"] == "hosting-browser" {
+      guard (Bundle.main.bundleIdentifier ?? "").hasPrefix("com.heisenberg2024.gitpier.workspace-test."),
+        let path = ProcessInfo.processInfo.environment["GITPIER_WORKSPACE_FILE"],
+        URL(fileURLWithPath: path).deletingLastPathComponent().lastPathComponent.hasPrefix("GitPier-ui.") else {
+        FileHandle.standardError.write(Data("Browser callback acceptance requires the disposable workspace application.\n".utf8)); exit(1)
+      }
+      // AppKit installs its Get URL routing during application launch.
+      hostingBrowserDelegate = AppDelegate(); NSApp.delegate = hostingBrowserDelegate
+    }
     NSApp.setActivationPolicy(.accessory)
     Task {
       let store = AppStore.shared
@@ -60,6 +70,20 @@ import SwiftUI
           try await verifyDashboardRedesign(root: root, output: output)
           store.shutdown()
           print("Native Dashboard redesign acceptance passed.")
+          exit(0)
+        }
+        if ProcessInfo.processInfo.environment["GITPIER_UI_ACCEPTANCE_SCOPE"] == "hosting-browser" {
+          window.close()
+          try await verifyHostingBrowserCallbacks(store: store, output: output)
+          store.shutdown()
+          print("Native ordinary-browser callback acceptance passed (mock OAuth).")
+          exit(0)
+        }
+        if ProcessInfo.processInfo.environment["GITPIER_UI_ACCEPTANCE_SCOPE"] == "hosting" {
+          window.close()
+          try await verifyHosting(root: root, output: output)
+          store.shutdown()
+          print("Native hosting fixture acceptance passed (real OAuth not tested).")
           exit(0)
         }
         if ProcessInfo.processInfo.environment["GITPIER_UI_ACCEPTANCE_SCOPE"] == "workspace-performance" {

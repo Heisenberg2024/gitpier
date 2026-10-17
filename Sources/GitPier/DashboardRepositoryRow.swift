@@ -88,6 +88,7 @@ struct DashboardRepositoryRow: View {
         Text(entry.usable?.isWorktree == true ? store.text("Linked worktree", "关联工作树") : entry.record.group)
           .font(uiFont(size: 11)).foregroundStyle(.secondary).lineLimit(1)
       }
+      HostingDashboardBadge(hosting: store.hosting, recordID: entry.record.id, branch: entry.usable?.branch ?? "", head: entry.usable?.head, snapshotRevision: entry.usable?.collectedAt)
     }.font(uiFont(size: 12)).foregroundStyle(.secondary)
   }
   private var changes: some View {

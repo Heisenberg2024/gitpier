@@ -153,6 +153,7 @@ struct RepositoryWorkspace: View {
     case "conflicts": ConflictResolutionView(model: model)
     case "lfs": LFSView(model: model)
     case "submodules": SubmodulesView(model: model)
+    case "hosting": HostingWorkspaceView(model: model)
     default:
       GeometryReader { area in
         HStack(spacing: 0) {
@@ -202,6 +203,7 @@ struct RepositoryWorkspace: View {
       }
       Menu {
         Button(store.text("Resolve Conflicts", "解决冲突")) { model.openConflicts() }
+        Button(store.text("Pull / Merge Requests", "拉取 / 合并请求")) { model.setPage("hosting") }
         Button(store.text("Reflog", "引用日志")) { model.setPage("reflog") }
         Button(store.text("Worktrees", "工作树")) { model.setPage("worktrees") }
         Button("Git LFS") { model.setPage("lfs") }

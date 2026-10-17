@@ -12,6 +12,14 @@ GitPier brings repository management, change review, commits, and an integrated 
 
 ![Commit workspace with tracked and untracked changes, side-by-side Diff, and terminal](docs/screenshots/commit-workspace.png)
 
+## Unreleased — v1.5.0 code hosting
+
+Native Code Hosting settings add GitHub Device Flow, GitLab browser authorization with S256 PKCE, and Gitea public-client PKCE with a local loopback callback. Cards use official platform marks and open from anywhere inside the card. GitHub opens its verification page automatically; GitLab opens an ordinary default-browser tab and validates its application callback with State/PKCE, avoiding the system authentication-session prompt. PAT remains available. GitHub.com and GitLab.com public Client IDs are bundled, so ordinary users can connect without registering an application. Self-hosted instances have their own public configuration. No Client Secret or GitPier backend is required.
+
+Connect multiple accounts and link each repository to an account and Remote. New OAuth and PAT accounts default to a Local Encrypted Vault (AES-256-GCM, independent random keys saved on this Mac), restored on demand after restart without OAuth Keychain prompts. macOS Keychain remains available per account, with explicit Verify after restart. Change the default for future accounts or confirm a per-account migration in Code Hosting settings. Refresh is merged per account and saves the complete rotated pair; saving failures are reported as session-only. Local keys and ciphertext together can recover tokens; see [credential storage and security](docs/credential-storage.md). Existing Git credentials, helpers, SSH, remotes, upstreams and Automatic Fetch remain independent.
+
+Repository → More → Pull / Merge Requests provides paged lists, details, exact-commit CI/Pipeline, commits, read-only file diffs and reviews/comments. Create a PR/MR only after pushed-branch checks and confirmation; GitPier never auto-pushes or blindly retries uncertain creation. Dashboard adds a small connected-repository summary. Broad write scopes require explicit reauthorization. Real platform OAuth/private API acceptance results are recorded in the development guide; isolated tests do not substitute for real login. See [OAuth registration and limitations](docs/oauth-setup.md) and [development validation](docs/development.md).
+
 ## Features
 
 - **Multi-repository management.** Switch between repositories and worktrees, organize projects into collections, and drag repositories to save their order in the sidebar and organization pages. Opening a repository from an organization adds it to that organization.

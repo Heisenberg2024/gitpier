@@ -436,3 +436,94 @@ Final Universal **1.4.4 (24)** passed arm64/x86_64, nested/deep signatures, pack
 The final DMG is **15,012,577 bytes**, SHA256 `55be171b1a60f807b6b1c70e44faf734f02416e92344f467e2a4aa4695e44b5f`. The existing production Keychain key signed the archive and Feed without export or replacement. Both equal-length tampered archive/Feed copies were rejected. The Draft and public assets were downloaded and verified against local hashes/signatures; the exact English-first bilingual notes match the public body and embedded Feed. The tag, Latest release, public release page and canonical Latest Feed were verified after publication.
 
 All 11 historical releases, 29 remote assets, 11 old tags, 95 local historical assets, 19 protected production/configuration paths and existing mounts were preserved. Task-only test bundles/preferences/windows/mounts were cleaned. Evidence is in `.cache/releases/v1.4.4-native-final`; this release does not establish real private-server acceptance, production-ID upgrade/ACL transfer, Intel/macOS 14 hardware, Gatekeeper, actual drag installation or production self-update installation. The application remains ad-hoc signed and not notarized.
+
+## Unreleased v1.5.0 hosting validation
+
+The maintainer-registered GitHub.com and GitLab.com public Client IDs are bundled in `HostingOAuthConfiguration.json`; see [OAuth setup](oauth-setup.md). Self-hosted IDs belong to their instance. No Client Secret, test token or backend belongs in release configuration. Version candidate is 1.5.0 (25), preserving the existing production Bundle ID/feed/EdDSA public key and macOS 14 requirement.
+
+```bash
+Scripts/test.sh --filter HostingTests
+Scripts/test.sh
+python3 Scripts/test-release-tools.py
+UNIVERSAL=1 Scripts/build-app.sh
+Scripts/workspace-acceptance.sh hosting .cache/ui-acceptance/v150-verified
+Scripts/workspace-acceptance.sh full .cache/ui-acceptance/v150-full
+Scripts/package-dmg.sh dist/GitPier.app dist/GitPier-1.5.0-macos-universal.dmg
+```
+
+Hosting tests inject synthetic provider responses and exercise actual isolated Keychain items and 127.0.0.1 sockets. Native hosting acceptance uses a disposable identity/workspace, mock OAuth/API, real Local Vault AES files and an injected synthetic Keychain backend, visible bilingual Light/Dark windows at 960×640, 1440×900 and larger sizes, device-code copying, create review without POST and preservation of fixture Index/HEAD/remotes/drafts. GitLab callback success here is simulated: no real system-browser consent or provider registration is asserted. `GITPIER_UI_ACCEPTANCE_INTERACTIVE_HOSTING=1` keeps the fixture visible until `finish-gui` is created in the output folder.
+
+The existing 308 Core and 10 release-tool tests remain required. Earlier implementation baseline (2026-10-17, before registered IDs and the real-browser callback fix): 372 Core tests (the original 308 plus 64 Hosting tests), zero failures/skips, 228.260 seconds; 64 focused Hosting tests also passed in 0.421 seconds, and all 10 release-tool gates passed. That earlier Universal build and deep signatures passed with 162 frozen repository build inputs unchanged; the new IDs and real-browser callback fix require their own subsequent build, recorded below. Native hosting acceptance produced 207 complete system-window screenshots, with visible English/Simplified Chinese, Light/Dark, 960×640, 1440×900 and 1800×1100 content sizes. CUA additionally verified saved/manual binding values across account/Remote changes, explicit suggestions, cancellation/reopening, actual account-list scrolling to the bottom, read-only review controls and preserved creation input after a failed preflight. Full existing native UI/PTY acceptance passed (104 render captures). Hosting evidence is in `.cache/ui-acceptance/v150-verified/`; baseline control/PTY evidence is in `.cache/ui-acceptance/v150-full/`. Earlier layer-cache/partial capture folders are superseded and are not visual acceptance evidence. Real GitHub.com/GitLab.com/self-hosted OAuth, private API permissions, fork creation, actual refresh grants and Keychain ACL after a real ad-hoc upgrade remain deferred. Intel/macOS 14 hardware, Developer ID/notarization and production self-update are separate acceptance boundaries. Do not publish a release or alter historical assets from these commands.
+
+Earlier blank-ID local candidate (preserved; does not include the newly registered public IDs): `dist/GitPier-1.5.0-macos-universal.dmg`, 16,620,515 bytes, SHA256 `c5c1397d78f2f68984b1d3d7aca7a414df181f13804245083bf0e8023cc0d3ff`. HFS+/ULFO structure, Universal app/deep signature, mounted file bytes/links/permissions and Finder icon-view background/icons/arrow/bilingual text were checked; 101 regular packaged files match the build, with the complete path/link/permission set preserved. All 31 pre-existing distribution assets remained byte-identical. The task's read-only mount and disposable GUI fixtures were cleaned up. This candidate has no new production EdDSA feed/signature and was not installed, committed, pushed, tagged or released.
+
+
+### Real public OAuth acceptance — 2026-10-17
+
+The maintainer-provided GitHub.com and GitLab.com public IDs were embedded and verified in a packaged 1.5.0 (25) application. Real HTTPS provider endpoints, system browser sessions and `GitPier.hosting.oauth` Keychain items were used, with no mock transport or exported tokens. Both accounts resolved to `Heisenberg2024`: GitHub Device Flow returned `read:user`; GitLab public S256 PKCE returned through `gitpier://oauth/gitlab` with `read_user read_api`.
+
+Historical system-session checkpoint (superseded by ordinary-browser callbacks below): the first real GitLab callback exposed a Swift 6 executor assertion: AuthenticationServices invoked the legacy completion on a SafariLaunchAgent XPC queue, but a closure constructed in the MainActor authorization method inherited MainActor isolation. At that checkpoint, `HostingBrowserSession.completionHandler(for:)` constructed a nonisolated `@Sendable` completion and explicitly enters MainActor before accessing session state. A compiled off-main callback probe passed, and native Hosting acceptance included a detached callback regression. The actual GitLab browser authorization was repeated successfully after the fix.
+
+After a normal Quit and restart of the same isolated application, both accounts initially displayed **Verify to Unlock**. Explicit **Verify Connection** restored their existing Keychain tokens, preserved account IDs and read the current-user APIs without another browser login. Read-only repository binding and live API acceptance then passed:
+
+| Provider | Public repository/request | Verified reads |
+| --- | --- | --- |
+| GitHub | `swiftlang/swift#93347` | 50-item PR page, detail, 3 commits, 23 files and native read-only Diff, exact-SHA CI (3 pending checks) |
+| GitLab | `gitlab-org/cli!4118` | 50-item MR page, detail, 1 commit, 5 files and native read-only Diff, approvals/discussions, exact-SHA Pipeline `2949086587` (success) |
+
+The final Universal build, both architectures and deep signatures passed. Its arm64 executable matches the real-tested application after removing signatures from comparison copies. The 64 Hosting tests passed with zero failures (0.463 seconds), and all 10 release-tool gates passed. Source/resource changes supersede the earlier 162-input frozen package record. The existing blank-ID DMG was preserved; the updated application is `dist/GitPier.app` and no new installer or release was produced.
+
+Local evidence (public metadata, native AX snapshots and screenshots; no tokens) is in `.cache/oauth-live/evidence.json` and adjacent files. The stable isolated application and workspace are retained there with their account metadata; actual tokens remain only in Keychain. The production workspace/installation was not migrated. Public read access and restart recovery are established; self-hosted providers, private repositories, write grants/creation, actual token-expiry refresh, post-upgrade ACL prompts and Intel/macOS 14 hardware are still separate acceptance boundaries.
+
+
+Settings ordering convention: **About stays rightmost**. Insert future Settings tabs before About and preserve existing selection IDs (About remains tag 7; Code Hosting remains tag 8). Hosting card artwork is bundled from official sources listed in `THIRD_PARTY_NOTICES.md`, preserving platform colors and GitHub black/white theme variants. Scrollable hosting forms reserve 6 pt around content for native focus rings. Native hosting fixtures inject the browser opener so automatic Device Flow navigation never opens a real authorization page during synthetic tests.
+
+
+### Hosting settings UI acceptance — 2026-10-17
+
+`GITPIER_UI_ACCEPTANCE_INTERACTIVE_HOSTING=1 GITPIER_UI_ACCEPTANCE_INTERACTIVE_HOSTING_PAGE=accounts Scripts/workspace-acceptance.sh hosting .cache/ui-acceptance/v150-hosting-ui-fixes` passed on the updated native application: **231 system-window captures**, English/Simplified Chinese, Light/Dark and 960/1440/1800 content widths. It verifies official logo loading, a single automatic GitHub verification-URL open through the injected opener, device-code copying, mock callback/creation and unchanged fixture Index/HEAD/remotes/draft. The callback's off-main regression also runs before the matrix.
+
+CUA clicked the blank lower-right area of each provider card and verified the corresponding connection sheet. Actual focused Gitea instance URL, GitLab Client ID/fixed-loopback port and PAT secure fields retained complete left/right native focus rings. The native Settings toolbar places About after Code Hosting while preserving tags 7/8. Connection and request-creation scroll content reserve focus-ring space.
+
+A separate normal application with an isolated empty workspace verified real browser navigation: clicking Authorize with GitHub automatically opened `https://github.com/login/device` (then GitHub's account picker) without clicking Open GitHub. GitLab requested a normal browser session; after the one-time macOS website-login confirmation, an ordinary Chrome window reused the existing GitLab login and showed the OAuth approval page. These navigation checks stopped before granting OAuth again; earlier complete real-provider acceptance remains recorded above. The API URLSession remains ephemeral and does not share browser cookies.
+
+Both native and Universal builds/deep signatures passed. Evidence is in the matrix's `hosting-results.json`, `cua-results.json`, native screenshots and redacted browser AX snapshots. Disposable UI/browser applications, temporary workspace data and preference domains were removed. Existing installation/accounts and historical installers were retained. `dist/GitPier.app` contains these changes; the earlier DMG was not regenerated.
+
+
+### GitLab ordinary-browser callback acceptance — 2026-10-17
+
+This supersedes the ASWebAuthenticationSession checkpoints above. GitLab opens through `NSWorkspace` in the default browser, and the running application's AppDelegate forwards `gitpier://oauth/gitlab` to `OAuthBrowserCallback`. There is no system web-authentication session, so the repeated macOS website-sharing dialog and dedicated authentication window are avoided. The browser's ordinary tab/window policy is preserved; GitPier does not resize another application's windows, change its preferences or alter the system URL handler. Valid callbacks return focus to the original GitPier window.
+
+`Scripts/test.sh --filter HostingTests` passed **73 tests, zero failures (0.704 seconds)**: the existing 64 plus 9 callback receiver cases covering early delivery, invalid/oversized/token-bearing/foreign callbacks, provider denial, duplicate/concurrent delivery, cancellation, timeout/expiry and previous-session state. The original PKCE exchange/replay and token lifecycle tests remain in the suite. All 10 release-tool gates passed.
+
+`Scripts/workspace-acceptance.sh hosting-browser .cache/ui-acceptance/gitlab-standard-browser/native-delivery` passed. It sends real Get URL AppleEvents to the disposable process itself, exercising AppKit -> AppDelegate -> active receiver -> mock OAuth exchange/current-user validation, with wrong-state and duplicate rejection. Its AppDelegate must be installed before `NSApp.run()`: AppKit installs URL-event routing during launch; the earlier late-delegate fixture timed out and is superseded. This native acceptance changes no default handler and uses an in-memory vault. The broader `hosting` fixture also uses the ordinary-browser receiver; prior 231 layout captures remain the unchanged layout checkpoint.
+
+CUA opened real GitLab.com authorization twice from a separate empty-workspace application. Both attempts went directly to a new ordinary tab beside the existing tabs in the same Chrome window, reused the existing GitLab login and displayed no ASWebAuthenticationSession sharing prompt. Both flows were cancelled before approving OAuth again. The installed URL handler remained `/Applications/GitPier.app`; the new private-scheme callback was validated with the native process-targeted event instead of sending a real code to the unchanged installed application. A new complete public-provider grant/return was not repeated in this checkpoint. Browser permission to open GitPier on return may still require a user confirmation; this is separate from the removed system sharing prompt.
+
+Evidence is in `.cache/ui-acceptance/gitlab-standard-browser/` (`browser-results.json`, redacted browser AX snapshot and `native-delivery/hosting-browser-results.json`) and `.cache/gitlab-*` logs. Disposable browser/UI apps, workspaces and preference domains were cleaned; historical installers and the installed application were retained. The updated build is `dist/GitPier.app`. For ordinary-browser callback delivery, install the updated build at the existing registered GitPier path; do not change the user's URL handler or OAuth registration just to test a development copy.
+
+Final delivery check for this callback change: Universal 1.5.0 (25), arm64/x86_64 and deep signatures passed. The guarded final bundle repeated native Get URL acceptance successfully. A production-identity invocation of the fixture exits before AppStore/delegate startup. The installed default URL handler remained unchanged.
+
+
+### Dual credential storage validation — 2026-10-17
+
+New OAuth/PAT accounts default to Local Encrypted Vault; legacy accounts retain Keychain. Each account persists its own mode in v2 hosting metadata. Changing the global default or reconnecting an existing user from the new-account entry never migrates that account. Only an explicitly reviewed per-account change/reauthorization can switch storage. See [storage, security and migration](credential-storage.md).
+
+The final complete Core suite passed **424 tests, zero failures/skips (237.593 seconds)**. The final focused suite passed **116 Hosting tests (73 existing + 43 new), zero failures/skips (0.836 seconds)**; all ten release-tool tests passed. The new xcrun/xctest process restores real encrypted local files, actual isolated Keychain items and a migrated account, then the parent precisely deletes both synthetic Keychain items and verifies absence. Coverage includes tag/key/AAD tampering, private permissions/link refusal, crash checkpoints, key rotation, all three providers and both refresh backends, per-account concurrency, migration rollback/cancellation, deferred cleanup, session-only persistence failure from the initial journal through metadata commit, and stale/foreign OAuth context rejection. Cancelling reauthorization never replaces the original session.
+
+Final Universal **1.5.0 (25)** passed arm64/x86_64 and deep signatures. Production Bundle ID, macOS 14 minimum, Sparkle feed/public key and existing public Client IDs remain intact. The delivered application is `dist/GitPier.app`; existing DMGs were preserved. Build source/resource/test fingerprints were checked after packaging. Local compiler: Apple Swift 6.4.
+
+The full hosting layout/flow checkpoint produced **262 system-window captures**. After the duplicate-connection compatibility correction, the final focused native run produced **22 English/Simplified Chinese, Light/Dark captures** and confirmed both migration directions, stable bindings, local PAT without OAuth Keychain reads, retained session/recovery markers after denied persistence, explicit previous-copy cleanup and unchanged existing modes on duplicate connection. CUA additionally used the actual default popup, scrolled to the last account/footer, cancelled migration, confirmed both directions and postponed old-copy cleanup. The final existing **native UI/PTY suite passed (104 captures)**. Native Get URL AppleEvent/AppDelegate/state-bound receiver/mock exchange and duplicate rejection passed again. No real provider authorization was repeated in these storage checks.
+
+```bash
+Scripts/test.sh
+Scripts/test.sh --filter 'Hosting(Credential)?Tests'
+python3 Scripts/test-release-tools.py
+UNIVERSAL=1 Scripts/build-app.sh
+Scripts/workspace-acceptance.sh hosting .cache/ui-acceptance/v150-dual-final
+GITPIER_HOSTING_STORAGE_ONLY=1 Scripts/workspace-acceptance.sh hosting .cache/ui-acceptance/v150-dual-delivery
+Scripts/workspace-acceptance.sh full .cache/ui-acceptance/v150-dual-complete
+Scripts/workspace-acceptance.sh hosting-browser .cache/ui-acceptance/v150-dual-callback-verified
+```
+
+Evidence is under the named `.cache/ui-acceptance/` directories and `.cache/dual-*` logs. Test applications, preference domains and temporary credential directories were removed through the disposable workflow. This does not establish a new real-platform Local Vault OAuth grant, real server expiry rotation/private writes, ad-hoc production-upgrade authorization, Intel/macOS 14 hardware, same-commit Swift 6.1 CI or a production update installation. Keychain continues to follow macOS authorization; local key plus ciphertext disclosure permits recovery, and ordinary SSD deletion is not secure physical erasure. No repository commit, push, tag, release, production key change or historical installer replacement was performed.

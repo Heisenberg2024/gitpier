@@ -62,6 +62,7 @@ def main():
                     SUSendProfileInfo=False, SUScheduledCheckInterval=86400,
                     SUVerifyUpdateBeforeExtraction=True, SURequireSignedFeed=True,
                     SUSignedFeedFailureExpirationInterval=0)
+        info['CFBundleURLTypes'] = [dict(CFBundleURLName='GitPier OAuth', CFBundleURLSchemes=['gitpier'], CFBundleTypeRole='Viewer')]
         if trusted:
             info['SUFeedURL'] = config['feedURL']
             if config['publicEDKey']:

@@ -11,3 +11,12 @@ GitPier is licensed under the [MIT License](LICENSE). Its dependencies retain th
 Exact revisions are recorded in `Package.resolved`. The full license texts above are preserved from those revisions. SwiftTerm's license includes notices for Miguel de Icaza, the xterm.js authors, SourceLair, and Christopher Jeffrey. swift-argument-parser identifies Apple Inc. and the Swift project authors in its source notices.
 
 `Scripts/build-app.sh` includes this notice, GitPier's LICENSE, and the dependency license texts in the application bundle. Retain the applicable copyright notices and license terms when redistributing the application. GitPier's MIT License does not replace these dependency licenses.
+
+
+## Hosting platform marks
+
+The hosting connection cards use unmodified official marks to identify integrations. These marks remain the property of their respective owners and are not covered by GitPier's MIT license; their use does not imply endorsement.
+
+- GitHub Invertocat (black/white PDF): [official logo toolkit](https://brand.github.com/foundations/logo), [source archive](https://brand.github.com/GitHub_Logos.zip). GitHub and Invertocat are trademarks of GitHub, Inc.
+- GitLab Tanuki (full-color SVG): [official asset](https://gitlab.com/gitlab-org/gitlab-svgs/-/blob/main/illustrations/gitlab_logo.svg), [brand guidelines](https://design.gitlab.com/brand-logo/core-logo/). GitLab and its logo are trademarks of GitLab Inc.
+- Gitea (green SVG): [official source asset](https://github.com/go-gitea/gitea/blob/main/assets/logo.svg), [official website](https://about.gitea.com/). Gitea and its logo belong to the Gitea project and its respective trademark owners.

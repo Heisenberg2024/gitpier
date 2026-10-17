@@ -187,6 +187,10 @@ struct SettingsView: View {
       }.tag(5)
       CredentialsView().tabItem { Label(store.text("Credentials", "凭证"), systemImage: "key") }.tag(
         6)
+      HostingSettingsView(hosting: store.hosting).tabItem {
+        Label(store.text("Code Hosting", "代码托管"), systemImage: "person.crop.circle.badge.checkmark")
+      }.tag(8)
+      // Keep About last when adding tabs; its stable selection ID remains 7.
       AboutSettingsView().tabItem {
         Label(store.text("About", "关于"), systemImage: "info.circle")
       }.tag(7)

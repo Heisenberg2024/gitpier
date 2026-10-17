@@ -12,6 +12,14 @@ GitPier 将仓库管理、变更审查、提交和集成终端汇集在一个专
 
 ![提交工作台：已跟踪与未跟踪变更、双栏 Diff 和终端](docs/screenshots/commit-workspace.png)
 
+## Unreleased — v1.5.0 代码托管
+
+原生“代码托管”设置新增 GitHub Device Flow 验证码授权、GitLab 浏览器 S256 PKCE，以及 Gitea 公共客户端 PKCE 与本机回环回调，保留 PAT 备用。平台卡片使用官方图标，整卡可点击；GitHub 自动打开验证页，GitLab 使用默认浏览器普通标签及 State/PKCE 应用回调，避免系统认证会话的重复提示。已内置 GitHub.com 与 GitLab.com 公共 Client ID，普通用户无需自行注册应用；自建实例使用各自的公开配置。不需要 Client Secret 或 GitPier 自建后端。
+
+支持多账号及仓库独立关联。新 OAuth/PAT 账号默认使用本地加密凭证库（AES-256-GCM、各账号独立随机密钥保存在本机），重启后按需自动恢复，无需 OAuth 钥匙串授权。可按账号选择系统钥匙串，重启后通过“验证连接”恢复；代码托管设置支持更改新账号默认值及确认后逐账号迁移。同账号并发刷新合并、整对保存；保存失败会明确提示仅当前会话有效。密钥与密文同时泄露时 Token 可被恢复，详见[凭证存储与安全边界](docs/credential-storage.md)。原 Git 凭证、助手、SSH、Remote、Upstream 和自动 Fetch 保持独立。
+
+仓库 → More → 拉取 / 合并请求提供分页列表、详情、准确提交的 CI/Pipeline、提交、只读文件 Diff 及审查评论。创建 PR/MR 必须先检查已推送分支并确认，不会自动 Push 或盲目重试未知结果。Dashboard 为已关联仓库增加轻量摘要，宽写入权限必须主动重新授权。真实平台 OAuth/私有 API 验收结果见开发验证说明，隔离测试不能替代真实登录。详见[OAuth 注册与限制](docs/oauth-setup.md)和[开发验证说明](docs/development.md)。
+
 ## 功能
 
 - **多仓库管理。** 切换仓库和 Worktree，通过组织管理项目，在侧栏和组织页面拖动仓库并保存顺序。从组织内打开的仓库会自动归属该组织。

@@ -72,6 +72,14 @@ struct HelpView: View {
             "在“设置 → 凭证”添加 HTTPS Token 或 SSH 配置，并在仓库设置中选择。Token 保存在 macOS Keychain 中。既有 Git 凭证助手、Hooks 和签名仍有效；GitPier 不会自动修改全局 Git 或 SSH 配置。"
           )
         }
+        section("Hosting Credential Storage", "托管凭证存储", symbol: "lock.doc") {
+          paragraph("New OAuth and PAT accounts use Local Encrypted Vault by default: AES-256-GCM, a separate random key per account saved on this Mac, no extra password and automatic restoration on demand. macOS Keychain remains available per account. The default in Code Hosting settings affects future accounts only; existing Keychain accounts keep their mode and use Verify Connection after restart.",
+            "新 OAuth/PAT 账号默认使用本地加密凭证库：AES-256-GCM、每账号独立随机密钥保存在本机，无需额外密码，重启后按需自动恢复。系统钥匙串仍可按账号选择，默认设置仅影响未来账号；已有钥匙串账号保持原模式，重启后请点击“验证连接”。")
+          paragraph("Local Vault protects files with user permissions, not hardware isolation. Anyone who obtains both the key and ciphertext can decrypt the credentials; malware with full access to your files is outside this protection. FileVault adds protection while the disk is locked. Keychain uses macOS access permissions and can request authorization, including after ad-hoc updates. Git network helpers may still use Keychain in either mode.",
+            "本地库依靠文件权限，不具有硬件隔离。同时取得密钥和密文即可解密，无法抵抗能完整读取当前用户文件的恶意程序；FileVault 可增加磁盘锁定时的保护。钥匙串使用 macOS 访问权限，必要时及 ad-hoc 更新后可能要求授权。两种模式下，Git 网络凭证助手仍可能访问钥匙串。")
+          paragraph("Change Storage Method requires confirmation for one account. Reauthorization avoids reading the previous Keychain token; memory or explicitly permitted stored credentials can also be used. Failed migration keeps the source. Previous-copy cleanup can be postponed, and ordinary SSD file deletion is not guaranteed secure erasure. Saving failures are marked session-only; restart may require reauthorization. Disconnect removes local copies and bindings, but revoke the platform grant separately in its authorization settings.",
+            "“更换存储方式”须逐账号确认。重新授权可避免读取旧钥匙串，也可使用内存 Token 或明确允许读取已存储的凭证。失败保留原存储，旧副本可暂缓清理；普通 SSD 文件删除不保证安全擦除。保存失败会提示仅当前会话有效，重启可能需重新授权。断开删除本地副本及关联，撤销平台授权请另行前往平台授权设置。")
+        }
         section("Remote Checks", "远程检查", symbol: "arrow.triangle.2.circlepath") {
           paragraph("Settings → Git → Automatic Remote Checks is off by default. Enabling connects to configured remotes while GitPier is active: current repository every 15 minutes (10/30/60 available), other workspace repositories about 45 minutes, with at most two Fetches. Limit the scope or exclude a repository as needed. Local watching remains independent.",
             "“设置 → Git → 自动远程检查”默认关闭。启用后仅在 GitPier 活动期间连接远程，当前仓库默认15分钟（可选10/30/60），其他仓库约45分钟，最多两并发。可限制范围或排除仓库，与本地监听独立。")
