@@ -1,6 +1,6 @@
-# Code review and collaboration — v1.6.0 development
+# Code review and collaboration — v1.6.0
 
-This is an unreleased development feature. Released v1.5.1 validation is historical evidence; it does not verify the new write workflows. Current implementation and acceptance results are recorded in the development guide. No v1.6.0 real-service comments or approvals have been authorized or performed.
+Released [v1.6.0](https://github.com/Heisenberg2024/gitpier/releases/tag/v1.6.0), build 27. The [development guide](development.md#v160-publication--2026-10-18) records exact-commit CI, native fixture acceptance and publication verification. Released v1.5.1 live validation is historical evidence; it does not verify the new write workflows. No v1.6.0 real-service comments or approvals have been performed.
 
 ## Provider capabilities
 
@@ -86,21 +86,21 @@ The new Core modules cover review models/API/submission, reviewer selection/API,
 
 The 278 new Core tests cover 81 provider API cases, 51 anchor/submission safety cases, 29 concurrency/cache cases, 41 reviewer cases, 24 inbox/branch identity cases, 11 multiline cases, 20 approval-rule cases and 21 disconnect-intent cases. The concurrency cases include repository-path aliases sharing one stable-identity active/unknown lock. All original 494 test functions remain. One original Gitea fixture was corrected to the actual unpaginated endpoint and strengthened to check 120 items, one GET and no second-page request; the other 33 original test files remain byte-identical to the baseline.
 
-The latest complete Core suite passed **772 tests, zero failures/skips, 264.658 seconds**, including the stable-identity lock fix, with evidence in `.cache/v160-core-full-final-v2.log`. The focused run passed **424 tests, zero failures/skips, 1.439 seconds**. All **10 release-tool gates** passed in **2.080 seconds**.
+Before the CI compatibility fix, the complete local Core suite passed **772 tests, zero failures/skips, 264.658 seconds**, including the stable-identity lock fix, with evidence in `.cache/v160-core-full-final-v2.log`. The focused run passed **424 tests, zero failures/skips, 1.439 seconds**. All **10 release-tool gates** passed in **2.080 seconds**.
 
 Completed native acceptance includes the original UI/PTY suite (**104 captures**), the Hosting matrix (**273 captures**), real AppleEvent delivery with a mock OAuth exchange, and the final automatic Review run (**18 WindowServer captures / 21 provider assertions**). Four JSON records verify unknown-result close/quit protection without requiring a draft body. Gitea's disabled formal-review paths are verified as zero-write fallbacks, not successful native approvals.
 
 The complete GUI-assisted Review run separately passed with **25 WindowServer captures / 22 provider assertions**. Actual account/filter menu selections verified late-response isolation, exact inbox navigation, current-branch Find/Open and unchanged HEAD/branch/Index/worktree. Compare was mounted as the real view and checked against actual local/remote-tracking refs in both languages; its existing main navigation was not clicked. A real GitLab disclosure expansion and Load Approval Rules click caused exactly one independent read and displayed required approvals = 2 / rule not approved while personal approval was true. These fixtures use synthetic HTTP and credential stores. Capture counts are not unit-test counts.
 
-The final Universal release bundle **1.6.0 (27), arm64 + x86_64** passed deep signature and Sparkle structure verification. All **191** frozen repository build inputs remained unchanged. The temporary DMG structure check passed. A unique local candidate DMG was packaged and verified (20,399,690 bytes); no publication, installation or production EdDSA signing occurred; Finder visuals, drag installation and an actual Sparkle update are distinct checks.
+Before the Swift 6.1 compatibility fix, the local Universal candidate **1.6.0 (27), arm64 + x86_64** passed deep signature and Sparkle structure verification. All **191** frozen repository build inputs remained unchanged. The temporary DMG structure check passed. A unique local candidate DMG was packaged and verified (20,399,690 bytes); no publication, installation or production EdDSA signing occurred; Finder visuals, drag installation and an actual Sparkle update are distinct checks.
 
-The existing HTTPS/SSH/Git/helper, Automatic Fetch, reviewed commit/partial staging, Worktree, Rebase, Patch, LFS/Submodule and OAuth/vault/migration tests passed within that full suite. The unchanged Git, token-manager, vault, OAuth and Keychain implementations retain their original boundaries. Local fixtures are not new real-server transport, grant, natural-expiry or actual operating-system Keychain-refusal acceptance. These local macOS 27.0.1 / Swift 6.4 results do not establish production installation/update, new CI, Intel hardware or macOS 14 runtime acceptance. No v1.6.0 real-service comments or approvals have been authorized or performed.
+The existing HTTPS/SSH/Git/helper, Automatic Fetch, reviewed commit/partial staging, Worktree, Rebase, Patch, LFS/Submodule and OAuth/vault/migration tests passed within that full suite. The unchanged Git, token-manager, vault, OAuth and Keychain implementations retain their original boundaries. Local fixtures are not new real-server transport, grant, natural-expiry or actual operating-system Keychain-refusal acceptance. These local macOS 27.0.1 / Swift 6.4 results do not establish production installation/update, Intel hardware or macOS 14 runtime acceptance. The later exact-commit Swift 6.1 CI, rebuilt Universal and signed publication are recorded in the development guide. No v1.6.0 real-service comments or approvals have been authorized or performed.
 
 Disconnect-intent fault fixtures verify recovery behavior, not physical disk or power-loss durability. A malformed, unsupported or identity-mismatched sidecar rejects the entire Hosting metadata load and requires manual restoration; it is never silently ignored or used to delete credentials during loading. If both the intent and main metadata writes fail, memory revocation remains effective and credential deletion pauses, but persistence across restart is not guaranteed until a write succeeds.
 
 ## 简体中文
 
-v1.6.0 尚未发布，本轮新增评论和审批未获真实测试目标授权，不能把 Fixture 或 v1.5.1 历史记录称为本轮真实服务验收。
+v1.6.0（27）已正式发布；最终提交 CI、重建 Universal、生产签名与公开附件核验见开发指南。本轮新增评论和审批未执行真实测试目标写入，不能把 Fixture 或 v1.5.1 历史记录称为本轮真实服务验收。
 
 GitHub 普通评论使用 Issue Comment，逐行评论使用准确 `commit_id + line + side`；原生 Review 支持 Comment、Approve、Request Changes 和 Pending 提交。GitLab 使用 Discussion/Note ID 与真实 Diff Version 的 Base/Start/Head SHA，新增行只发 new_line、删除行只发 old_line、上下文保留两者；Approval 是独立且带 SHA 的写入，受 `user_can_approve`、规则、套餐和重新认证要求限制，本适配器未验证 GitLab Request Changes 的独立接口，保留讨论/网页操作，不能把普通 Discussion 当成正式拒绝审批；也不伪造原子批次。
 
