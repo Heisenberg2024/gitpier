@@ -12,14 +12,6 @@ GitPier 将仓库管理、变更审查、提交和集成终端汇集在一个专
 
 ![提交工作台：已跟踪与未跟踪变更、双栏 Diff 和终端](docs/screenshots/commit-workspace.png)
 
-## Unreleased — v1.5.0 代码托管
-
-原生“代码托管”设置新增 GitHub Device Flow 验证码授权、GitLab 浏览器 S256 PKCE，以及 Gitea 公共客户端 PKCE 与本机回环回调，保留 PAT 备用。平台卡片使用官方图标，整卡可点击；GitHub 自动打开验证页，GitLab 使用默认浏览器普通标签及 State/PKCE 应用回调，避免系统认证会话的重复提示。已内置 GitHub.com 与 GitLab.com 公共 Client ID，普通用户无需自行注册应用；自建实例使用各自的公开配置。不需要 Client Secret 或 GitPier 自建后端。
-
-支持多账号及仓库独立关联。新 OAuth/PAT 账号默认使用本地加密凭证库（AES-256-GCM、各账号独立随机密钥保存在本机），重启后按需自动恢复，无需 OAuth 钥匙串授权。可按账号选择系统钥匙串，重启后通过“验证连接”恢复；代码托管设置支持更改新账号默认值及确认后逐账号迁移。同账号并发刷新合并、整对保存；保存失败会明确提示仅当前会话有效。密钥与密文同时泄露时 Token 可被恢复，详见[凭证存储与安全边界](docs/credential-storage.md)。原 Git 凭证、助手、SSH、Remote、Upstream 和自动 Fetch 保持独立。
-
-仓库 → More → 拉取 / 合并请求提供分页列表、详情、准确提交的 CI/Pipeline、提交、只读文件 Diff 及审查评论。创建 PR/MR 必须先检查已推送分支并确认，不会自动 Push 或盲目重试未知结果。Dashboard 为已关联仓库增加轻量摘要，宽写入权限必须主动重新授权。真实平台 OAuth/私有 API 验收结果见开发验证说明，隔离测试不能替代真实登录。详见[OAuth 注册与限制](docs/oauth-setup.md)和[开发验证说明](docs/development.md)。
-
 ## 功能
 
 - **多仓库管理。** 切换仓库和 Worktree，通过组织管理项目，在侧栏和组织页面拖动仓库并保存顺序。从组织内打开的仓库会自动归属该组织。
@@ -69,11 +61,19 @@ Git LFS 页面检测可选工具，展示规则 / 文件 / OID / Pointer，审�
 
 本地扫描保持离线。Dashboard 区分“跟踪引用一致”和已成功联网检查的同步状态，Tooltip提供远程/本地时间及失败原因。Fetch显示检查中/过期/失败，Pull和Push显示非零数量及分叉/无上游提示；后台更新跟踪计数时保留草稿、Diff标签和仓库页面。
 
-**已发布 [v1.4.4](https://github.com/Heisenberg2024/gitpier/releases/tag/v1.4.4)（构建号 24）。**自动获取统一复用 Git 原生认证，覆盖 HTTP、HTTPS、SSH、Git 和本地传输，不区分 GitHub、GitLab、Gitee 等平台。命名助手、绝对路径助手和 Shell 助手保留原顺序、URL/账号/路径匹配及完整协议响应；自动 Git 只请求 get，不调用 store/erase。不再把已保存密码或 Agent 当成获取前提：公开仓库可匿名获取，是否需要认证由实际服务器决定。SSH 保留原始命令、配置、Agent、文件私钥、Provider 和原生钥匙串行为。终端 Clone、GitPier Clone 以及 init/push 仓库使用相同流程；Clone 所选账号在自动检查前绑定。HTTP 仍是明文传输，设置中显示提示；GitPier 托管 HTTPS Token 仍拒绝 HTTP。既有凭证必须能被应用的 Git 进程访问，无法恢复未保存的密码或仅存在于另一个终端会话的环境变量。详见[安全边界](SECURITY.md)和[验证记录](docs/development.md#unified-native-authentication)。
-
 **已发布 [v1.4.3](https://github.com/Heisenberg2024/gitpier/releases/tag/v1.4.3)（23）：**专用后台凭证进程禁止传统登录钥匙串授权窗口，无法静默读取时停止检查并等待手动认证，修复 v1.4.2 自动获取期间反复授权的问题。在安装修复版前，受影响的 v1.4.2 用户请先关闭自动获取。保留手动认证和既有凭证访问控制。
 
+**已发布 [v1.4.4](https://github.com/Heisenberg2024/gitpier/releases/tag/v1.4.4)（构建号 24）。**自动获取统一复用 Git 原生认证，覆盖 HTTP、HTTPS、SSH、Git 和本地传输，不区分 GitHub、GitLab、Gitee 等平台。命名助手、绝对路径助手和 Shell 助手保留原顺序、URL/账号/路径匹配及完整协议响应；自动 Git 只请求 get，不调用 store/erase。不再把已保存密码或 Agent 当成获取前提：公开仓库可匿名获取，是否需要认证由实际服务器决定。SSH 保留原始命令、配置、Agent、文件私钥、Provider 和原生钥匙串行为。终端 Clone、GitPier Clone 以及 init/push 仓库使用相同流程；Clone 所选账号在自动检查前绑定。HTTP 仍是明文传输，设置中显示提示；GitPier 托管 HTTPS Token 仍拒绝 HTTP。既有凭证必须能被应用的 Git 进程访问，无法恢复未保存的密码或仅存在于另一个终端会话的环境变量。详见[安全边界](SECURITY.md)和[验证记录](docs/development.md#unified-native-authentication)。
+
 “工作空间搜索”支持名称、路径、组织、分支、远程名称，以及按需查询已跟踪文件路径和提交信息 / 哈希。范围可选全部 / 当前组织 / 当前仓库 / 已选仓库，结果打开仓库、已有 Diff / 文件历史或提交详情。Git 查询可取消、分页并限制结果及输出，不建立源码内容索引或上传到第三方。**⌘⇧P** 打开快速切换，支持最近 / 收藏仓库、组织匹配、上下方向键、回车和 Esc；终端焦点保留原有按键。Universal DMG 是当前正式下载，发布验证结果见[开发指南](docs/development.md#v144-release-validation--2026-10-16)。
+
+## 代码托管与凭证存储 — v1.5.0
+
+原生“代码托管”设置新增 GitHub Device Flow 验证码授权、GitLab 浏览器 S256 PKCE，以及 Gitea 公共客户端 PKCE 与本机回环回调，保留 PAT 备用。平台卡片使用官方图标，整卡可点击；GitHub 自动打开验证页，GitLab 使用默认浏览器普通标签及 State/PKCE 应用回调，避免系统认证会话的重复提示。已内置 GitHub.com 与 GitLab.com 公共 Client ID，普通用户无需自行注册应用；自建实例使用各自的公开配置。不需要 Client Secret 或 GitPier 自建后端。
+
+支持多账号及仓库独立关联。新 OAuth/PAT 账号默认使用本地加密凭证库（AES-256-GCM、各账号独立随机密钥保存在本机），重启后按需自动恢复，无需 OAuth 钥匙串授权。可按账号选择系统钥匙串，重启后通过“验证连接”恢复；代码托管设置支持更改新账号默认值及确认后逐账号迁移。同账号并发刷新合并、整对保存；保存失败会明确提示仅当前会话有效。密钥与密文同时泄露时 Token 可被恢复，详见[凭证存储与安全边界](docs/credential-storage.md)。原 Git 凭证、助手、SSH、Remote、Upstream 和自动 Fetch 保持独立。
+
+仓库 → More → 拉取 / 合并请求提供分页列表、详情、准确提交的 CI/Pipeline、提交、只读文件 Diff 及审查评论。创建 PR/MR 必须先检查已推送分支并确认，不会自动 Push 或盲目重试未知结果。Dashboard 为已关联仓库增加轻量摘要，宽写入权限必须主动重新授权。真实平台 OAuth/私有 API 验收结果见开发验证说明，隔离测试不能替代真实登录。详见[OAuth 注册与限制](docs/oauth-setup.md)和[开发验证说明](docs/development.md)。
 
 ## 界面截图
 

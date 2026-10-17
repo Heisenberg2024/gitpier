@@ -142,7 +142,7 @@ Comparison resolves full local/remote-tracking refs to fixed hashes before `merg
 
 An explicitly selected GitPier HTTPS Token remains exclusive: native Askpass must not substitute another account when that Token cannot be read. A server-challenged negative regression verifies this with a valid original Askpass provider and an unavailable selected Token.
 
-## Unreleased v1.5.0 hosting boundary
+## v1.5.0 hosting boundary
 
 `HostingModels` defines canonical HTTPS instances, capability differences, stable provider/instance/user identities, public OAuth configuration, tokens and repository bindings. `HostingHTTPClient` constructs only instance-owned routes; its ephemeral URLSession transport blocks redirects, retains system TLS trust and bounds streamed data. Provider DTO normalization, reconstructed pagination, exact-SHA CI, read-only review data and confirmed creation live in `HostingAPIClient`; no hosting API calls go through GitService.
 

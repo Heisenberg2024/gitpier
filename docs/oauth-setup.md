@@ -1,4 +1,4 @@
-# OAuth setup — Unreleased v1.5.0
+# OAuth setup — v1.5.0
 
 GitPier's hosting connection runs on the Mac. It uses public Client IDs, S256 PKCE or GitHub Device Flow, ordinary browser authorization and per-account Local Encrypted Vault or macOS Keychain storage. No Client Secret, GitPier account server, token exchange backend or public callback server is required. Git Fetch/Push continues to use existing Git credentials independently.
 

@@ -437,7 +437,7 @@ The final DMG is **15,012,577 bytes**, SHA256 `55be171b1a60f807b6b1c70e44faf734f
 
 All 11 historical releases, 29 remote assets, 11 old tags, 95 local historical assets, 19 protected production/configuration paths and existing mounts were preserved. Task-only test bundles/preferences/windows/mounts were cleaned. Evidence is in `.cache/releases/v1.4.4-native-final`; this release does not establish real private-server acceptance, production-ID upgrade/ACL transfer, Intel/macOS 14 hardware, Gatekeeper, actual drag installation or production self-update installation. The application remains ad-hoc signed and not notarized.
 
-## Unreleased v1.5.0 hosting validation
+## v1.5.0 hosting validation
 
 The maintainer-registered GitHub.com and GitLab.com public Client IDs are bundled in `HostingOAuthConfiguration.json`; see [OAuth setup](oauth-setup.md). Self-hosted IDs belong to their instance. No Client Secret, test token or backend belongs in release configuration. Version candidate is 1.5.0 (25), preserving the existing production Bundle ID/feed/EdDSA public key and macOS 14 requirement.
 
@@ -527,3 +527,16 @@ Scripts/workspace-acceptance.sh hosting-browser .cache/ui-acceptance/v150-dual-c
 ```
 
 Evidence is under the named `.cache/ui-acceptance/` directories and `.cache/dual-*` logs. Test applications, preference domains and temporary credential directories were removed through the disposable workflow. This does not establish a new real-platform Local Vault OAuth grant, real server expiry rotation/private writes, ad-hoc production-upgrade authorization, Intel/macOS 14 hardware, same-commit Swift 6.1 CI or a production update installation. Keychain continues to follow macOS authorization; local key plus ciphertext disclosure permits recovery, and ordinary SSD deletion is not secure physical erasure. No repository commit, push, tag, release, production key change or historical installer replacement was performed.
+
+
+### v1.5.0 release preparation — 2026-10-17
+
+The owner committed the implementation as `0f07e5659f089102b9ba10448b88e42af89a97ba`; local HEAD and GitHub main match. [Same-commit CI run 38998495004](https://github.com/Heisenberg2024/gitpier/actions/runs/38998495004) passed on Swift 6.1.2: 424 Core tests with zero failures/skips (473.506 seconds), ten release-tool gates, application build, temporary DMG structure and permission-preserving artifact upload. This establishes CI compatibility for that implementation commit; the pending release-document edits still need their own commit/CI before the release tag.
+
+Both READMEs now introduce v1.2.0, v1.3.0, v1.4.0 and v1.5.0 in ascending order; within the v1.4 overview, v1.4.3 precedes v1.4.4. The v1.5.0 Changelog is dated 2026-10-17 and the hosting, OAuth and credential-storage documentation headings no longer use Unreleased. English-first bilingual release notes remain a local draft for owner confirmation, with no internal testing section.
+
+The existing verified Universal 1.5.0 (25) app was reused: all 149 tracked files in its frozen source/resource/test/package input set match HEAD; the three remaining frozen entries are ignored Finder/Python cache metadata. No application source, production public IDs, update identity or dependency changed during this preparation. Ten local release-tool tests, README order/relative links and diff checks passed. The new candidate is in `.cache/releases/v1.5.0/prepare-20261017-114553/`, with **17,137,747 bytes**, SHA256 `76ccd5acb6dae7a75d1651afc6940572785c048ec3e177ddd5e361f16960660c`.
+
+The final HFS+/ULFO DMG passed Universal/deep signatures, all 105 packaged regular files plus the complete link/permission inventory against dist, normal Finder-open icon view/background/arrow/bilingual text, and production EdDSA archive/feed signatures. Embedded notes match the draft byte-for-byte; equal-length archive/feed tampering is rejected. Existing production signing material was used without export or replacement. The 34 prior local distribution assets remain byte-identical; existing releases/tags were recorded and left unchanged. Two task-owned mounts and the task's Finder windows were cleaned; no app launch, drag installation or production update was performed. The existing `gitpier://` handler still resolves to `/Applications/GitPier.app`.
+
+Publication is pending explicit owner confirmation of the notes and authorization to commit/push the documentation, create the Draft/tag, upload/read back the three assets, wait for the final commit's CI and publish Latest. No v1.5.0 tag, GitHub Release, upload, repository commit or push has been performed by this preparation.

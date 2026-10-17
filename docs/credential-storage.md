@@ -1,4 +1,4 @@
-# Hosting credential storage — Unreleased v1.5.0
+# Hosting credential storage — v1.5.0
 
 GitPier uses one OAuth/PAT account and token lifecycle with two persistence backends. Git network authentication remains independent.
 

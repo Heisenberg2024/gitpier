@@ -2,22 +2,21 @@
 
 ## Unreleased
 
-- Default new OAuth/PAT accounts to an AES-256-GCM Local Encrypted Vault with separate per-account random keys, private descriptor-relative files, atomic generation commits and lazy shared sessions. Keep macOS Keychain and legacy accounts; add future-account defaults, confirmed bidirectional account migration, explicit previous-copy cleanup and session-only warnings on persistence failure. Preserve native Git authentication and production update identity.
-- 新 OAuth/PAT 默认使用 AES-256-GCM 本地加密凭证库：各账号独立随机密钥、安全私有文件、原子版本提交及共享按需内存会话；保留系统钥匙串与旧账号，新增未来账号默认设置、确认后逐账号双向迁移、旧副本主动清理和持久化失败会话提示，保持原 Git 认证与生产更新身份。
+## 1.5.0 — 2026-10-17
 
-- Refine hosting settings with centered empty accounts, official platform marks, full-card click targets, automatic GitHub browser opening, normal GitLab browser sessions and uncropped native input focus rings. Keep About rightmost with stable tab IDs.
-- 调整托管设置：空账号居中、官方平台图标、整卡点击、GitHub 自动打开浏览器、GitLab 普通浏览器会话及完整输入焦点环；保持关于标签最右侧和原标签 ID。
+- Add native GitHub Device Flow, GitLab S256 PKCE in the ordinary browser, and Gitea v1.23+ public-client PKCE with an IPv4 loopback callback. Bundle the registered GitHub.com/GitLab.com public Client IDs, with reusable self-hosted configuration and PAT fallback; no Client Secret or backend is required.
+- Default new OAuth/PAT accounts to Local Encrypted Vault: AES-256-GCM, independent per-account random keys, private separate key/ciphertext files and atomic generation commits. Retain optional macOS Keychain and legacy accounts, future-account defaults, confirmed bidirectional migration and explicit previous-copy cleanup. Document the local-key security tradeoff.
+- Share lazy token sessions across windows, merge loads and refreshes, reject stale/foreign account contexts and preserve a session-only token after persistence failure. Journal migration before destination writes; cancellation and failed switching preserve the source. Reconnecting an existing user never applies the new-account storage default.
+- Add multi-account repository/Remote bindings, PR/MR lists/details/commits/files/reviews, exact-SHA CI/Pipeline and read-only remote Diff. Request creation checks permissions, pushed branches, fork targets and duplicates before confirmation; uncertain results require a query before retrying. Add lightweight Dashboard collaboration summaries.
+- Refine bilingual hosting settings with official marks, full-card click targets, centered empty states, automatic GitHub verification-page opening and complete native focus rings. GitLab uses ordinary browser tabs and a one-time state-bound application callback; keep About rightmost with stable tab IDs. Preserve v1.4.4 native Git authentication, Automatic Fetch, SSH and production update identity.
 
-- Prepare v1.5.0 (25) native GitHub Device Flow, GitLab public-client S256 PKCE/default browser and private-scheme callback, and Gitea v1.23+ public PKCE/IPv4 loopback authorization. Bundle the maintainer-registered GitHub.com and GitLab.com public Client IDs; add reusable per-instance configuration and PAT fallback, with no client secret or required backend.
-- Add separate hosting account metadata and protected tokens, stable multi-account identities, per-account session restoration, optional expiry/refresh rotation with single-flight/generation protection, repository/Remote bindings, bounded origin-restricted APIs and account-partitioned memory caches. Preserve v1.4.4 Git authentication and Automatic Fetch.
-- Add native bilingual account/settings, PR/MR lists/details/commits/files/reviews, exact-SHA CI/Pipeline, read-only Diff, confirmed request creation with pushed-SHA/fork/duplicate checks and unknown-outcome recovery, plus small Dashboard summaries. Public/private write access requires explicit authorization.
-- Replace GitLab system authentication sessions with ordinary browser navigation and a state-bound callback actor, removing the repeated macOS website-sharing prompt and dedicated authentication window. Retain PKCE, expiry, cancellation and duplicate rejection; add Core and native AppleEvent routing regressions. Record real GitHub/GitLab authorization, Keychain restart recovery and public PR/MR/CI acceptance.
-- Add isolated OAuth/API/Keychain/loopback/concurrency tests and native fixture acceptance; document registration and distinguish isolated validation from real-platform acceptance. No commit, push, tag or release is performed.
-- 准备 v1.5.0（25）：新增 GitHub Device Flow、GitLab 公共客户端 S256 PKCE / 默认浏览器与应用回调，以及 Gitea v1.23+ 公共 PKCE / IPv4 回环授权。内置已注册的 GitHub.com / GitLab.com 公共 Client ID，提供可复用实例配置和 PAT 备用，无需 Client Secret 或自建后端。
-- 托管账号元数据与受保护 Token 独立存储，按稳定身份支持多账号、按账号恢复会话、可选到期与刷新轮换、单飞/代次保护、仓库 / Remote 关联及受限 API 和内存缓存；保留 v1.4.4 原生 Git 认证与自动 Fetch。
-- 新增双语原生账号设置、PR/MR 分页详情 / 提交 / 文件 / 审查、准确 SHA 的 CI/Pipeline、只读 Diff、检查已推送 SHA / Fork / 重复请求后确认创建，以及未知结果恢复与 Dashboard 轻量摘要；写权限须主动授权。
-- GitLab 改用普通浏览器和 State 绑定的应用回调，去除重复系统网站登录提示与认证专用窗口；保留 PKCE、超时、取消和重复拒绝，补充 Core 与原生 AppleEvent 路由回归，并记录真实授权、重启恢复和公开 API 验收。
-- 增加 OAuth / API / Keychain / 回环 / 并发测试和原生夹具验收，说明注册配置及隔离测试与真实平台验收边界；未执行提交、推送、Tag 或 Release。
+简体中文：
+
+- 新增 GitHub Device Flow、GitLab 普通浏览器 S256 PKCE，以及 Gitea v1.23+ 公共客户端 PKCE / IPv4 回环授权。内置已注册的 GitHub.com/GitLab.com 公共 Client ID，支持自建实例配置复用与 PAT 备用，无需 Client Secret 或自建后端。
+- 新 OAuth/PAT 默认使用本地加密凭证库：AES-256-GCM、每账号独立随机密钥、私有密钥/密文分离与原子版本提交。保留可选系统钥匙串与旧账号，提供未来账号默认值、确认后双向迁移和旧副本主动清理，准确说明本地密钥的安全取舍。
+- 窗口共享按需 Token 会话，合并读取与刷新，拒绝过时或跨实例身份；持久化失败后保留当前会话并明确提示。迁移先记录意图再写入目标，取消或切换失败保留原存储；重复连接旧用户不应用新账号存储默认值。
+- 新增多账号仓库/Remote 关联，提供 PR/MR 列表、详情、提交、文件、审查、准确 SHA 的 CI/Pipeline 与只读远端 Diff。创建请求前检查权限、已推送分支、Fork 目标和重复请求并确认；结果未知时先查询再重试。Dashboard 增加轻量协作摘要。
+- 完善双语原生托管设置、官方图标、整卡点击、居中空状态、GitHub 自动打开验证页和完整焦点环。GitLab 使用普通浏览器标签与一次性 State 绑定应用回调；保持关于标签最右侧与原标签 ID，保留 v1.4.4 Git 原生认证、自动 Fetch、SSH 和生产更新身份。
 
 ## 1.4.4 — 2026-10-16
 

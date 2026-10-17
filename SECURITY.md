@@ -50,7 +50,7 @@ Prepare SSH Authentication remains an optional explicit action. A private Agent 
 
 An explicitly selected GitPier HTTPS Token remains exclusive: native Askpass must not substitute another account when that Token cannot be read. A server-challenged negative regression verifies this with a valid original Askpass provider and an unavailable selected Token.
 
-## Unreleased v1.5.0 hosting accounts
+## v1.5.0 hosting accounts
 
 Hosting OAuth/PAT is independent of Git transport authentication. New accounts default to CryptoKit AES-256-GCM with separate, random per-account 256-bit keys and ciphertext in private local files. Keys are stored on this Mac without a master password or Keychain; simultaneous access to keys and ciphertext permits recovery. This does not isolate credentials from malware with the user's full file access. FileVault adds locked-disk protection. Optional `GitPier.hosting.oauth` Keychain storage retains the existing exact account UUID namespace and normal macOS access control. Neither backend touches `GitPier.credentials`. See [credential storage](docs/credential-storage.md).
 
