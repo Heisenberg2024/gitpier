@@ -9,6 +9,10 @@ struct HostingWorkspaceView: View {
   @State private var bindingSheet = false
   @State private var settingsSheet = false
   @State private var createSheet = false
+  @State private var inboxSheet = false
+  @State private var destinationTask: Task<Void, Never>?
+  @State private var destinationTicket = UUID()
+  @State private var directSelection = false
   @State private var filter: HostingRequestFilter = .open
   @State private var items: [HostingPullRequest] = []
   @State private var selected: HostingPullRequest?
@@ -26,10 +30,12 @@ struct HostingWorkspaceView: View {
       HStack {
         Text(title).font(.headline)
         Spacer()
+        Button { inboxSheet = true } label: { Image(systemName: "tray") }
+          .help(store.text("Account Review Inbox", "账号审查收件箱")).accessibilityLabel(store.text("Account Review Inbox", "账号审查收件箱"))
         Button(store.text("Accounts…", "账号…")) { settingsSheet = true }
         Button(store.text("Repository Binding…", "仓库关联…")) { bindingSheet = true }
         if binding != nil {
-          Button(store.text("Refresh", "刷新")) { load(reset: true, refresh: true) }.disabled(loading)
+          Button(store.text("Refresh", "刷新")) { if confirmNavigation() { cancelDestination(); load(reset: true, refresh: true) } }.disabled(loading)
           Button(store.text("Create…", "创建…")) { createSheet = true }.disabled(account == nil || model.busy)
         }
       }.padding(12)
@@ -38,10 +44,14 @@ struct HostingWorkspaceView: View {
         HStack {
           Text(binding.repository + " · " + binding.remote + " · @" + account.user.login).font(.caption).foregroundStyle(.secondary).lineLimit(1)
           Spacer()
-          Picker(store.text("State", "状态"), selection: $filter) {
+          Picker(store.text("State", "状态"), selection: Binding(get: { filter }, set: { if $0 != filter, confirmNavigation() { cancelDestination(); filter = $0 } })) {
             ForEach(HostingRequestFilter.allCases, id: \.self) { Text(filterName($0)).tag($0) }
           }.labelsHidden().frame(width: 140)
         }.padding(.horizontal, 12).padding(.vertical, 8)
+        HostingCurrentBranchShortcut(hosting: hosting, model: model, binding: binding, account: account) { request in
+          if confirmNavigation() { openDirect(request) }
+        }.padding(.horizontal, 12).padding(.bottom, 8)
+        if directSelection { Text(store.text("Opened directly; the list filter is unchanged.", "已直接打开目标请求，列表筛选保持不变。")).font(.caption).foregroundStyle(.secondary).frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 12) }
         if let error {
           HStack {
             Text(error).font(.callout).foregroundStyle(.orange).textSelection(.enabled)
@@ -55,7 +65,7 @@ struct HostingWorkspaceView: View {
             description: Text(store.text("Choose a state or refresh. Platform failures leave local Git operations available.", "请选择状态或刷新。平台错误不影响本地 Git 操作。")))
         } else {
           HSplitView {
-            List(selection: Binding(get: { selected?.number }, set: { id in selected = items.first { $0.number == id } })) {
+            List(selection: Binding(get: { selected?.number }, set: { id in if id != selected?.number, confirmNavigation() { cancelDestination(); selected = items.first { $0.number == id } } })) {
               ForEach(items) { item in
                 VStack(alignment: .leading, spacing: 6) {
                   HStack(alignment: .firstTextBaseline) {
@@ -87,14 +97,72 @@ struct HostingWorkspaceView: View {
     .sheet(isPresented: $bindingSheet) { HostingBindingSheet(hosting: hosting, model: model).environmentObject(store) }
     .sheet(isPresented: $settingsSheet) { VStack { HostingSettingsView(hosting: hosting); Button(store.text("Done", "完成")) { settingsSheet = false }.padding(12) }.frame(width: 760, height: 580).environmentObject(store) }
     .sheet(isPresented: $createSheet) { if let binding, let account { HostingCreateSheet(hosting: hosting, model: model, binding: binding, account: account).environmentObject(store) } }
-    .onAppear { load(reset: true, refresh: false) }
+    .sheet(isPresented: $inboxSheet) { HostingReviewDashboardView(hosting: hosting) { item in
+      if confirmNavigation() { inboxSheet = false; store.openHostingReviewInboxItem(item) }
+    }.environmentObject(store) }
+    .onAppear { load(reset: true, refresh: false); consumeDestination() }
     .onChange(of: filter) { _, _ in load(reset: true, refresh: false) }
-    .onChange(of: hosting.revision) { _, _ in load(reset: true, refresh: false) }
-    .onDisappear { requestTask?.cancel(); generation = UUID() }
+    .onChange(of: hosting.revision) { _, _ in load(reset: true, refresh: false); consumeDestination() }
+    .onChange(of: store.hostingReviewDestination) { _, _ in consumeDestination() }
+    .onDisappear { requestTask?.cancel(); destinationTask?.cancel(); destinationTicket = UUID(); generation = UUID() }
+  }
+  private func cancelDestination() {
+    destinationTask?.cancel(); destinationTask = nil; destinationTicket = UUID()
+    if let item = store.hostingReviewDestination, let binding, let account,
+      item.accountID == account.id, item.instance == account.instance, item.repository == binding.repository {
+      store.hostingReviewDestination = nil
+    }
+  }
+  private func openDirect(_ request: HostingPullRequest, fromInbox: Bool = false) {
+    if !fromInbox { cancelDestination() }
+    if let index = items.firstIndex(where: { $0.number == request.number }) { items[index] = request }
+    else { items.insert(request, at: 0) }
+    selected = request; directSelection = true
+  }
+  private func consumeDestination() {
+    destinationTask?.cancel(); destinationTask = nil
+    let ticket = UUID(); destinationTicket = ticket
+    guard let item = store.hostingReviewDestination, let binding, let account,
+      binding.repositoryID == model.record.id, item.accountID == account.id,
+      item.instance == account.instance, item.repository == binding.repository else { return }
+    destinationTask = Task {
+      defer { if destinationTicket == ticket { destinationTask = nil } }
+      do {
+        let api = hosting.api, tokens = hosting.tokens, budget = hosting.networkBudget
+        let request = try await hosting.performAPI(account: account) {
+          let token = try await tokens.token(for: account)
+          return try await budget.perform {
+            let context = try await api.reviewContext(binding, number: item.number, account: account, token: token)
+            // GitHub Search returns an Issue ID, while /pulls returns a Pull Request ID.
+            // Its canonical bound repository + number locate the PR before this fresh context.
+            guard (account.instance.provider == .github || context.target.requestID == item.remoteID),
+              context.target.requestNumber == item.number,
+              item.projectID.isEmpty || context.target.repositoryID == item.projectID else { throw HostingReviewError.targetChanged }
+            let request = try await api.request(binding, number: item.number, account: account, token: token)
+            guard request.sha == context.revision.headSHA else { throw HostingReviewError.revisionChanged }
+            return request
+          }
+        }
+        try Task.checkCancellation()
+        guard destinationMatches(item, ticket: ticket, binding: binding, account: account) else { return }
+        openDirect(request, fromInbox: true); store.hostingReviewDestination = nil
+      } catch is CancellationError {} catch {
+        guard destinationMatches(item, ticket: ticket, binding: binding, account: account) else { return }
+        self.error = hosting.message(error)
+      }
+    }
+  }
+  private func destinationMatches(_ item: HostingReviewDashboardItem, ticket: UUID, binding: RepositoryHostingBinding, account: HostingAccount) -> Bool {
+    destinationTicket == ticket && self.binding == binding && self.account == account
+      && hosting.binding(binding.id) == binding && hosting.account(account.id) == account && store.hostingReviewDestination == item
+  }
+  func confirmNavigation() -> Bool {
+    guard let selected, let account, let binding else { return true }
+    return store.reviewSessions.confirmNavigation(store: store, session: store.reviewSessions.session(hosting: hosting, binding: binding, account: account, request: selected))
   }
   func load(reset: Bool, refresh: Bool) {
     requestTask?.cancel(); let id = UUID(); generation = id; loading = false; error = nil
-    if reset { items = []; selected = nil; nextPage = nil }
+    if reset { items = []; selected = nil; nextPage = nil; directSelection = false }
     guard let binding, let account else { return }
     let page = reset ? 1 : nextPage ?? 1; loading = true
     requestTask = Task {
@@ -186,6 +254,7 @@ struct HostingRequestDetail: View {
   @EnvironmentObject var store: AppStore
   @Environment(\.colorScheme) var scheme
   @ObservedObject var hosting: HostingModel
+  @ObservedObject private var reviewSession: HostingReviewSession
   let binding: RepositoryHostingBinding
   let account: HostingAccount
   @State private var loader: HostingRequestDetailLoader
@@ -196,15 +265,13 @@ struct HostingRequestDetail: View {
   @State private var patchTask: Task<Void, Never>?
   @State private var patchLoading = false
   @State private var patchError: String?
-  @State private var reviewComments: [String: [HostingReview]] = [:]
-  @State private var reviewCommentPages: [String: Int] = [:]
-  @State private var reviewCommentErrors: [String: String] = [:]
-  @State private var reviewCommentTasks: [String: Task<Void, Never>] = [:]
+  @State private var reviewReader = UUID()
   @State private var generation = UUID()
   var current: HostingPullRequest { loader.detail }
   var section: HostingDetailSection { [.overview, .commits, .files, .reviews, .checks][min(4, max(0, tab))] }
   init(hosting: HostingModel, binding: RepositoryHostingBinding, account: HostingAccount, request: HostingPullRequest, initialTab: Int = 0) {
     self.hosting = hosting; self.binding = binding; self.account = account; _tab = State(initialValue: initialTab)
+    _reviewSession = ObservedObject(wrappedValue: hosting.store.reviewSessions.session(hosting: hosting, binding: binding, account: account, request: request))
     let revision = hosting.revision
     _loader = State(initialValue: HostingRequestDetailLoader(request: request, binding: binding, account: account,
       api: hosting.api, cache: hosting.detailCache, token: { try await hosting.tokens.token(for: account) },
@@ -223,7 +290,7 @@ struct HostingRequestDetail: View {
         Spacer()
         if let url = current.webURL { Link(store.text("Open in Browser", "在浏览器中打开"), destination: url).font(.caption) }
       }
-      Picker("", selection: $tab) {
+      Picker("", selection: Binding(get: { tab }, set: { if $0 != tab, store.reviewSessions.confirmNavigation(store: store, session: reviewSession) { tab = $0 } })) {
         Text(store.text("Overview", "概览")).tag(0); Text(store.text("Commits", "提交")).tag(1)
         Text(store.text("Files", "文件")).tag(2); Text(store.text("Reviews", "审查")).tag(3); Text("CI").tag(4)
       }.pickerStyle(.segmented).accessibilityIdentifier("hosting.detail.tabs")
@@ -244,6 +311,7 @@ struct HostingRequestDetail: View {
       case 2:
         VStack(spacing: 0) {
           HStack { Label(store.text("Read-only Remote Diff", "只读远端 Diff"), systemImage: "lock").font(.caption).foregroundStyle(.secondary); Spacer(); if loader.nextPages[.files] != nil { moreButton(.files) } }
+          HostingReviewStatus(session: reviewSession)
           if let patchError { HStack { Text(patchError).foregroundStyle(.orange); Button(store.text("Retry Preview", "重试预览")) { loadPatch() } }.font(.caption) }
           HSplitView {
             List(selection: $selectedFile) { ForEach(loader.files) { f in VStack(alignment: .leading) { Text(f.path).lineLimit(2); Text(f.kind + (f.oldPath.isEmpty ? "" : " · " + f.oldPath)).font(.caption).foregroundStyle(.secondary) }.tag(f.path) } }.frame(minWidth: 130, idealWidth: 170, maxWidth: 240)
@@ -257,36 +325,20 @@ struct HostingRequestDetail: View {
                 }.frame(maxWidth: .infinity, alignment: .leading).padding(10) }
               } else {
                 DiffTable(document: diff, path: selectedFile ?? "", key: "hosting|\(account.identity)|\(binding.repository)|\(current.number)|\(current.sha)", settings: store.settings, dark: scheme == .dark, selectedHunk: -1,
-                  beforeTitle: current.target, afterTitle: current.source).frame(maxWidth: .infinity, maxHeight: .infinity)
+                  beforeTitle: current.target, afterTitle: current.source,
+                  reviewKey: reviewEnabled ? (reviewSession.context?.revision.headSHA ?? "") : "",
+                  onReviewLine: reviewEnabled ? { line, side in addInlineComment(line, side: side) } : nil,
+                  reviewActionTitle: store.text("Add Review Comment", "添加审查评论"),
+                  reviewLineCounts: reviewLineCounts, reviewCountTitle: store.text("Review comments", "条审查评论"))
+                  .frame(maxWidth: .infinity, maxHeight: .infinity)
               }
             } else { ContentUnavailableView(store.text("Preview Unavailable", "无可用预览"), systemImage: "doc", description: Text(store.text("Select a file. Binary, large or omitted patches can be viewed in your browser.", "请选择文件。二进制、大型或平台未返回的 Patch 可在浏览器中查看。"))).frame(maxWidth: .infinity) }
           }
+          if reviewSession.composer != nil { Divider(); HostingReviewComposer(session: reviewSession) }
+          if !reviewEnabled, !patchLoading { Text(store.text("Inline comments require a safely positioned patch and verified platform support. Use the browser for unavailable files or instances.", "逐行评论需要可安全定位的 Patch 与已验证的平台支持。无法定位的文件或实例请在浏览器中查看。")).font(.caption).foregroundStyle(.secondary).padding(.top, 6) }
         }
       case 3:
-        List {
-          ForEach(loader.reviews) { review in
-            reviewRow(review)
-            if account.instance.provider == .gitea {
-              if let values = reviewComments[review.id] { ForEach(values) { reviewRow($0) } }
-              if let error = reviewCommentErrors[review.id] { Text(error).foregroundStyle(.orange) }
-              if reviewComments[review.id] == nil || reviewCommentPages[review.id] != nil {
-                Button(store.text("Load Review Comments", "加载审查评论")) { loadReviewComments(review.id) }.disabled(reviewCommentTasks[review.id] != nil)
-              }
-            }
-          }
-          if loader.nextPages[.reviews] != nil { moreButton(.reviews) }
-          moduleStatus(.comments)
-          ForEach(loader.comments) { reviewRow($0) }
-          if loader.nextPages[.comments] != nil { moreButton(.comments) }
-          if account.instance.provider == .github {
-            moduleStatus(.conversations)
-            ForEach(loader.conversations) { reviewRow($0) }
-            if loader.nextPages[.conversations] != nil { moreButton(.conversations) }
-          }
-          if loader.state(.reviews).loaded && loader.state(.comments).loaded && (account.instance.provider != .github || loader.state(.conversations).loaded) && loader.reviews.isEmpty && loader.comments.isEmpty && loader.conversations.isEmpty {
-            Text(store.text("No Reviews or Comments", "暂无审查或评论"))
-          }
-        }
+        HostingReviewView(session: reviewSession)
       default:
         List {
           Text(store.text("Commit: ", "提交：") + current.sha).font(.system(.caption, design: .monospaced)).textSelection(.enabled)
@@ -296,21 +348,33 @@ struct HostingRequestDetail: View {
         }.accessibilityIdentifier("hosting.detail.ci")
       }
     }.padding(14)
-    .onAppear { loader.select(section); if tab == 2 { loadPatch() } }
+    .sheet(item: $reviewSession.confirmation) { snapshot in HostingReviewConfirmationView(session: reviewSession, snapshot: snapshot).environmentObject(store) }
+    .onAppear { reviewSession.attach(reviewReader); loader.select(section == .reviews ? .overview : section); if tab == 2 { reviewSession.start(loadTimeline: false); loadPatch() } }
     .onChange(of: tab) { _, _ in
-      loader.select(section)
-      if tab == 2 { loadPatch() } else { patchTask?.cancel(); patchLoading = false }
-      if tab != 3 { reviewCommentTasks.values.forEach { $0.cancel() }; reviewCommentTasks = [:] }
+      loader.select(section == .reviews ? .overview : section)
+      if tab == 2 { reviewSession.start(loadTimeline: false); loadPatch() } else { patchTask?.cancel(); patchLoading = false }
     }
     .onChange(of: loader.files.map(\.path)) { _, values in
       if !values.contains(selectedFile ?? "") { selectedFile = values.first }
     }
     .onChange(of: current.sha) { _, _ in
       generation = UUID(); patchTask?.cancel(); remotePatch = nil; diff = .empty; patchError = nil
-      reviewCommentTasks.values.forEach { $0.cancel() }; reviewCommentTasks = [:]; reviewComments = [:]; reviewCommentPages = [:]; reviewCommentErrors = [:]
+      reviewSession.start(loadTimeline: tab == 3, refresh: true)
     }
     .onChange(of: selectedFile) { _, _ in loadPatch() }
-    .onDisappear { generation = UUID(); loader.cancelAll(); patchTask?.cancel(); patchTask = nil; patchLoading = false; reviewCommentTasks.values.forEach { $0.cancel() }; reviewCommentTasks = [:] }
+    .onDisappear { generation = UUID(); loader.cancelAll(); patchTask?.cancel(); patchTask = nil; patchLoading = false; reviewSession.detach(reviewReader) }
+  }
+  private var reviewEnabled: Bool {
+    reviewSession.canCompose && reviewSession.context?.capabilities.contains(.inlineComment) == true
+      && reviewSession.context?.revision.headSHA == current.sha && !diff.binary && !diff.complexMetadata && !diff.hunks.isEmpty
+  }
+  private func addInlineComment(_ line: DiffLine, side: HostingReviewSide) {
+    guard let file = loader.files.first(where: { $0.path == selectedFile }), let remotePatch else { return }
+    let anchoredFile = HostingChangedFile(path: file.path, oldPath: file.oldPath, kind: file.kind, patch: remotePatch)
+    reviewSession.beginInline(file: anchoredFile, document: diff, line: line, side: side)
+  }
+  private var reviewLineCounts: [Int: Int] {
+    reviewSession.lineCommentCounts(path: selectedFile ?? "", headSHA: current.sha, document: diff)
   }
   @ViewBuilder func moduleStatus(_ section: HostingDetailSection) -> some View {
     let state = loader.state(section)
@@ -322,13 +386,6 @@ struct HostingRequestDetail: View {
         Button(store.text("Retry", "重试")) { loader.retry(section) }.disabled(state.loading)
       }.accessibilityIdentifier("hosting.detail.error." + section.rawValue)
     }
-  }
-  func reviewRow(_ review: HostingReview) -> some View {
-    VStack(alignment: .leading, spacing: 5) {
-      Text("@" + review.author + " · " + review.state).font(.caption).foregroundStyle(.secondary)
-      if !review.path.isEmpty { Text(review.path + ":" + review.line).font(.system(.caption, design: .monospaced)) }
-      Text(review.body).textSelection(.enabled)
-    }.padding(.vertical, 4)
   }
   func ciTitle(_ state: HostingCIState) -> String {
     switch state { case .pending: store.text("Pending", "等待中"); case .running: store.text("Running", "运行中"); case .success: store.text("Success", "成功"); case .failed: store.text("Failed", "失败"); case .cancelled: store.text("Cancelled", "已取消"); case .skipped: store.text("Skipped", "已跳过"); case .unknown: store.text("Unknown", "未知"); case .noChecks: store.text("No Checks", "无检查") }
@@ -353,23 +410,6 @@ struct HostingRequestDetail: View {
         guard generation == ticket, selectedFile == file.path, hosting.account(account.id) == account, hosting.binding(binding.id) == binding else { return }
         remotePatch = patch; diff = DiffParser.parse(Data((patch ?? "").utf8))
       } catch is CancellationError {} catch { if !Task.isCancelled && generation == ticket && selectedFile == file.path { patchError = hosting.message(error); await hosting.failed(error, account: account) } }
-    }
-  }
-  func loadReviewComments(_ id: String) {
-    guard reviewCommentTasks[id] == nil else { return }
-    let ticket = generation, page = reviewCommentPages[id] ?? 1
-    reviewCommentErrors[id] = nil
-    reviewCommentTasks[id] = Task {
-      defer { if !Task.isCancelled && generation == ticket { reviewCommentTasks[id] = nil } }
-      do {
-        let token = try await hosting.tokens.token(for: account); try Task.checkCancellation()
-        let api = hosting.api, number = current.number
-        let value = try await hosting.performAPI(account: account) { try await api.giteaReviewCommentsPage(binding, number: number, reviewID: id, account: account, token: token, page: page) }
-        try Task.checkCancellation()
-        guard generation == ticket, hosting.account(account.id) == account, hosting.binding(binding.id) == binding else { return }
-        var known = Set((reviewComments[id] ?? []).map(\.id)); reviewComments[id, default: []] += value.items.filter { known.insert($0.id).inserted }
-        reviewCommentPages[id] = value.nextPage
-      } catch is CancellationError {} catch { if !Task.isCancelled && generation == ticket { reviewCommentErrors[id] = hosting.message(error) } }
     }
   }
 }

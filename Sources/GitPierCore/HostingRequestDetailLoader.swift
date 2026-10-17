@@ -17,6 +17,7 @@ public enum HostingDetailValue: Sendable {
   case commits(HostingPage<HostingCommit>)
   case files(HostingPage<HostingChangedFile>)
   case reviews(HostingPage<HostingReview>)
+  case threads(HostingPage<HostingReviewThread>)
   case checks(HostingChecksPage)
 }
 
@@ -25,10 +26,14 @@ public enum HostingDetailValue: Sendable {
 public actor HostingRequestDetailCache {
   public struct Key: Hashable, Sendable {
     let accountID: UUID
+    let repository: String
+    let requestNumber: Int
+    let section: HostingDetailSection
     let value: String
     public init(account: HostingAccount, binding: RepositoryHostingBinding, request: HostingPullRequest,
       section: HostingDetailSection, page: String) {
       accountID = account.id
+      repository = binding.repository; requestNumber = request.number; self.section = section
       value = account.identity + "|" + account.id.uuidString + "|" + binding.repository + "|\(request.number)|" + request.sha + "|" + request.updatedAt + "|" + section.rawValue + "|" + page
     }
   }
@@ -71,6 +76,15 @@ public actor HostingRequestDetailCache {
   public func clear(account: HostingAccount) {
     entries = entries.filter { $0.key.accountID != account.id }
     for (key, flight) in flights where key.accountID == account.id { flight.task.cancel(); flights[key] = nil }
+  }
+  /// Review writes invalidate only their remote target, including any in-flight stale pages.
+  public func invalidate(account: HostingAccount, binding: RepositoryHostingBinding, number: Int,
+    sections: Set<HostingDetailSection> = [.overview, .reviews, .comments, .conversations]) {
+    func matches(_ key: Key) -> Bool {
+      key.accountID == account.id && key.repository == binding.repository && key.requestNumber == number && sections.contains(key.section)
+    }
+    entries = entries.filter { !matches($0.key) }
+    for (key, flight) in flights where matches(key) { flight.task.cancel(); flights[key] = nil }
   }
 }
 
@@ -202,6 +216,7 @@ public actor HostingRequestDetailCache {
       nextPages[section] = page.nextPage
     case .checks(let page):
       checks = append(checks, page.items, more: more); nextChecks = page.next
+    case .threads: break // Review sessions share this cache without replacing the detail loader.
     }
   }
 }

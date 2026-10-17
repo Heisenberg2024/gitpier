@@ -373,6 +373,12 @@ struct DiffTable: NSViewRepresentable, Equatable {
   var onLineSelection: ((Set<Int>) -> Void)? = nil
   var lineActionTitle = "Stage Selected Lines"
   var onLineAction: ((Set<Int>) -> Void)? = nil
+  // Remote review is a separate interaction; it never enables selective staging.
+  var reviewKey = ""
+  var onReviewLine: ((DiffLine, HostingReviewSide) -> Void)? = nil
+  var reviewActionTitle = "Add Review Comment"
+  var reviewLineCounts: [Int: Int] = [:]
+  var reviewCountTitle = "Review comments"
   nonisolated static func == (lhs: DiffTable, rhs: DiffTable) -> Bool {
     lhs.document.revision == rhs.document.revision && lhs.path == rhs.path && lhs.key == rhs.key
       && lhs.styleIdentity == rhs.styleIdentity && lhs.dark == rhs.dark
@@ -382,6 +388,9 @@ struct DiffTable: NSViewRepresentable, Equatable {
       && lhs.selectedLineIDs == rhs.selectedLineIDs
       && lhs.selectionKey == rhs.selectionKey && lhs.allowsLineSelection == rhs.allowsLineSelection
       && lhs.lineActionTitle == rhs.lineActionTitle
+      && lhs.reviewKey == rhs.reviewKey
+      && lhs.reviewActionTitle == rhs.reviewActionTitle
+      && lhs.reviewLineCounts == rhs.reviewLineCounts && lhs.reviewCountTitle == rhs.reviewCountTitle
   }
   func makeCoordinator() -> Coordinator { Coordinator() }
   func makeNSView(context: Context) -> DiffSplitContainer {
@@ -420,6 +429,7 @@ struct DiffTable: NSViewRepresentable, Equatable {
     let previousRevision = c.document.revision
     let previousSelectionKey = c.selectionKey
     let previousLines = c.selectedLineIDs
+    let previousReviewCounts = c.reviewLineCounts
     c.document = document
     c.path = path
     c.key = key
@@ -429,6 +439,8 @@ struct DiffTable: NSViewRepresentable, Equatable {
     c.selectionKey = selectionKey
     c.selectedLineIDs = selectedLineIDs
     c.onLineSelection = onLineSelection; c.onLineAction = onLineAction; c.lineActionTitle = lineActionTitle
+    c.onReviewLine = onReviewLine; c.reviewActionTitle = reviewActionTitle
+    c.reviewLineCounts = reviewLineCounts; c.reviewCountTitle = reviewCountTitle
     if previousKey != key || previousRevision != document.revision || previousSelectionKey != selectionKey { c.anchors = [nil, nil] }
     host.unified = settings.unifiedDiff
     host.afterOnly = afterOnly
@@ -460,13 +472,18 @@ struct DiffTable: NSViewRepresentable, Equatable {
     for (side, table) in host.tables.enumerated() {
       table.gutterWidth = settings.showLineNumbers ? 46 : 18
       table.selectLine = allowsLineSelection ? { [weak c] row, modifiers in c?.selectChangedLine(row, side: side, modifiers: modifiers) } : nil
+      table.lineAction = onLineAction == nil ? nil : { [weak c] in c?.invokeLineAction() }
+      table.clearLines = allowsLineSelection ? { [weak c] in c?.clearChangedLines() } : nil
+      table.reviewLine = onReviewLine == nil ? nil : { [weak c] row in c?.reviewLine(row, side: side) }
+      table.canReviewLine = onReviewLine == nil ? nil : { [weak c] row in c?.reviewableLine(row, side: side) != nil }
+      table.reviewActionTitle = reviewActionTitle
       host.scrolls[side].verticalThumbOnLeft = !settings.unifiedDiff && side == indexSide
       table.backgroundColor = NSColor(hex: dark ? 0x191B1F : 0xFAFBFC)
       table.tableColumns[0].title =
         settings.unifiedDiff ? localizedUI("Changes") : side == 0 ? beforeTitle : afterTitle
       table.tableColumns[0].headerCell.font = NSFont.systemFont(ofSize: 10, weight: .medium)
     }
-    if !changed && previousLines != selectedLineIDs { c.refreshLineHighlights() }
+    if !changed && (previousLines != selectedLineIDs || previousReviewCounts != reviewLineCounts) { c.refreshLineHighlights() }
     if changed {
       c.synchronizing = true
       host.needsLayout = true
@@ -513,6 +530,10 @@ struct DiffTable: NSViewRepresentable, Equatable {
     var onLineSelection: ((Set<Int>) -> Void)?
     var onLineAction: ((Set<Int>) -> Void)?
     var lineActionTitle = "Stage Selected Lines"
+    var onReviewLine: ((DiffLine, HostingReviewSide) -> Void)?
+    var reviewActionTitle = "Add Review Comment"
+    var reviewLineCounts: [Int: Int] = [:]
+    var reviewCountTitle = "Review comments"
     var selectionKey = ""
     var anchors: [Int?] = [nil, nil]
     func changedLine(_ row: Int, side: Int) -> DiffLine? {
@@ -536,6 +557,9 @@ struct DiffTable: NSViewRepresentable, Equatable {
     func clearChangedLines() { selectedLineIDs = []; anchors = [nil, nil]; onLineSelection?([]); refreshLineHighlights() }
     @objc func invokeLineAction() { if !selectedLineIDs.isEmpty { onLineAction?(selectedLineIDs) } }
     func lineMenu(_ row: Int, side: Int) -> NSMenu? {
+      if onReviewLine != nil, reviewableLine(row, side: side) != nil {
+        return NativeMenuItems.menu([NativeMenuItems.action(reviewActionTitle) { [weak self] in self?.reviewLine(row, side: side) }])
+      }
       guard onLineSelection != nil, onLineAction != nil else { return nil }
       if let line = changedLine(row, side: side), !selectedLineIDs.contains(line.id) {
         selectChangedLine(row, side: side, modifiers: [])
@@ -544,6 +568,19 @@ struct DiffTable: NSViewRepresentable, Equatable {
       let item = NSMenuItem(title: lineActionTitle, action: #selector(invokeLineAction), keyEquivalent: "")
       item.target = self; item.isEnabled = !selectedLineIDs.isEmpty; menu.addItem(item)
       return menu
+    }
+    func reviewableLine(_ row: Int, side: Int) -> (DiffLine, HostingReviewSide)? {
+      guard onReviewLine != nil, row >= 0, row < rowCount, !document.binary,
+        !document.complexMetadata else { return nil }
+      let line = settings.unifiedDiff ? rows[row] : side == 0 ? document.pairs[row].old : document.pairs[row].new
+      guard let line, line.kind == .addition || line.kind == .deletion || line.kind == .context else { return nil }
+      let reviewSide: HostingReviewSide = settings.unifiedDiff ? (line.kind == .deletion ? .old : .new) : side == 0 ? .old : .new
+      guard (reviewSide == .old ? line.oldNumber : line.newNumber) != nil else { return nil }
+      return (line, reviewSide)
+    }
+    func reviewLine(_ row: Int, side: Int) {
+      guard let (line, reviewSide) = reviewableLine(row, side: side) else { return }
+      onReviewLine?(line, reviewSide)
     }
     func refreshLineHighlights() {
       guard let host else { return }
@@ -659,7 +696,12 @@ struct DiffTable: NSViewRepresentable, Equatable {
         settings.unifiedDiff
         ? line?.newNumber ?? line?.oldNumber : side == 0 ? line?.oldNumber : line?.newNumber
       cell.number.stringValue = settings.showLineNumbers ? number.map(String.init) ?? "" : ""
-      cell.gutter.constant = settings.showLineNumbers ? 46 : 4
+      let comments = line.map { reviewLineCounts[$0.id] ?? 0 } ?? 0
+      cell.reviewMarker.stringValue = comments > 9 ? "9+" : String(comments)
+      cell.reviewMarker.isHidden = comments == 0
+      cell.reviewMarker.toolTip = "\(comments) " + reviewCountTitle
+      cell.reviewMarker.setAccessibilityLabel("\(comments) " + reviewCountTitle)
+      cell.gutter.constant = settings.showLineNumbers || onReviewLine != nil ? 46 : 4
       var background = NSColor(hex: dark ? 0x191B1F : 0xFAFBFC)
       if line?.kind == .addition {
         background =
@@ -742,6 +784,7 @@ struct DiffTable: NSViewRepresentable, Equatable {
 
 final class DiffCell: NSTableCellView {
   let number = NSTextField(labelWithString: "")
+  let reviewMarker = NSTextField(labelWithString: "")
   let code = NSTextView()
   var gutter: NSLayoutConstraint!
   override init(frame frameRect: NSRect) {
@@ -749,6 +792,9 @@ final class DiffCell: NSTableCellView {
     wantsLayer = true
     number.alignment = .right
     number.translatesAutoresizingMaskIntoConstraints = false
+    reviewMarker.translatesAutoresizingMaskIntoConstraints = false
+    reviewMarker.font = .systemFont(ofSize: 9, weight: .semibold)
+    reviewMarker.textColor = .controlAccentColor; reviewMarker.alignment = .center; reviewMarker.isHidden = true
     code.isEditable = false
     code.isSelectable = true
     code.isRichText = true
@@ -764,10 +810,13 @@ final class DiffCell: NSTableCellView {
     code.translatesAutoresizingMaskIntoConstraints = false
     code.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
     addSubview(number)
+    addSubview(reviewMarker)
     addSubview(code)
     gutter = number.widthAnchor.constraint(equalToConstant: 46)
     NSLayoutConstraint.activate([
       number.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 2),
+      reviewMarker.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 2),
+      reviewMarker.widthAnchor.constraint(equalToConstant: 17), reviewMarker.topAnchor.constraint(equalTo: topAnchor, constant: 4),
       number.topAnchor.constraint(equalTo: topAnchor, constant: 3), gutter,
       code.leadingAnchor.constraint(equalTo: number.trailingAnchor, constant: 10),
       code.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -7),

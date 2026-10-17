@@ -101,6 +101,19 @@ import SwiftUI
           print("Native hosting fixture acceptance passed (real OAuth not tested).")
           exit(0)
         }
+        if ProcessInfo.processInfo.environment["GITPIER_UI_ACCEPTANCE_SCOPE"] == "review" {
+          window.close()
+          let part = ProcessInfo.processInfo.environment["GITPIER_REVIEW_ACCEPTANCE_PART"] ?? "all"
+          guard ["all", "entries", "providers"].contains(part) else { throw GitPierError.invalidInput("Unknown review fixture part") }
+          let interactiveEntries = ProcessInfo.processInfo.environment["GITPIER_REVIEW_MENU_INTERACTIVE"] == "1"
+          guard part != "entries" || interactiveEntries else { throw GitPierError.invalidInput("entries requires GITPIER_REVIEW_MENU_INTERACTIVE=1 and real GUI-assisted Picker selection") }
+          if part == "all" { try await verifyHostingReview(root: root, output: output) }
+          if interactiveEntries && part != "providers" { try await verifyHostingReviewEntryPoints(root: root, output: output) }
+          if part != "entries" { try await verifyHostingReviewProviders(root: root, output: output) }
+          store.shutdown()
+          print("Native review fixture acceptance passed (synthetic HTTP only).")
+          exit(0)
+        }
         if ProcessInfo.processInfo.environment["GITPIER_UI_ACCEPTANCE_SCOPE"] == "workspace-performance" {
           store.shutdown(); window.close()
           try await verifyWorkspacePerformance(output: output)

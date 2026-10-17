@@ -1,5 +1,13 @@
 # Hosting credential storage — v1.5.1
 
+## v1.6.0 disconnect recovery and review drafts (unreleased)
+
+Review APIs continue through `OAuthTokenManager`; they do not read or write storage directly. Unpublished review text stays in memory and is excluded from hosting metadata, credentials, disconnect journals and logs. Closing does not publish it.
+
+Alongside `workspace.hosting.json`, `workspace.hosting.json.disconnects/` holds per-account UUID JSON intent files (directory 0700, files 0600). They contain only identity and remaining cleanup modes. Load overlays durable intents onto older metadata, removing active accounts/bindings before lazy credential restoration. Successful cleanup saves main metadata before removing the intent. A zero-copy recovery row means credential removal succeeded but saving its completion must be retried. If both persistence destinations fail, the current session is still stopped, credentials are preserved and cleanup waits for an explicit retry; restart durability cannot be promised before a write succeeds. Existing formats, keys and Keychain ACLs stay compatible.
+
+简体中文：审查继续通过 OAuthTokenManager 获取有效 Token，未发布正文仅在内存，不进入凭证、元数据、断开日志或普通日志。断开意图保存在 hosting JSON 旁的 `.disconnects/` 每账号 UUID 文件，目录0700/文件0600，只含身份和待清理介质；启动覆盖旧活动记录，清理完成先保存主元数据再移除日志。空副本恢复行表示凭证已删但完成状态需重试保存；双写全失败时仍停止内存会话、保留凭证并等待主动重试，不能承诺此时重启持久性。原凭证格式、密钥与 ACL 保持。
+
 GitPier uses one OAuth/PAT account and token lifecycle with two persistence backends. Git network authentication remains independent.
 
 | | Local Encrypted Vault (default for new accounts) | macOS Keychain |

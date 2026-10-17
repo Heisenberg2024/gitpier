@@ -8,6 +8,55 @@ import GitPierCore
   var clearLines: (() -> Void)?
   var lineAction: (() -> Void)?
   var actionMenu: ((Int) -> NSMenu?)?
+  var reviewLine: ((Int) -> Void)? { didSet { if reviewLine == nil { reviewButton.isHidden = true } else { window?.acceptsMouseMovedEvents = true } } }
+  var canReviewLine: ((Int) -> Bool)?
+  var reviewActionTitle = "Add Review Comment" { didSet { reviewButton.toolTip = reviewActionTitle; reviewButton.setAccessibilityLabel(reviewActionTitle) } }
+  private var reviewTracking: NSTrackingArea?
+  private var reviewRow = -1
+  private lazy var reviewButton: NSButton = {
+    let button = NSButton(image: NSImage(systemSymbolName: "text.bubble", accessibilityDescription: nil)!, target: self, action: #selector(addReviewComment))
+    button.isBordered = false; button.bezelStyle = .inline; button.controlSize = .small
+    button.toolTip = reviewActionTitle
+    button.setAccessibilityLabel(reviewActionTitle)
+    button.setAccessibilityIdentifier("hosting.diff.add-comment")
+    button.isHidden = true
+    addSubview(button)
+    return button
+  }()
+  override func updateTrackingAreas() {
+    super.updateTrackingAreas()
+    if let reviewTracking { removeTrackingArea(reviewTracking) }
+    let tracking = NSTrackingArea(rect: .zero, options: [.mouseMoved, .mouseEnteredAndExited, .activeInKeyWindow, .inVisibleRect], owner: self)
+    addTrackingArea(tracking); reviewTracking = tracking
+  }
+  override func viewDidMoveToWindow() { super.viewDidMoveToWindow(); if reviewLine != nil { window?.acceptsMouseMovedEvents = true } }
+  override func mouseMoved(with event: NSEvent) {
+    super.mouseMoved(with: event)
+    let point = convert(event.locationInWindow, from: nil), row = row(at: convert(event.locationInWindow, from: nil))
+    guard reviewLine != nil, row >= 0, canReviewLine?(row) == true, visibleRect.contains(point) else { reviewButton.isHidden = true; return }
+    reviewRow = row
+    let rect = rect(ofRow: row)
+    reviewButton.frame = NSRect(x: visibleRect.minX + 3, y: rect.minY + max(0, (rect.height - 17) / 2), width: 17, height: 17)
+    addSubview(reviewButton, positioned: .above, relativeTo: nil)
+    reviewButton.isHidden = false
+  }
+  override func mouseExited(with event: NSEvent) { super.mouseExited(with: event); reviewButton.isHidden = true }
+  @objc private func addReviewComment() { if canReviewLine?(reviewRow) == true { reviewLine?(reviewRow) } }
+  override func performKeyEquivalent(with event: NSEvent) -> Bool {
+    let row = keyboardReviewRow
+    if reviewLine != nil, event.modifierFlags.contains([.command, .shift]), event.charactersIgnoringModifiers?.lowercased() == "m", let row, canReviewLine?(row) == true {
+      reviewLine?(row); return true
+    }
+    return super.performKeyEquivalent(with: event)
+  }
+  private var keyboardReviewRow: Int? {
+    guard var view = window?.firstResponder as? NSView, view === self || view.isDescendant(of: self) else { return nil }
+    while view !== self {
+      if let cell = view as? NSTableCellView { return row(for: cell) }
+      guard let parent = view.superview else { break }; view = parent
+    }
+    return selectedRow >= 0 ? selectedRow : nil
+  }
   override func mouseDown(with event: NSEvent) {
     let point = convert(event.locationInWindow, from: nil)
     let row = row(at: point)
@@ -19,6 +68,9 @@ import GitPierCore
     super.mouseDown(with: event)
   }
   override func keyDown(with event: NSEvent) {
+    if reviewLine != nil, event.modifierFlags.contains([.command, .shift]), event.charactersIgnoringModifiers?.lowercased() == "m", canReviewLine?(selectedRow) == true {
+      reviewLine?(selectedRow); return
+    }
     guard let selectLine else { super.keyDown(with: event); return }
     if event.modifierFlags.contains([.command, .shift]), event.charactersIgnoringModifiers?.lowercased() == "s" {
       lineAction?(); return

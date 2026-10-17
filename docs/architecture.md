@@ -1,5 +1,15 @@
 # Architecture and security boundaries
 
+## Review collaboration (v1.6.0 development)
+
+`HostingReviewModels.swift` adds typed provider capabilities, stable remote target/revision identities, code anchors, discussion comments/threads and memory-only review drafts. `HostingReviewAPI.swift` adapts native provider semantics using the existing HTTPS boundary. `HostingReviewSubmission.swift` owns immutable confirmation tickets, per-target serialization across windows, preflight revalidation, stable-ID readback and independent partial/unknown outcomes. These modules never enter the Git write actor or acquire its queue.
+
+Native review sessions retain drafts across detail reconstruction. Timeline pages share `HostingRequestDetailCache` with the existing `HostingRequestDetailLoader`; writes invalidate only the affected request's collaboration/overview sections. The existing `DiffParser` and `DiffTable` retain local staging behavior. Remote review uses an independent line callback and complete patch/hunk hashes; no staging/discard/apply callbacks are provided. See [provider matrix, anchor validation and API limits](code-review.md).
+
+`HostingReviewersAPI` uses provider-native candidate and additive-request APIs under the same submission coordinator. GitLab list-replacement writes are disabled. `HostingApprovalRules` reads GitLab rule state separately. `HostingReviewDashboard` provides explicit, paged account inbox queries and a 60-second memory cache; `HostingReviewShortcuts` reuses the Hosting network budget and validates source repository/project, branch and full SHA before opening a request. Branch comparison retains the existing local Git path and tracking-snapshot provenance.
+
+`HostingDisconnectionIntentStore` persists one private file per disconnected account adjacent to hosting metadata. It is written before the first asynchronous suspension, overlaid at metadata load and removed only after main metadata has committed the disconnected/cleaned state. Cleanup progress merges monotonically; failed persistence retains a recovery row, and total persistence failure pauses credential deletion while revoking the in-memory session.
+
 GitPier is a native macOS application built as a SwiftPM executable. `GitPierCore` contains models, status/diff parsing, process execution, Git operations, persistence, Keychain access and FSEvents watching. SwiftUI coordinates views; AppKit provides the commit text editor, virtual Diff table and SwiftTerm PTY view. `PTYSupport` contains bounded native process/session cleanup.
 
 ## Ownership and state

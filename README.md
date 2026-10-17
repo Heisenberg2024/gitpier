@@ -81,6 +81,10 @@ Disconnect stops the account session and removes its bindings before credential 
 
 Request Overview, Commits, Files, Reviews and CI load independently on demand, with separate errors, paging, cancellation, cache and retry. Unavailable review APIs do not block files or commits, and denied CI access is shown as a permission error. Remote Diff remains read-only. See [validation and remaining real-platform checks](docs/development.md#v151-hosting-stability-validation).
 
+## Code review & collaboration — v1.6.0 development
+
+The next version adds confirmed comments, threaded discussions and review drafts using each provider's native API semantics. Review targets and line anchors bind to the exact account, repository and commit; unknown results preserve drafts and block automatic resubmission. GitHub review decisions, GitLab Discussions/Approval and Gitea's instance-dependent review capabilities are documented in the [code review guide](docs/code-review.md). It also adds confirmed GitHub multiline comments, GitLab thread resolution and approval-rule reads, additive GitHub/Gitea reviewer requests, and on-demand inbox/current-branch shortcuts. Local branch comparison keeps its tracking-snapshot meaning. This is unreleased work; Gitea inline placement, unsafe pending/reviewer updates and real-service write acceptance remain gated. The released download remains v1.5.1.
+
 ## Screenshots
 
 

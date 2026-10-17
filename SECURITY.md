@@ -1,5 +1,13 @@
 # Security & privacy
 
+## v1.6.0 review writes (unreleased)
+
+Review comments and approvals are explicit remote writes using the selected Hosting account, independently of Git transport. Immutable confirmation snapshots bind the stable account/repository/request and revision; complete patches and exact file coordinates validate inline positions. A shared per-target lock rejects duplicate concurrent submissions. Successful writes require stable-ID readback; ambiguous network, cancellation and verification outcomes preserve the draft and block automatic reposting. No review action applies code, changes local Git state or triggers Fetch/Push. Remote bodies remain plain text. See [provider capabilities and recovery](docs/code-review.md) for permission and API limitations, including Gitea's disabled formal-review/pending writes that may publish another client's draft, and unverified inline creation.
+
+Disconnect records a private per-account intent before asynchronous cleanup. A durable journal suppresses stale account/binding metadata after restart. If both metadata and journal writes fail, memory remains disconnected, credentials are retained and explicit retry is required; no cross-restart guarantee is claimed in that state. Journals contain identity/cleanup metadata, never tokens or drafts. Existing Keychain ACLs and credential formats remain intact.
+
+简体中文：审查评论/审批是用户确认后的远程写入，使用所选托管账号，与 Git 认证分离。提交快照绑定稳定身份和版本，逐行位置校验真实 Patch；共享锁阻止重复提交，成功后按服务器稳定 ID 回读。网络、取消或回读结果未知时保留草稿并阻止自动重发。不应用代码、不修改本地 Git、不触发 Fetch/Push、不执行远程正文。断开意图在异步清理前私有持久化，重启时抑制旧账号；元数据与日志双写全失败则保留内存断开、凭证和重试入口，并明确此时跨重启无保证。凭证格式与 ACL 保持。
+
 GitPier runs Git, SSH, and terminal commands locally with the current user's privileges. Repositories, hooks, shell startup files, credential helpers, and external tools should be trusted before opening or running them. GitPier is distributed outside the macOS App Sandbox.
 
 Managed HTTPS tokens are stored in macOS Keychain. Local workspace configuration contains repository paths, drafts, preferences, and credential-profile metadata, including SSH identity paths. Terminal output is not logged to disk by GitPier. Remote operations use the configured Git remotes; there is no GitPier upload or analytics service.

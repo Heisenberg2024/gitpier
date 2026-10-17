@@ -81,6 +81,10 @@ Git LFS 页面检测可选工具，展示规则 / 文件 / OID / Pointer，审�
 
 请求概览、提交、文件、审查和 CI 独立按需加载，各自保留错误、分页、取消、缓存和重试。不支持审查 API 不影响文件和提交；CI 无权限会明确显示权限错误。远端 Diff 保持只读。详见[验收与尚待真实平台验证的项目](docs/development.md#v151-hosting-stability-validation)。
 
+## 代码审查与协作 — v1.6.0 开发中
+
+下一版本新增经确认的评论、讨论线程和审查草稿，分别遵循各平台原生 API 语义。目标与逐行位置绑定准确账号、仓库及提交；结果未知时保留草稿并禁止自动重发。GitHub 审查决定、GitLab Discussion/Approval 和 Gitea 实例能力差异详见[代码审查指南](docs/code-review.md)。同时新增确认后的 GitHub 多行评论、GitLab 线程解决与审批规则读取、GitHub/Gitea 追加审查者，以及主动加载的收件箱/当前分支入口；本地分支比较明确跟踪引用快照来源。目前尚未发布，Gitea 逐行落点、缺少安全条件的 Pending/Reviewer 更新及真实服务写入验收仍受门控；正式下载保持 v1.5.1。
+
 ## 界面截图
 
 

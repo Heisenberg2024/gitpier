@@ -54,6 +54,7 @@ struct WindowLifecycle: NSViewRepresentable {
         alert.runModal()
         return false
       }
+      if !store.reviewSessions.confirmClose(store: store, quitting: false) { return false }
       if !store.unsavedConflictDrafts.isEmpty {
         if !store.confirmDiscardConflictDrafts(quitting: false) { return false }
       } else if store.models.values.contains(where: { $0.terminal.sessions.contains { !$0.exited } }

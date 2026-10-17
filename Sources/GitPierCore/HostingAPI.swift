@@ -57,6 +57,9 @@ public struct HostingChangedFile: Identifiable, Sendable {
   public let oldPath: String
   public let kind: String
   public let patch: String?
+  public init(path: String, oldPath: String = "", kind: String, patch: String?) {
+    self.path = path; self.oldPath = oldPath; self.kind = kind; self.patch = patch
+  }
 }
 public struct HostingReview: Identifiable, Sendable {
   public let id: String
@@ -215,11 +218,11 @@ public struct HostingAPIClient: Sendable {
   }
   public func giteaReviewCommentsPage(_ binding: RepositoryHostingBinding, number: Int, reviewID: String, account: HostingAccount, token: HostingToken, page: Int = 1) async throws -> HostingPage<HostingReview> {
     guard account.instance.provider == .gitea, Int(reviewID) != nil else { throw HostingError.invalidResponse }
-    let path = try requestPath(binding, account: account, number: number) + "/reviews/\(reviewID)/comments"
-    let (j, r) = try await json(account, token: token, path: path, query: pagination(.gitea, page: page))
-    guard case .array = j else { throw HostingError.invalidResponse }
-    return HostingPage(items: j.array.map { v in HostingReview(id: v["id"].string, author: v["user"]["login"].string, body: v["body"].string, state: "",
-      path: v["path"].string, line: v["position"].string, webURL: safeWeb(v["html_url"].string)) }, nextPage: next(r, count: j.array.count, page: page))
+    let path = try requestPath(binding, account: account, number: number)
+    guard page == 1 else { return HostingPage(items: [], nextPage: nil) }
+    let comments = try await boundedGiteaReviewComments(path: path, reviewID: reviewID, account: account, token: token)
+    return HostingPage(items: comments.map { v in HostingReview(id: v["id"].string, author: v["user"]["login"].string, body: v["body"].string, state: "",
+      path: v["path"].string, line: v["position"].string, webURL: safeWeb(v["html_url"].string)) }, nextPage: nil)
   }
   public func giteaPatch(_ binding: RepositoryHostingBinding, number: Int, file: HostingChangedFile, account: HostingAccount, token: HostingToken) async throws -> String? {
     guard account.instance.provider == .gitea else { return file.patch }

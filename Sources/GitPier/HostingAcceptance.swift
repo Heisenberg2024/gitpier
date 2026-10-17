@@ -43,15 +43,15 @@ actor HostingAcceptanceTransport: HostingTransport {
     if path.hasSuffix("/files") || path.hasSuffix("/diffs") { return try response([
       ["filename": "Sources/Hosting.swift", "new_path": "Sources/Hosting.swift", "old_path": "Sources/Hosting.swift", "status": "modified", "patch": "@@ -1,2 +1,3 @@\n struct Hosting {\n+  let provider = \"GitHub\"\n }", "diff": "@@ -1,2 +1,3 @@\n struct Hosting {\n+  let provider = \"GitLab\"\n }"],
       ["filename": "Resources/Preview.png", "new_path": "Resources/Preview.png", "status": "added"]]) }
-    if path.hasSuffix("/reviews") { return try response([["id": 1, "state": "APPROVED", "user": ["login": "fixture-reviewer"], "body": "Approved the native implementation."]]) }
+    if path.hasSuffix("/reviews") { return try response([["id": 1, "state": "APPROVED", "user": ["id": 71, "login": "fixture-reviewer"], "body": "Approved the native implementation.", "commit_id": sha]]) }
     if path.hasSuffix("/approvals") { return try response(["approved_by": [["user": ["id": 71, "username": "fixture-reviewer"]]]]) }
-    if path.hasSuffix("/comments") || path.hasSuffix("/notes") { return try response([["id": 2, "user": ["login": "fixture-reviewer"], "author": ["username": "fixture-reviewer"], "path": "Sources/Hosting.swift", "line": 2, "body": "Synthetic review comment. <script>never executed</script>"]]) }
+    if path.hasSuffix("/comments") || path.hasSuffix("/notes") { return try response([["id": 2, "user": ["id": 71, "login": "fixture-reviewer"], "author": ["id": 71, "username": "fixture-reviewer"], "path": "Sources/Hosting.swift", "line": 2, "commit_id": sha, "body": "Synthetic review comment. <script>never executed</script>"]]) }
     if path.hasSuffix("/discussions") { return try response([]) }
     func pull(_ number: Int = 17, created: Bool = false) -> [String: Any] {
-      ["number": number, "iid": number, "title": created ? "Add native hosting collaboration" : "Connect repository collaboration", "body": "Review provider requests and exact-commit CI.\n\n<script>remote content is text</script>", "description": "Fixture merge request description", "state": "open", "draft": false,
-       "head": ["ref": created ? "main" : "feature/hosting", "sha": sha, "repo": ["full_name": "example/fixture"]], "base": ["ref": created ? "develop" : "main"], "sha": sha,
-       "source_branch": "feature/hosting", "target_branch": "main", "source_project_id": 12,
-       "user": ["login": "fixture-user"], "author": ["username": "fixture-user"], "requested_reviewers": [["login": "fixture-reviewer"]],
+      ["id": number + 200, "number": number, "iid": number, "title": created ? "Add native hosting collaboration" : "Connect repository collaboration", "body": "Review provider requests and exact-commit CI.\n\n<script>remote content is text</script>", "description": "Fixture merge request description", "state": "open", "draft": false,
+       "head": ["ref": created ? "main" : "feature/hosting", "sha": sha, "repo": ["full_name": "example/fixture"]], "base": ["ref": created ? "develop" : "main", "sha": sha, "repo": ["id": 12]], "sha": sha,
+       "source_branch": "feature/hosting", "target_branch": "main", "source_project_id": 12, "target_project_id": 12,
+       "user": ["id": 99, "login": "fixture-user"], "author": ["id": 99, "username": "fixture-user"], "requested_reviewers": [["login": "fixture-reviewer"]],
        "created_at": "2026-10-16T10:00:00Z", "updated_at": "2026-10-16T11:00:00Z", "html_url": "https://github.com/example/fixture/pull/17", "web_url": "https://gitlab.example.invalid/example/fixture/-/merge_requests/17"]
     }
     if request.httpMethod == "POST" && (path.hasSuffix("/pulls") || path.hasSuffix("/merge_requests")) { posts += 1; return try response(pull(18, created: true), status: 201) }

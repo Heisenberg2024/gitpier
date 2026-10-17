@@ -23,6 +23,7 @@ struct BranchComparisonView: View {
   var body: some View {
     GeometryReader { area in
       VStack(spacing: 0) {
+        HostingLocalComparisonExplanation().padding(.horizontal, 12).padding(.top, 10)
         ScrollView(.horizontal) {
           HStack(spacing: 8) {
             Text(store.text("Compare Branches", "比较分支")).font(.headline)

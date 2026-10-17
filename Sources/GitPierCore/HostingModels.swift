@@ -106,9 +106,13 @@ public struct HostingInstance: Codable, Hashable, Sendable, Identifiable {
 }
 
 public enum HostingAuthorizationLevel: String, CaseIterable, Codable, Sendable {
-  case read, publicWrite, privateWrite
+  case read, publicWrite, privateWrite, reviewCollaboration
   public func scopes(for provider: HostingProvider) -> [String] {
-    switch provider {
+    if self == .reviewCollaboration {
+      // Separate, explicit opt-in. Never expand an existing repository grant silently.
+      return provider == .gitea ? ["read:user", "write:repository", "write:issue"] : []
+    }
+    return switch provider {
     case .github: self == .read ? ["read:user"] : self == .publicWrite ? ["read:user", "public_repo"] : ["read:user", "repo"]
     case .gitlab: self == .read ? ["read_user", "read_api"] : ["api"]
     case .gitea: self == .read ? ["read:user", "read:repository"] : ["read:user", "write:repository"]

@@ -96,6 +96,7 @@ struct GitPierApp: App {
   var body: some Scene {
     WindowGroup("GitPier", id: "workspace") {
       RootView().environmentObject(store).modifier(AppAppearance(store: store))
+        .safeAreaInset(edge: .top, spacing: 0) { HostingReviewDraftBanner(registry: store.reviewSessions).environmentObject(store) }
         .environment(
           \.locale, Locale(identifier: store.settings.language == .english ? "en_US" : "zh_Hans")
         )
@@ -220,6 +221,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
       alert.informativeText = store.text(
         "Wait for Git operations to finish before quitting or installing an update.", "请等待 Git 操作完成后再退出或安装更新。")
       alert.runModal()
+      store.updates.terminationWasCancelled()
+      return .terminateCancel
+    }
+    if !store.reviewSessions.confirmClose(store: store, quitting: true) {
       store.updates.terminationWasCancelled()
       return .terminateCancel
     }

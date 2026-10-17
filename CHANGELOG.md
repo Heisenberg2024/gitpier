@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased — v1.6.0 (27)
+
+- Add account/repository/request/revision-bound review models, exact Diff anchors, immutable submission previews and a shared submission coordinator. Check fresh permissions and versions before each write; verify returned stable IDs and preserve unknown/partial outcomes without automatic POST retries.
+- Add provider-specific review adapters and native collaboration interfaces in development. GitLab Discussions and Approval remain independent operations; Gitea inline placement requires controlled live verification; formal review creation/pending submission stays in the browser because the API may publish another client’s pending comments or adopt newer HEAD. See [capabilities and validation limits](docs/code-review.md).
+- Add confirmed GitHub multiline comments, GitLab discussion resolution and separately loaded approval rules, additive GitHub/Gitea reviewer requests, an on-demand account review inbox and exact-source current-branch shortcuts. Reuse local branch comparison with explicit tracking-snapshot provenance; keep unsafe or unverified provider actions in the browser.
+- Persist per-account disconnect intent before asynchronous cleanup; suppress stale active metadata after restart and retain explicit recovery when metadata or credential cleanup fails. Preserve original OAuth, Local Vault, Keychain and Git workflows.
+- 新增绑定账号、仓库、请求和版本的审查模型、准确 Diff 位置、不可变提交预览与共享提交协调器；每条写入前检查最新权限和版本，回读稳定 ID，保留未知/部分成功结果且不自动重复 POST。
+- 开发各平台独立审查适配与原生协作界面。GitLab Discussion 与 Approval 分别写入；Gitea 逐行落点需受控真实验证；正式审查/Pending 接口可能发布其他客户端草稿或采用新 HEAD，保留网页操作。[能力与验收边界](docs/code-review.md)明确区分。
+- 新增确认后的 GitHub 多行评论、GitLab 讨论解决与独立审批规则读取、GitHub/Gitea 追加审查者、主动加载的账号级审查收件箱和准确源身份的当前分支入口；复用并明确来源的本地分支比较，未验证或缺少安全条件的平台操作保留网页入口。
+- 异步清理前持久化每账号断开意图，重启时抑制旧活动元数据；元数据或凭证清理失败保留主动恢复入口，保持原 OAuth、本地库、Keychain 与 Git 工作流。
+
 ## 1.5.1 — 2026-10-17
 
 ### Hosting stability and compatibility (26)

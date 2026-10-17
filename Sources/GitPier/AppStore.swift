@@ -26,6 +26,8 @@ import UserNotifications
   lazy var updates = UpdateManager(store: self)
   lazy var workspace = WorkspaceModel(store: self)
   lazy var hosting = HostingModel(store: self)
+  let reviewSessions = HostingReviewSessionRegistry()
+  @Published var hostingReviewDestination: HostingReviewDashboardItem?
   var hasRunningGitOperations: Bool { hasBlockingGitOperations || workspace.automaticallyFetching }
   var hasBlockingGitOperations: Bool { cloning || workspace.manuallyFetching || models.values.contains { $0.busy || $0.committing } }
   let cloneActivity = OperationProgress()
@@ -422,6 +424,7 @@ import UserNotifications
     return alert
   }
   func shutdown() {
+    reviewSessions.stop()
     hosting.shutdown()
     if let foregroundObserver { NotificationCenter.default.removeObserver(foregroundObserver); self.foregroundObserver = nil }
     workspace.shutdown()

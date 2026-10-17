@@ -50,7 +50,8 @@ struct HostingDashboardBadge: View {
           let result = try await hosting.networkBudget.perform { try await hosting.requests(binding, account: account, filter: .open, page: 1, refresh: false) }
           try Task.checkCancellation()
           var text = (account.instance.provider == .gitlab ? "MR " : "PR ") + String(result.items.count) + (result.nextPage == nil ? "" : "+")
-          if let match = result.items.first(where: { $0.source == branch && $0.sha == head }) { text += " · #\(match.number)" }
+          // A list row has no verified local source-repository identity. Exact current-branch
+          // shortcuts are resolved only by the explicit, source-aware action in the Hosting page.
           if let head {
             do {
               let token = try await hosting.tokens.token(for: account), api = hosting.api

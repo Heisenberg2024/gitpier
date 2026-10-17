@@ -75,8 +75,8 @@ public struct HostingMetadataStore: Sendable {
   public func load() throws -> HostingMetadata {
     do {
       let directory = try HostingPrivateDirectory(url.deletingLastPathComponent()); defer { directory.closeDirectory() }
-      guard let data = try directory.read(url.lastPathComponent) else { return HostingMetadata() }
-      let value = try JSONDecoder().decode(HostingMetadata.self, from: data)
+      let data = try directory.read(url.lastPathComponent)
+      let value = try data.map { try JSONDecoder().decode(HostingMetadata.self, from: $0) } ?? HostingMetadata()
       guard value.version == 2, Set(value.accounts.map(\.id)).count == value.accounts.count,
         Set(value.accounts.map(\.identity)).count == value.accounts.count,
         Set(value.disconnectedAccounts.map(\.id)).count == value.disconnectedAccounts.count,
@@ -88,7 +88,7 @@ public struct HostingMetadataStore: Sendable {
         try record.account.validateCredentialContext()
         guard Set(record.remainingStorage).count == record.remainingStorage.count else { throw HostingError.configurationUnreadable }
       }
-      return value
+      return try applyingDisconnectionIntents(to: value)
     } catch { throw HostingError.configurationUnreadable }
   }
   public func save(_ metadata: HostingMetadata) throws {

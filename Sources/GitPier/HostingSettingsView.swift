@@ -114,7 +114,9 @@ struct HostingSettingsView: View {
             VStack(alignment: .leading, spacing: 8) {
               Text(record.account.instance.provider.title + " · @" + record.account.user.login).font(.headline)
               Text(record.account.instance.baseURL.absoluteString).font(.caption).foregroundStyle(.secondary).textSelection(.enabled)
-              Text(store.text("Disconnected. Remaining credential copies: ", "已断开。仍待清理的凭证副本：") + record.remainingStorage.map(hosting.storageTitle).joined(separator: ", "))
+              Text(record.remainingStorage.isEmpty
+                ? store.text("Credential copies removed; retry saving cleanup progress.", "凭证副本已移除，请重试保存清理进度。")
+                : store.text("Disconnected. Remaining credential copies: ", "已断开。仍待清理的凭证副本：") + record.remainingStorage.map(hosting.storageTitle).joined(separator: ", "))
                 .font(.callout).foregroundStyle(.orange).textSelection(.enabled)
               Text(store.text("These copies cannot reconnect this account automatically. macOS authorization may be required to delete a Keychain copy. Retry only when you are ready to authorize cleanup.", "这些副本不会自动恢复账号连接。删除 Keychain 副本可能要求 macOS 授权，请在准备好授权清理时主动重试。"))
                 .font(.caption).foregroundStyle(.secondary)
@@ -227,6 +229,10 @@ struct HostingConnectSheet: View {
               SecureField(store.text("Personal Access Token", "个人访问令牌"), text: $pat)
               Text(store.text("Create a PAT on this instance. Start with read access; creation requires repository write/API access. GitPier validates the user identity before saving it.", "请在此实例创建 PAT。优先使用只读权限；创建请求需要仓库写入 / API 权限。保存前会验证用户身份。"))
                 .font(.callout).foregroundStyle(.secondary)
+              if provider == .gitea {
+                Text(store.text("Gitea issue comments need write:issue; reviews need write:repository. GitPier cannot expand an existing PAT. Create an appropriately scoped PAT on the instance and replace it explicitly.", "Gitea 普通评论需要 write:issue，审查需要 write:repository。GitPier 无法扩大已有 PAT 权限，请在实例创建具有所需权限的 PAT 后主动替换。"))
+                  .font(.caption).foregroundStyle(.secondary)
+              }
             } else {
               if selfHosted || provider == .gitea {
                 Picker(store.text("Saved Instance", "已保存实例"), selection: $savedConfiguration) {
@@ -259,9 +265,16 @@ struct HostingConnectSheet: View {
                 Text(store.text("Basic / Read Collaboration", "基础信息 / 只读协作")).tag(HostingAuthorizationLevel.read)
                 Text(store.text("Public Repository Collaboration", "公共仓库协作")).tag(HostingAuthorizationLevel.publicWrite)
                 Text(store.text("Private Repository Collaboration", "私有仓库协作")).tag(HostingAuthorizationLevel.privateWrite)
+                if provider == .gitea {
+                  Text(store.text("Reviews + Issue Comments (Expanded Scope)", "审查与 Issue 评论（扩大权限）")).tag(HostingAuthorizationLevel.reviewCollaboration)
+                }
               }
               Text(level.scopes(for: provider).joined(separator: " ")).font(.system(.caption, design: .monospaced)).foregroundStyle(.secondary)
               Text(scopeExplanation).font(.callout).foregroundStyle(level == .read ? Color.secondary : .orange)
+              if provider == .gitea, level == .reviewCollaboration {
+                Label(store.text("This adds write:issue, which grants issue read/write access beyond comments. An existing OAuth grant may reject expanded scopes. GitPier will not revoke the grant, retry silently or remove your connected account. Manage the grant on the instance yourself, or explicitly replace it with a PAT.", "此选项新增 write:issue，授予超出评论范围的 Issue 读写权限。已有 OAuth Grant 可能拒绝扩大 Scope。GitPier 不会撤销 Grant、静默重试或删除已连接账号。请自行在实例管理 Grant，或主动改用 PAT。"), systemImage: "info.circle")
+                  .font(.caption).foregroundStyle(.secondary).accessibilityIdentifier("hosting.gitea.expanded-scope-explanation")
+              }
               if configuration?.clientID.isEmpty == true { Text(hosting.message(HostingError.missingClientID)).font(.callout).foregroundStyle(.orange) }
             }
             if request.account == nil {
@@ -322,7 +335,8 @@ struct HostingConnectSheet: View {
         : level == .privateWrite ? store.text("repo grants broad read and write access to private repositories. It is not read-only.", "repo 会授予私有仓库广泛的读写权限，并非只读。")
         : store.text("public_repo grants read and write access to public repositories.", "public_repo 会授予公共仓库读写权限。")
     }
-    if provider == .gitlab { return level == .read ? store.text("read_user + read_api allow read-only account and API access.", "read_user + read_api 允许只读账号和 API 访问。") : store.text("api grants broad API read and write access. Confirm only if you need to create merge requests.", "api 会授予广泛的 API 读写权限，仅在需要创建 MR 时选择。") }
+    if provider == .gitlab { return level == .read ? store.text("read_user + read_api allow read-only account and API access.", "read_user + read_api 允许只读账号和 API 访问。") : store.text("api grants broad API read and write access, including merge requests, discussions and approvals. It is not limited to comments.", "api 会授予广泛的 API 读写权限，包括合并请求、讨论与审批，并非仅允许评论。") }
+    if level == .reviewCollaboration { return store.text("Explicitly request read:user + write:repository + write:issue for repository reviews and issue conversations. Existing access levels keep their original scopes.", "主动申请 read:user + write:repository + write:issue，用于仓库审查与 Issue 会话。既有授权级别的 Scope 保持不变。") }
     return level == .read ? store.text("Read account and repository data on this instance.", "读取此实例的账号和仓库数据。") : store.text("write:repository grants repository read and write access on this instance.", "write:repository 会授予此实例的仓库读写权限。")
   }
 }

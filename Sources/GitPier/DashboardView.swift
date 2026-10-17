@@ -13,6 +13,7 @@ private struct WorkspaceDashboard: View {
   @State private var search = ""
   @State private var sort = "manual"
   @State private var collapsed: Set<String> = []
+  @State private var reviewInbox = false
   @FocusState private var searching: Bool
 
   var body: some View {
@@ -33,6 +34,9 @@ private struct WorkspaceDashboard: View {
       .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
     }.background(Theme.sidebar(scheme))
       .onAppear { workspace.requestRemoteEvaluation() }
+      .sheet(isPresented: $reviewInbox) { HostingReviewDashboardView(hosting: store.hosting) { item in
+        reviewInbox = false; store.openHostingReviewInboxItem(item)
+      }.environmentObject(store) }
   }
 
   private func header(compact: Bool) -> some View {
@@ -46,6 +50,7 @@ private struct WorkspaceDashboard: View {
       }
       Spacer(minLength: 0)
       HStack(spacing: 8) {
+        headerButton("tray", store.text("Account Review Inbox", "账号审查收件箱"), compact: true) { reviewInbox = true }
         headerButton("magnifyingglass", store.text("Workspace Search", "工作空间搜索"), compact: compact) {
           store.showWorkspaceSearch = true
         }

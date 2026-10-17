@@ -123,6 +123,7 @@ extension UIAcceptance {
       restarted.error?.contains(store.settings.language == .english ? "restart" : "重启") == true else { throw HostingError.storageFailure }
     do { _ = try await restarted.tokens.token(for: other); throw HostingError.invalidResponse } catch HostingError.accountChanged {}
     restarted.shutdown()
+    try await verifyHostingDisconnectionPersistence(root: root, output: output)
     try JSONSerialization.data(withJSONObject: ["syntheticOnly": true, "realOAuthVerified": false,
       "migrationOldKeychainDeletionDenied": true, "currentLocalDeletedBeforeHistoricalCleanup": true,
       "disconnectedRecordSurvivesModelRestart": true, "localAccountRestoresWithoutKeychain": true,

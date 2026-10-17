@@ -61,6 +61,8 @@ import SwiftUI
   private var accountTaskIDs: [UUID: UUID] = [:]
   private var apiCancellations: [UUID: [UUID: () -> Void]] = [:]
   private var connectionCancellations: [UUID: () -> Void] = [:]
+  private var undurableDisconnections: Set<UUID> = []
+  private var disconnectionCleanups: Set<UUID> = []
   // A separate API budget never consumes the local Git scan/Fetch budget.
   let networkBudget = WorkspaceOperationBudget(limit: 2)
   private var signalCache: [String: (Date, HostingRequestSignals)] = [:]
@@ -339,9 +341,16 @@ import SwiftUI
     var value = metadata
     value.accounts.removeAll { $0.id == current.id }; value.bindings.removeAll { $0.accountID == current.id }
     value.disconnectedAccounts.removeAll { $0.id == current.id }
-    value.disconnectedAccounts.append(HostingDisconnectedAccount(account: current))
-    // Publish disconnection before the first suspension. Late UI/API results now fail identity checks.
-    metadata = value; states[current.id] = nil; credentialWarnings[current.id] = nil; revision = UUID()
+    let record = HostingDisconnectedAccount(account: current)
+    value.disconnectedAccounts.append(record)
+    // Both writes are synchronous and precede the first suspension. The independent intent
+    // suppresses stale active metadata after a crash, even if replacing that file fails.
+    var durable = false
+    do { try persistence.recordDisconnection(record); durable = true } catch {}
+    do { try persist(value); durable = true }
+    catch { metadata = value; revision = UUID() }
+    if durable { undurableDisconnections.remove(current.id) } else { undurableDisconnections.insert(current.id) }
+    states[current.id] = nil; credentialWarnings[current.id] = nil
     try await tokens.stopSession(current)
     await clearCaches(account: current)
     await cleanupDisconnected(current.id)
@@ -349,14 +358,25 @@ import SwiftUI
   /// Never loads a credential or restores an account. Each successful deletion is checkpointed;
   /// denied copies stay visible here across restart until the user retries cleanup explicitly.
   func cleanupDisconnected(_ id: UUID) async {
-    guard let record = metadata.disconnectedAccounts.first(where: { $0.id == id }) else { return }
+    guard let record = metadata.disconnectedAccounts.first(where: { $0.id == id }),
+      disconnectionCleanups.insert(id).inserted else { return }
+    defer { disconnectionCleanups.remove(id) }
     busy.insert(id); defer { busy.remove(id) }
     var metadataFailed = false
     func checkpoint(_ value: HostingMetadata) {
-      do { try persist(value); metadataFailed = false }
+      var durable = false
+      if let record = value.disconnectedAccounts.first(where: { $0.id == id }) {
+        do { try persistence.recordDisconnection(record); durable = true } catch {}
+      }
+      do { try persist(value); metadataFailed = false; durable = true }
       catch { metadata = value; revision = UUID(); metadataFailed = true }
+      if durable { undurableDisconnections.remove(id) }
     }
     checkpoint(metadata) // Journal all possible copies before attempting deletion.
+    if undurableDisconnections.contains(id) {
+      error = store.text("The account is disconnected in this session, but its disconnection intent could not be saved. Restart may still show the old account. Restore disk access and retry cleanup before quitting.", "账号在当前会话已断开，但无法保存断开意图。重启可能再次显示旧账号，请恢复磁盘访问并在退出前重试清理。")
+      return
+    }
     var cleanupError: Error?
     do {
       try await tokens.forget(record.account, modes: record.remainingStorage) { @MainActor [self] mode in
@@ -366,11 +386,20 @@ import SwiftUI
         checkpoint(value)
       }
     } catch { cleanupError = error }
-    var value = metadata
-    value.disconnectedAccounts.removeAll { $0.id == id && $0.remainingStorage.isEmpty }
-    checkpoint(value)
-    if metadataFailed {
-      error = store.text("The account is disconnected in this session, but its cleanup record could not be saved. If any credential copy remains, restart may still show the old account. Retry cleanup before quitting. ", "账号在当前会话已断开，但无法保存清理记录。若仍有凭证副本，重启可能再次显示旧账号，请在退出前重试清理。")
+    var intentCleanupFailed = false
+    if let completed = metadata.disconnectedAccounts.first(where: { $0.id == id }), completed.remainingStorage.isEmpty {
+      var value = metadata; value.disconnectedAccounts.removeAll { $0.id == id }
+      do {
+        try persist(value); metadataFailed = false
+        do { try persistence.removeDisconnectionIntent(id) }
+        catch {
+          // Retain an explicit retry row even when the only remaining work is the journal.
+          metadata.disconnectedAccounts.append(completed); revision = UUID(); intentCleanupFailed = true
+        }
+      } catch { metadataFailed = true }
+    }
+    if metadataFailed || intentCleanupFailed {
+      error = store.text("Account disconnected. Its saved disconnection intent prevents restoration after restart, but cleanup progress could not be fully saved. Restore disk access and retry cleanup. ", "账号已断开，已保存的断开意图会阻止重启后恢复账号，但无法完整保存清理进度。请恢复磁盘访问并重试清理。")
         + (cleanupError.map(message) ?? message(HostingError.storageFailure))
     } else if let cleanupError {
       error = store.text("Account disconnected. Credential copies listed below remain for explicit cleanup. ", "账号已断开。下方列出的凭证副本仍需主动清理。") + message(cleanupError)

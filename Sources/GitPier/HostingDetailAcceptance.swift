@@ -15,6 +15,7 @@ private actor HostingDetailAcceptanceTransport: HostingTransport {
   var releasedPreviews: Set<Int> = []
   var completedPreviews: Set<Int> = []
   var cancelledPreviews: Set<Int> = []
+  var overviewRequests = 0
   init(giteaPreview: Bool = false) { self.giteaPreview = giteaPreview }
   func holdOverview() { overviewHeld = true }
   func releaseOverview() { overviewHeld = false; let values = overviewWaiters; overviewWaiters = []; values.forEach { $0.resume() } }
@@ -29,6 +30,8 @@ private actor HostingDetailAcceptanceTransport: HostingTransport {
     func response(_ object: Any, status: Int = 200, headers: [String: String] = [:]) throws -> HostingHTTPResponse {
       HostingHTTPResponse(data: try JSONSerialization.data(withJSONObject: object), status: status, headers: headers)
     }
+    if path.hasSuffix("/example/fixture") { return try response(["id": 100, "private": false]) }
+    if path.hasSuffix("/version") { return try response(["version": "1.27.3"]) }
     if giteaPreview {
       if path.hasSuffix(".diff") {
         previewAttempts += 1; let attempt = previewAttempts
@@ -45,21 +48,22 @@ private actor HostingDetailAcceptanceTransport: HostingTransport {
       }
       if path.hasSuffix("/files") { return try response([["filename": "Sources/Preview.swift", "status": "modified"]]) }
       if path.hasSuffix("/status") { return try response(["sha": sha, "total_count": 0, "statuses": NSNull()]) }
-      return try response(["number": 17, "title": "Gitea cancelled preview fixture", "body": "Late preview errors must not replace the current attempt.", "state": "open", "updated_at": "gitea-preview-revision", "head": ["sha": sha, "ref": "topic"], "base": ["ref": "main"], "user": ["login": "fixture"]])
+      return try response(["id": 200, "number": 17, "title": "Gitea cancelled preview fixture", "body": "Late preview errors must not replace the current attempt.", "state": "open", "updated_at": "gitea-preview-revision", "head": ["sha": sha, "ref": "topic"], "base": ["ref": "main", "sha": sha, "repo": ["id": 100]], "user": ["id": 99, "login": "fixture"]])
     }
     if path.hasSuffix("/commits") {
       do { try await Task.sleep(for: .seconds(60)) } catch { cancelledCommits += 1; throw CancellationError() }
       return try response([])
     }
     if path.hasSuffix("/reviews") || path.hasSuffix("/check-runs") { return try response([:], status: path.hasSuffix("/reviews") ? 404 : 403) }
-    if path.hasSuffix("/comments") { return try response([["id": 1, "body": "Conversation survives unsupported reviews", "user": ["login": "fixture"]]]) }
+    if path.hasSuffix("/comments") { return try response([["id": 1, "body": "Conversation survives unsupported reviews", "user": ["id": 42, "login": "fixture"]]]) }
     if path.hasSuffix("/files") {
       let rows = (0..<50).map { ["filename": "Sources/File\($0).swift", "status": "modified", "patch": "@@ -1 +1 @@\n-old\n+new"] }
       return try response(rows, headers: ["link": "<https://ignored.example.invalid>; rel=\"next\""])
     }
     if path.hasSuffix("/status") { return try response(["sha": sha, "statuses": []]) }
-    if overviewHeld { await withCheckedContinuation { overviewWaiters.append($0) } }
-    return try response(["number": 17, "title": "Hosting stability fixture", "body": "Overview remains usable during slow module requests.", "state": "open", "updated_at": "fixture-revision", "head": ["sha": sha, "ref": "topic"], "base": ["ref": "main"], "user": ["login": "fixture"]])
+    overviewRequests += 1
+    if overviewHeld && overviewRequests == 2 { await withCheckedContinuation { overviewWaiters.append($0) } }
+    return try response(["id": 200, "number": 17, "title": "Hosting stability fixture", "body": "Overview remains usable during slow module requests.", "state": "open", "updated_at": "fixture-revision", "head": ["sha": sha, "ref": "topic"], "base": ["ref": "main", "sha": sha, "repo": ["id": 100]], "user": ["id": 99, "login": "fixture"]])
   }
 }
 

@@ -250,15 +250,15 @@ import XCTest
 
   func testGiteaReviewCommentPaginationIsExplicitAndReadOnly() async throws {
     let account = try account(.gitea), binding = try binding(account)
-    let transport = HostingFixtureTransport([
-      response("[{\"id\":1,\"body\":\"first\",\"path\":\"a.swift\",\"position\":1}]", headers: ["x-hasmore": "true"]),
-      response("[{\"id\":2,\"body\":\"last\",\"path\":\"b.swift\",\"position\":2}]", headers: ["x-hasmore": "false"])])
+    let comments = (1...120).map { "{\"id\":\($0),\"body\":\"comment \($0)\",\"path\":\"a.swift\",\"position\":\($0)}" }.joined(separator: ",")
+    let transport = HostingFixtureTransport([response("[" + comments + "]", headers: ["x-hasmore": "true"])])
     let api = client(transport)
     let first = try await api.giteaReviewCommentsPage(binding, number: 7, reviewID: "5", account: account, token: token(.gitea))
-    let last = try await api.giteaReviewCommentsPage(binding, number: 7, reviewID: "5", account: account, token: token(.gitea), page: try XCTUnwrap(first.nextPage))
-    XCTAssertEqual(first.items.first?.body, "first"); XCTAssertEqual(last.items.first?.body, "last"); XCTAssertNil(last.nextPage)
-    let requests = await transport.captured(); XCTAssertEqual(requests.count, 2)
-    XCTAssertTrue(requests.allSatisfy { $0.httpMethod == "GET" && $0.url?.path.hasSuffix("/pulls/7/reviews/5/comments") == true })
+    let second = try await api.giteaReviewCommentsPage(binding, number: 7, reviewID: "5", account: account, token: token(.gitea), page: 2)
+    XCTAssertEqual(first.items.count, 120); XCTAssertEqual(first.items.last?.body, "comment 120"); XCTAssertNil(first.nextPage)
+    XCTAssertTrue(second.items.isEmpty); XCTAssertNil(second.nextPage)
+    let requests = await transport.captured(); XCTAssertEqual(requests.count, 1)
+    XCTAssertTrue(requests.allSatisfy { $0.httpMethod == "GET" && $0.url?.path.hasSuffix("/pulls/7/reviews/5/comments") == true && $0.url?.query == nil })
   }
 
   func testGiteaSlashBranchReadsCommitIDAndRejectsSHAOnlyResponse() async throws {

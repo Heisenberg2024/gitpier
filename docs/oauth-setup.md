@@ -1,5 +1,11 @@
 # OAuth setup — v1.5.1
 
+## v1.6.0 collaboration permissions (unreleased)
+
+Review writes use the same account/token lifecycle. GitHub requires user-approved `public_repo` or broad `repo` access as appropriate; GitLab uses broad `api`, not a comment-only scope. Gitea repository reviews and issue conversations use separate permission categories: `write:repository` does not authorize ordinary Issue comments. The separate **Reviews + Issue Comments (Expanded Scope)** choice explicitly requests `read:user write:repository write:issue`; the default Read level and existing repository-only choices retain their original scopes. New review controls explain the missing permission and require explicit reauthorization or PAT replacement; existing grants are not silently expanded. An existing Gitea grant may reject a new scope set, so preserve its current session and let the owner choose a new grant, separate client or PAT. See [capabilities and API limitations](code-review.md). No new real-service v1.6.0 review authorization or write acceptance is claimed.
+
+简体中文：v1.6.0 审查复用原账号/Token。GitHub public_repo/repo、GitLab api 均含写权限，api 不是仅评论权限。Gitea Issue 对话与仓库审查分属 write:issue 和 write:repository；独立的“审查 + Issue 评论（扩大权限）”选项明确申请 read:user write:repository write:issue，默认只读和旧仓库权限选项保持，旧授权不会静默扩大。权限不足需用户主动重新授权或替换 PAT；Grant 冲突保留原会话，由用户决定新授权、独立 Client 或 PAT。本轮尚无新增真实服务审查写入验收。
+
 GitPier's hosting connection runs on the Mac. It uses public Client IDs, S256 PKCE or GitHub Device Flow, ordinary browser authorization and per-account Local Encrypted Vault or macOS Keychain storage. No Client Secret, GitPier account server, token exchange backend or public callback server is required. Git Fetch/Push continues to use existing Git credentials independently.
 
 ## GitPier maintainer
