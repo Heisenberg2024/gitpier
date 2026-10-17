@@ -291,7 +291,6 @@ actor HostingMigrationFixture {
     let task = Task { try await manager.migrate(a, to: .keychain, beforeWrite: { await journal.begin(.keychain) }, commit: { try await journal.commit($0) }) }
     while !(await journal.blocked()) { await Task.yield() }
     await expect(.operationInProgress) { _ = try await manager.migrate(a, to: .keychain, commit: { _ in }) }
-    await expect(.operationInProgress) { try await manager.forget(a) }
     await expect(.operationInProgress) { _ = try await manager.token(for: a) }
     let other = try await manager.token(for: b); XCTAssertEqual(other, token)
     await journal.release(); let changed = try await task.value

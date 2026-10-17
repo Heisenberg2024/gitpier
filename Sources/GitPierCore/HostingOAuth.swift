@@ -51,10 +51,20 @@ public struct OAuthPKCESession: Sendable {
     let items = c.queryItems ?? []
     guard items.filter({ $0.name == "state" }).count == 1, items.first(where: { $0.name == "state" })?.value == state,
       !items.contains(where: { ["access_token", "refresh_token", "token"].contains($0.name) }) else { throw HostingError.invalidCallback }
+    let errors = items.filter { $0.name == "error" }, codes = items.filter { $0.name == "code" }
+    guard errors.count <= 1 else { throw HostingError.invalidCallback }
+    if !errors.isEmpty {
+      guard errors[0].value?.isEmpty == false, codes.isEmpty,
+        items.filter({ $0.name == "error_description" }).count <= 1 else { throw HostingError.invalidCallback }
+    } else {
+      guard codes.count == 1, let code = codes[0].value, !code.isEmpty, code.utf8.count <= 4096 else { throw HostingError.invalidCallback }
+    }
     consumed = true // Includes provider errors: a callback can terminate only this session, once.
-    if let error = items.first(where: { $0.name == "error" })?.value { throw OAuthAuthorizationCoordinator.oauthError(error) }
-    guard items.filter({ $0.name == "code" }).count == 1, let code = items.first(where: { $0.name == "code" })?.value,
-      !code.isEmpty, code.utf8.count <= 4096 else { throw HostingError.invalidCallback }
+    if let error = items.first(where: { $0.name == "error" })?.value {
+      throw OAuthAuthorizationCoordinator.oauthError(error, provider: configuration.instance.provider,
+        description: items.first(where: { $0.name == "error_description" })?.value)
+    }
+    guard let code = codes.first?.value else { throw HostingError.invalidCallback }
     codeDigest = Data(SHA256.hash(data: Data(code.utf8))); return code
   }
 }
@@ -125,16 +135,24 @@ public actor OAuthAuthorizationCoordinator {
       method: "POST", body: HostingHTTPClient.form(fields), form: true, limit: 64 * 1024, oauthResponse: true)
     let json = try HostingJSON.decode(r.data)
     let error = json["error"].string
-    if !error.isEmpty { throw Self.oauthError(error) }
+    if !error.isEmpty { throw Self.oauthError(error, provider: config.instance.provider, description: json["error_description"].string) }
     guard (200...299).contains(r.status) else { throw HostingError.invalidClient }; return json
   }
-  static func oauthError(_ code: String) -> HostingError {
-    switch code {
+  static func oauthError(_ code: String, provider: HostingProvider? = nil, description: String? = nil) -> HostingError {
+    // Gitea rejects a scope change while retaining its existing grant. Match only this known
+    // provider response; never surface the remote description, which may contain private data.
+    if provider == .gitea, code == "server_error",
+      description?.split(whereSeparator: \.isWhitespace).joined(separator: " ").lowercased() == "a grant exists with different scope" {
+      return .scopeConflict
+    }
+    return switch code {
     case "expired_token": .expired
     case "access_denied": .denied
     case "incorrect_client_credentials", "invalid_client", "invalid_request": .invalidClient
     case "device_flow_disabled": .deviceDisabled
     case "invalid_grant", "bad_refresh_token": .unauthorized
+    case "invalid_scope": .permissionRequired
+    case "server_error", "temporarily_unavailable": .serverFailure
     default: .invalidResponse
     }
   }

@@ -531,12 +531,91 @@ Evidence is under the named `.cache/ui-acceptance/` directories and `.cache/dual
 
 ### v1.5.0 release preparation — 2026-10-17
 
-The owner committed the implementation as `0f07e5659f089102b9ba10448b88e42af89a97ba`; local HEAD and GitHub main match. [Same-commit CI run 38998495004](https://github.com/Heisenberg2024/gitpier/actions/runs/38998495004) passed on Swift 6.1.2: 424 Core tests with zero failures/skips (473.506 seconds), ten release-tool gates, application build, temporary DMG structure and permission-preserving artifact upload. This establishes CI compatibility for that implementation commit; the pending release-document edits still need their own commit/CI before the release tag.
+The owner committed the implementation as `0f07e5659f089102b9ba10448b88e42af89a97ba` (the implementation checkpoint before the release documentation commit). [Same-commit CI run 38998495004](https://github.com/Heisenberg2024/gitpier/actions/runs/38998495004) passed on Swift 6.1.2: 424 Core tests with zero failures/skips (473.506 seconds), ten release-tool gates, application build, temporary DMG structure and permission-preserving artifact upload. This established CI compatibility for the implementation checkpoint. The release-document commit and its main/tag CI were subsequently completed as recorded below.
 
-Both READMEs now introduce v1.2.0, v1.3.0, v1.4.0 and v1.5.0 in ascending order; within the v1.4 overview, v1.4.3 precedes v1.4.4. The v1.5.0 Changelog is dated 2026-10-17 and the hosting, OAuth and credential-storage documentation headings no longer use Unreleased. English-first bilingual release notes remain a local draft for owner confirmation, with no internal testing section.
+Both READMEs now introduce v1.2.0, v1.3.0, v1.4.0 and v1.5.0 in ascending order; within the v1.4 overview, v1.4.3 precedes v1.4.4. The v1.5.0 Changelog is dated 2026-10-17 and the hosting, OAuth and credential-storage documentation headings no longer use Unreleased. At this preparation checkpoint, English-first bilingual release notes were a local draft awaiting owner confirmation, with no internal testing section.
 
 The existing verified Universal 1.5.0 (25) app was reused: all 149 tracked files in its frozen source/resource/test/package input set match HEAD; the three remaining frozen entries are ignored Finder/Python cache metadata. No application source, production public IDs, update identity or dependency changed during this preparation. Ten local release-tool tests, README order/relative links and diff checks passed. The new candidate is in `.cache/releases/v1.5.0/prepare-20261017-114553/`, with **17,137,747 bytes**, SHA256 `76ccd5acb6dae7a75d1651afc6940572785c048ec3e177ddd5e361f16960660c`.
 
 The final HFS+/ULFO DMG passed Universal/deep signatures, all 105 packaged regular files plus the complete link/permission inventory against dist, normal Finder-open icon view/background/arrow/bilingual text, and production EdDSA archive/feed signatures. Embedded notes match the draft byte-for-byte; equal-length archive/feed tampering is rejected. Existing production signing material was used without export or replacement. The 34 prior local distribution assets remain byte-identical; existing releases/tags were recorded and left unchanged. Two task-owned mounts and the task's Finder windows were cleaned; no app launch, drag installation or production update was performed. The existing `gitpier://` handler still resolves to `/Applications/GitPier.app`.
 
-Publication is pending explicit owner confirmation of the notes and authorization to commit/push the documentation, create the Draft/tag, upload/read back the three assets, wait for the final commit's CI and publish Latest. No v1.5.0 tag, GitHub Release, upload, repository commit or push has been performed by this preparation.
+This preparation was subsequently published after the owner approved the notes and release. See the completed publication record below; the preparation checkpoint is retained as historical evidence.
+
+
+### v1.5.0 published — 2026-10-17
+
+[GitPier v1.5.0](https://github.com/Heisenberg2024/gitpier/releases/tag/v1.5.0), build 25, was published as Latest at **2026-10-17 12:16:09 Asia/Shanghai**, Release ID `415571997`. Tag `v1.5.0` targets `01848fec98265712e2cff47a7a1517f5eecbf430`, including the implementation and release documentation. [Main CI 39000949146](https://github.com/Heisenberg2024/gitpier/actions/runs/39000949146) and [tag CI 39000952115](https://github.com/Heisenberg2024/gitpier/actions/runs/39000952115) succeeded; main CI ran 424 Core tests with zero failures/skips on Swift 6.1.2, all ten release-tool gates, application build, temporary DMG verification and artifact upload.
+
+The approved English-first bilingual notes and three attachments were uploaded to Draft and downloaded for readback before publication. Public attachment and canonical Latest Feed checks passed after publication. The released Universal DMG is **17,137,747 bytes**, SHA256 `76ccd5acb6dae7a75d1651afc6940572785c048ec3e177ddd5e361f16960660c`; the production EdDSA archive/feed checks and equal-length tamper rejection passed without exporting signing material. All 105 packaged regular files and the complete links/permissions inventory matched the frozen application. Finder layout/background/icons/bilingual text were visually checked; task-owned mounts/windows were cleaned. Historical releases, tags and local distribution assets were preserved.
+
+This release did not establish a new real-platform Local Vault OAuth grant, private writes, actual refresh-token expiry, Intel/macOS 14 hardware, Developer ID/notarization or production update installation. Historical real Keychain-based GitHub/GitLab acceptance and simulated dual-storage acceptance remain distinguished above. Publication evidence is retained locally in `.cache/releases/v1.5.0/prepare-20261017-114553/`. During v1.5.1 work the public release API was read again: release ID, publication timestamp and all three asset sizes/digests match that record.
+
+简体中文：v1.5.0（25）已于 2026-10-17 12:16:09（Asia/Shanghai）正式发布为 Latest，发布提交为 `01848fec98265712e2cff47a7a1517f5eecbf430`。Main/Tag CI 均成功；经 Draft 附件回读、公开下载与生产签名核验后发布。该记录不代表已新增真实 Local Vault OAuth、私有写入、真实到期轮换或 Intel/macOS 14 真机验收。
+
+
+## v1.5.1 hosting stability validation
+
+Target: **1.5.1 (26)**, a local development candidate based on released `01848fec98265712e2cff47a7a1517f5eecbf430`. The v1.5.0 publication record above remains the released baseline. No GitPier source commit, push, tag or release was performed. Progress is in `.local/v1.5.1-progress.md`; evidence remains local under `.cache/v151/`.
+
+Disconnect stops the account session and owned API work before cleanup. Active-storage and historical-copy deletion have independent outcomes; disconnected metadata retains denied copies across restart for explicit retry. Historical Keychain denial cannot restore a Local Vault session or hide a remaining copy. Original Git credentials are unaffected.
+
+Overview immediately renders the selected list snapshot. Commits, Files, Reviews and CI independently load their first page on selection, with separate errors, cancellation, cache and retry. Later pages remain explicit. Empty GitHub statuses continue only to the first Checks page, and cancelled requests do not restart themselves. Review failures do not block commits/files; CI denial stays an error. Remote Diff remains read-only; malformed/overflowing hunk ranges or mismatched body counts retain their raw preview without actionable hunks, preserving CRLF bytes.
+
+Real Gitea acceptance found additional provider differences and led to repairs: Branch uses `commit.id`, the official DTO and synthetic cases establish that nonempty commit statuses use `status`, and a real successful empty combined status may contain `statuses: null` with numeric `total_count: 0`. SHA validation remains strict and malformed/null nonempty responses remain errors. Fork creation uses the full reviewed `owner/repo:branch`; owner-only addressing could select another repository. Upstream full-repository syntax is verified for [Gitea 1.26](https://github.com/go-gitea/gitea/blob/v1.26.0/routers/api/v1/repo/pull.go#L1030-L1038) and 1.27; older servers that reject it stop without fallback or another POST. Same-repository creation is unchanged.
+
+### Automated and native fixture evidence
+
+| Check | Recorded result |
+| --- | --- |
+| Complete Core suite | **494 tests, zero failures/skips (268.676 seconds)**; final Core sources and tests, `core-final-494.log`. |
+| Focused Hosting/Diff/callback suite | **186 tests, zero failures/skips (1.334 seconds)**, including 22 provider compatibility, 20 detail and eight callback tests. |
+| Release-tool gates | **10 passed (1.614 seconds)**; release scripts remained unchanged. |
+| Universal build and signatures | **1.5.1 (26), arm64 + x86_64**, nested/deep signatures passed; all 209 frozen inputs match, `universal-preview-final.log`. |
+| Native Hosting / full UI / browser callback | **33 focused Hosting captures** (22 storage, four disconnect, seven detail), including an intentionally late cancelled Gitea 403 while its replacement preview remains loading, followed by a read-only Diff; mock ordinary-browser callback passed. Final full native UI/PTY regression passed with **104 captures**, `native-full-v4`; all these runs use the final Universal bundle. |
+| DMG | **17,712,102 bytes**, SHA256 `0b36324a8f9d0d2280dd2deed06da089c64941efd43054d4ce056357713ececc`. HFS+/ULFO structure, Universal/deep signatures, all 105 regular files and complete links/modes match dist. Normal Finder DMG-file open shows the intended icons/background/arrow/bilingual instructions; task windows closed and image detached. The final local candidate is `.cache/v151/candidate-v3/GitPier-1.5.1-macos-universal.dmg`; earlier candidates remain marked SUPERSEDED. |
+
+Tests cover migrated historical-copy denial, immediate disconnect, restart/retry, late refresh/write completions, request/account generations, shared cache readers, slow networks, 403/404/429/5xx, cancellation/retry, large-PR pagination and rapid tab/PR switching. Provider creation fixtures revalidate exact source/target SHA and account identity before POST, including same-owner forks and older Gitea rejection. Callback tests use real local loopback HTTP with synthetic OAuth: valid provider errors finish immediately, malformed/ambiguous or foreign callbacks are rejected, and response bodies contain no callback secrets. Diff tests cover invalid/overflowing coordinates, count mismatches, later malformed hunks, zero ranges and CRLF.
+
+The complete Hosting fixture matrix passed with **271 system-window captures** across English/Simplified Chinese, Light/Dark and 960/1440/1800 widths. The final focused rerun covers storage, denied cleanup and detail loading. Injected OAuth/API and Keychain denial in these fixtures are simulations, not real-platform authorization or actual macOS refusal.
+
+```bash
+Scripts/test.sh
+Scripts/test.sh --filter 'Hosting.*Tests|DiffParserSafetyTests'
+python3 Scripts/test-release-tools.py
+UNIVERSAL=1 Scripts/build-app.sh
+GITPIER_HOSTING_STORAGE_ONLY=1 Scripts/workspace-acceptance.sh hosting .cache/v151/native-hosting-v4
+Scripts/workspace-acceptance.sh full .cache/v151/native-full-v4
+Scripts/workspace-acceptance.sh hosting-browser .cache/v151/native-browser-v4
+```
+
+### Real platform OAuth, restart, migration and refresh
+
+The owner personally approved first-use Local Vault OAuth on **GitHub.com, GitLab.com and code.superecloud.com (Gitea 1.27.3)**. All three real current-user APIs passed before and after a complete process exit/restart. Vault pointers remained unchanged across exit/restart. OAuth Keychain read/save/replace/delete counters were zero during initial authorization, restoration and refresh. This is new Local Vault evidence, distinct from v1.5.0's historical Keychain login.
+
+One GitLab account migrated **Local Vault → real isolated Keychain → Local Vault** while the other accounts remained available. All three identities passed in the mixed-storage checkpoint. The historical Keychain copy was explicitly retained for cleanup. A later real disconnect removed the account/binding and both its Local Vault and historical Keychain copy; the other two identities still passed. macOS allowed deletion without an authorization-refusal dialog, so this is a real cleanup success, not real OS-denial evidence. Reconnecting with the same existing `api` grant produced a new account UUID and three verified identities again. Synthetic denied-cleanup/restart/retry coverage is recorded separately.
+
+At the owner's chosen boundary, all providers passed **real server Refresh Grants after controlled client expiration**. Access and Refresh Tokens changed, remote identity remained correct, and the persisted pair matched the refreshed pair. Refresh kept the installed seed key and changed its vault generation. Reports explicitly record `controlledClientExpiry: true` and `naturalServerExpiry: false`; natural server expiry remains unverified.
+
+GitHub `public_repo` and GitLab `api` browser reauthorization preserved their account UUIDs, rotated the corresponding Local Vault keys and preserved other accounts' keys. Gitea rejected expansion of its existing grant with `server_error` / `a grant exists with different scope`, matching the [upstream restriction](https://github.com/go-gitea/gitea/blob/v1.27.0/routers/web/auth/oauth2_provider.go#L395-L402). This exposed the fixed loopback error-completion defect. The application does not revoke or retry grants automatically. The owner personally revoked only the test grant, then a new `write:repository` authorization succeeded on the repaired application. Gitea retained its account UUID, rotated its key, preserved the GitHub key and passed real identity verification. Eight callback regressions cover error handling; a second real failed scope expansion was not deliberately induced.
+
+Redacted results are in `.cache/v151/oauth-live/run-f_k6qinw/`, including refresh, reauthorization, migration, request and checkpoint reports. They contain only public metadata, booleans, counts, expiry times and opaque pointer IDs. Real tokens, Refresh Tokens, keys and private credential files must never be uploaded. The temporarily redirected `gitpier://` handler was restored to `/Applications/GitPier.app` and independently read back.
+
+### Real requests within the authorized repository boundary
+
+Writes were limited to these three disposable repositories. Each request creation used **one POST**, followed by matching ID/source-SHA readback. All three returned Overview, one commit, one changed file and a parsed read-only Diff; Gitea obtains its patch through the separate read-only Diff endpoint.
+
+| Provider | Real request and behavior | CI / permission result |
+| --- | --- | --- |
+| GitHub | [PR #1](https://github.com/Heisenberg2024/test/pull/1): created Draft; one ordinary comment and one comment-only review; Closed, reopened/ready and Merged read back through HostingAPI. Native Reviews displays both kinds. | Native CI exhausted empty statuses and Checks pages before No Checks. With the test repository temporarily private, `public_repo` access returned Not Found, preserving the error; public visibility was restored and read back. |
+| GitLab | [Draft MR !1](https://gitlab.com/wipe-group/test/-/merge_requests/1): created/read back; native Commits, Files and read-only Diff passed. Original main README preserved. | Successful empty Pipeline response gives No Checks. No real pipeline job was created. |
+| Gitea | [PR #1](https://code.superecloud.com/Heisenberg/test/pulls/1): created/read back after write authorization; commits/files/reviews/read-only Diff passed. Portable creation has no Draft flag. | The repaired API exhausted the real empty status response and returned No Checks. Its issue-conversation endpoint returned Permission Required under `write:repository`; that error remains isolated from readable reviews/files/commits, and no extra issue scope was requested. |
+
+### Unverified real-environment boundaries
+
+Real PAT authentication, Fork repository creation, other private-repository permission combinations, GitLab/Gitea review/comment writes, natural token expiry and actual macOS Keychain refusal remain unverified. Creating a real Fork would require a repository outside the authorized three URLs, so it was not attempted. Protocol fixtures cover those request formats, errors and state mappings; empty CI responses are not evidence of a real build job or pipeline execution. Self-hosted GitLab was not supplied.
+
+The final isolated application restored all three real identities again after restart with zero OAuth Keychain calls, and passed native Gitea Files/Overview switching, read-only Diff, empty CI and comment-403 isolation. All three isolated accounts were then explicitly disconnected; credential/key files, temporary application copies and the run-specific preference domain were removed. The historical isolated Keychain item had already been deleted successfully. Public checkpoints and the authorized test requests remain for review; remote grants were not revoked. The callback handler was read again after cleanup and still resolves to `/Applications/GitPier.app`.
+
+The v1.4.4 HTTPS/SSH path, Automatic Fetch, Credential Helper, `GitPier.credentials`, default Local Vault/optional Keychain, production Bundle ID, Sparkle feed/public key and macOS 14+ Universal format remain preserved. The final invariant check compares 39 protected files and 34 historical local distribution files against the task baseline. Same-commit Swift 6.1 CI, Intel/macOS 14 hardware execution, Developer ID/notarization, Gatekeeper/quarantine, production installation and production self-update are separate unverified boundaries. No automatic push, tag or release follows these local checks.
+
+简体中文：v1.5.1（26）为本地候选。已修账号立即断开/历史副本独立清理、PR详情按需隔离加载、OAuth错误回调终结、Gitea分支/CI字段和Fork源仓库精确定位，以及Diff畸形边界。真实三平台首次Local授权、完全退出恢复、重授权密钥轮换、受控客户端到期后的真实Refresh Grant及三专用仓库请求创建均通过；GitLab真实双向迁移、断开删净旧副本、重连与其他账号隔离通过。macOS本次未拒绝删除，拒绝/重启重试仍仅合成覆盖；自然到期、真实PAT/Fork和其余权限/写入矩阵保留未验。GitHub真实评论/审查、Closed→Merged和私有仓库拒绝已回读。临时回调路由恢复原应用。v1.5.0正式发布记录保持，测试与真实验收边界分开记录，不提交、推送、建Tag或发布。

@@ -635,7 +635,7 @@ actor HostingRotationGateVault: HostingCredentialStore {
     let a = try account(.gitea), b = try binding(a), sourceSHA = sha, created = response(pr(.gitea)), empty = response("[]")
     let t = HostingFixtureTransport(handler: { request in
       if request.httpMethod == "POST" { return created }
-      if request.url!.path.contains("/branches/") { return HostingHTTPResponse(data: Data("{\"commit\":{\"sha\":\"\(sourceSHA)\"}}".utf8)) }
+      if request.url!.path.contains("/branches/") { return HostingHTTPResponse(data: Data("{\"commit\":{\"id\":\"\(sourceSHA)\"}}".utf8)) }
       if request.url!.path.hasSuffix("/pulls") { return empty }; return HostingHTTPResponse(data: Data("{\"id\":12}".utf8))
     })
     let api = HostingAPIClient(http: http(t)), token = HostingToken(accessToken: "fixture", scopes: ["write:repository"])
@@ -645,7 +645,7 @@ actor HostingRotationGateVault: HostingCredentialStore {
     let review = try await api.prepareCreation(b, draft: d, localHead: sha, localBranch: "feature", operationInProgress: false, account: a, token: token)
     _ = try await api.create(review, localHead: sha, localBranch: "feature", operationInProgress: false, account: a, token: token)
     let requests = await t.captured(), post = try XCTUnwrap(requests.first { $0.httpMethod == "POST" })
-    let body = try HostingJSON.decode(post.httpBody!); XCTAssertEqual(body["head"].string, "alice:feature"); XCTAssertEqual(body["draft"].string, "")
+    let body = try HostingJSON.decode(post.httpBody!); XCTAssertEqual(body["head"].string, "alice/fork:feature"); XCTAssertEqual(body["draft"].string, "")
   }
   func testFinalLocalRevalidationCanPreventCreationAfterNetworkChecks() async throws {
     let a = try account(), b = try binding(a), t = creationTransport(), api = HostingAPIClient(http: http(t)), token = HostingToken(accessToken: "fixture", scopes: ["public_repo"])

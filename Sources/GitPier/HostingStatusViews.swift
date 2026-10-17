@@ -54,7 +54,8 @@ struct HostingDashboardBadge: View {
           if let head {
             do {
               let token = try await hosting.tokens.token(for: account), api = hosting.api
-              let checks = try await hosting.networkBudget.perform { try await api.checks(binding, sha: head, account: account, token: token) }
+              let budget = hosting.networkBudget
+              let checks = try await hosting.performAPI(account: account) { try await budget.perform { try await api.checks(binding, sha: head, account: account, token: token) } }
               var signals = HostingRequestSignals(); signals.checks = checks
               text += " · CI: " + hostingCITitle(signals.ciState, store: store)
             } catch is CancellationError { throw CancellationError() }

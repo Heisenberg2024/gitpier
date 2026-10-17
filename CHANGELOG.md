@@ -2,6 +2,24 @@
 
 ## Unreleased
 
+### 1.5.1 (26) — Hosting stability and compatibility
+
+- Disconnect sessions before cleanup, journal disconnected credential copies and retain explicit retries after macOS denies deletion. Keep active Local Vault use independent from old Keychain copies.
+- Load request Overview and selected detail modules independently; isolate failures, page large requests and reject stale results after selection changes. Show denied CI access explicitly and keep remote Diff read-only.
+- Include ordinary GitHub request conversations and paged Gitea review comments; distinguish same-named CI sources. Reject malformed/overflowing unified Diff ranges and mismatched hunk counts while retaining a read-only raw preview.
+- Finish matched OAuth error callbacks after validating origin and state instead of leaving authorization waiting. Explain Gitea grant/scope conflicts while retaining the existing session, without automatically revoking grants or retrying; reject malformed, ambiguous and foreign callbacks.
+- Read Gitea branch/CI fields in their native formats, accept only its verified empty-null CI shape, and address fork sources by full repository without unsafe fallback.
+- Add provider compatibility and credential lifecycle regressions; retain the production update identity, macOS 14 Universal distribution and native Git authentication.
+
+简体中文：
+
+- 断开先停止会话，持久记录已断开的凭证副本；macOS 拒绝删除后保留主动重试入口，旧 Keychain 副本不影响当前 Local Vault 账号。
+- 概览及选中详情模块独立按需加载，隔离错误、保留大请求分页并拒绝切换后的迟到结果；CI 无权限明确显示，远端 Diff 保持只读。
+- 补齐 GitHub 普通对话和 Gitea 审查评论分页，区分同名 CI 来源；拒绝畸形、溢出或计数不符的 Diff，同时保留只读原文预览。
+- 校验来源与 State 后及时终结匹配的 OAuth 错误回调，避免授权一直等待；明确提示 Gitea grant/Scope 冲突，保留旧会话且不自动撤销或重试，拒绝畸形、歧义与外来回调。
+- 按 Gitea 实际格式读取分支与 CI 字段，仅接受经过严格校验的合法空 CI；使用完整源仓库创建 Fork 请求，拒绝不精确降级。
+- 补充平台兼容与凭证生命周期回归，保留生产更新身份、macOS 14 Universal 分发及 Git 原生认证。
+
 ## 1.5.0 — 2026-10-17
 
 - Add native GitHub Device Flow, GitLab S256 PKCE in the ordinary browser, and Gitea v1.23+ public-client PKCE with an IPv4 loopback callback. Bundle the registered GitHub.com/GitLab.com public Client IDs, with reusable self-hosted configuration and PAT fallback; no Client Secret or backend is required.

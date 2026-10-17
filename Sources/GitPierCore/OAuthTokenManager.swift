@@ -13,6 +13,7 @@ public actor OAuthTokenManager {
   private var refreshes: [UUID: (UUID, Task<HostingToken, Error>)] = [:]
   private var loads: [UUID: (UUID, Task<HostingToken?, Error>)] = [:]
   private var saving: Set<UUID> = []
+  private var saveWaiters: [UUID: [CheckedContinuation<Void, Never>]] = [:]
   private var transient: Set<UUID> = []
   public init(vault: any HostingCredentialStore = HostingCredentialRouter(root: FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("GitPier/HostingCredentials")), oauth: OAuthAuthorizationCoordinator = OAuthAuthorizationCoordinator(), persistenceFailed: @escaping @Sendable (HostingAccount) async -> Void = { _ in }) {
     self.vault = vault; self.oauth = oauth; self.persistenceFailed = persistenceFailed
@@ -28,6 +29,14 @@ public actor OAuthTokenManager {
     let revision = UUID(); revisions[id] = revision
     refreshes.removeValue(forKey: id)?.1.cancel(); loads.removeValue(forKey: id)?.1.cancel()
     return revision
+  }
+  private func finishSaving(_ id: UUID) {
+    saving.remove(id)
+    let waiters = saveWaiters.removeValue(forKey: id) ?? []
+    for waiter in waiters { waiter.resume() }
+  }
+  private func waitForSaving(_ id: UUID) async {
+    while saving.contains(id) { await withCheckedContinuation { saveWaiters[id, default: []].append($0) } }
   }
   public func isSessionOnly(_ id: UUID) -> Bool { transient.contains(id) }
   public func hasSession(_ account: HostingAccount) -> Bool { accounts[account.id]?.identity == account.identity && tokens[account.id] != nil }
@@ -51,12 +60,16 @@ public actor OAuthTokenManager {
   }
   public func install(_ token: HostingToken, account: HostingAccount) async throws {
     try account.validateCredentialContext()
+    guard !removed.contains(account.id) else { throw HostingError.accountChanged }
     guard !saving.contains(account.id) else { throw HostingError.operationInProgress }
-    saving.insert(account.id); defer { saving.remove(account.id) }
-    let revision = invalidate(account.id); removed.remove(account.id); accounts[account.id] = account
+    saving.insert(account.id); defer { finishSaving(account.id) }
+    let revision = invalidate(account.id); accounts[account.id] = account
     tokens[account.id] = token // Keep a usable session even when persistence is refused.
     do { try await vault.replace(token, account: account) }
-    catch { transient.insert(account.id); await persistenceFailed(account); throw HostingError.sessionOnly }
+    catch {
+      guard revisions[account.id] == revision, !removed.contains(account.id) else { throw HostingError.accountChanged }
+      transient.insert(account.id); await persistenceFailed(account); throw HostingError.sessionOnly
+    }
     guard revisions[account.id] == revision else { throw HostingError.accountChanged }
     transient.remove(account.id)
   }
@@ -85,7 +98,7 @@ public actor OAuthTokenManager {
     let next = try await oauth.refresh(configuration: config, token: old)
     try Task.checkCancellation()
     guard revisions[account.id] == revision, !saving.contains(account.id) else { throw HostingError.accountChanged }
-    saving.insert(account.id); defer { saving.remove(account.id) }
+    saving.insert(account.id); defer { finishSaving(account.id) }
     do { try await vault.save(next, account: account) }
     catch {
       // The server may have invalidated the old pair. Never restore or retry that pair.
@@ -104,7 +117,7 @@ public actor OAuthTokenManager {
     try authorizedAccount?.validateCredentialContext()
     if let authorizedAccount, authorizedAccount.id != account.id || authorizedAccount.identity != account.identity { throw HostingError.accountChanged }
     guard account.storageMode != mode, !saving.contains(account.id), refreshes[account.id] == nil else { throw HostingError.operationInProgress }
-    saving.insert(account.id); defer { saving.remove(account.id) }
+    saving.insert(account.id); defer { finishSaving(account.id) }
     let revision = invalidate(account.id)
     let token: HostingToken
     if let replacement { token = replacement }
@@ -136,6 +149,7 @@ public actor OAuthTokenManager {
       }
       throw error
     }
+    guard revisions[account.id] == revision, !removed.contains(account.id) else { throw HostingError.accountChanged }
     accounts[account.id] = destination; tokens[account.id] = token; transient.remove(account.id)
     return destination
   }
@@ -144,21 +158,33 @@ public actor OAuthTokenManager {
     try validate(account)
     guard mode != account.storageMode, account.pendingCleanup.contains(mode) || account.pendingMigration == mode,
       !saving.contains(account.id) else { throw HostingError.operationInProgress }
-    saving.insert(account.id); defer { saving.remove(account.id) }
+    saving.insert(account.id); defer { finishSaving(account.id) }
     var old = account; old.storageMode = mode
     try await vault.delete(account: old)
   }
-  public func forget(_ account: HostingAccount) async throws {
-    if removed.contains(account.id) { return } // Retry a failed metadata deletion without restoring credentials.
-    try validate(account)
-    guard !saving.contains(account.id) else { throw HostingError.operationInProgress }
-    saving.insert(account.id); defer { saving.remove(account.id) }
-    _ = invalidate(account.id); tokens[account.id] = nil
-    for mode in Set(account.pendingCleanup + [account.pendingMigration].compactMap { $0 }) where mode != account.storageMode {
-      var old = account; old.storageMode = mode; try await vault.delete(account: old)
+  /// Memory invalidation never waits for Keychain authorization or a migration/write to finish.
+  /// A disconnected UUID cannot be installed again; a deliberate fresh connection gets a new UUID.
+  public func stopSession(_ account: HostingAccount) throws {
+    try account.validateCredentialContext()
+    if let known = accounts[account.id], known.identity != account.identity { throw HostingError.accountChanged }
+    removed.insert(account.id); _ = invalidate(account.id); tokens[account.id] = nil; transient.remove(account.id)
+  }
+  /// The caller durably journals the disconnected record before deletion. Progress removes only
+  /// successfully deleted copies. Failures do not restore the session or prevent other cleanup.
+  public func forget(_ account: HostingAccount, modes: [HostingStorageMode]? = nil,
+    progress: @Sendable (HostingStorageMode) async -> Void = { _ in }) async throws {
+    try stopSession(account)
+    // A late non-cancellable storage write must finish before its resulting copy is deleted.
+    await waitForSaving(account.id)
+    saving.insert(account.id); defer { finishSaving(account.id) }
+    let remaining = modes ?? HostingDisconnectedAccount(account: account).remainingStorage
+    var firstError: Error?
+    for mode in remaining {
+      var copy = account; copy.storageMode = mode
+      do { try await vault.delete(account: copy); await progress(mode) }
+      catch { if firstError == nil { firstError = error } }
     }
-    try await vault.delete(account: account)
-    removed.insert(account.id); transient.remove(account.id)
+    if let firstError { throw firstError }
   }
   public func lock(_ id: UUID) { _ = invalidate(id); tokens[id] = nil; transient.remove(id) }
 }

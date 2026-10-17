@@ -52,16 +52,18 @@ public struct HostingMetadata: Codable, Sendable {
   public var version = 2
   public var defaultStorageMode: HostingStorageMode = .localVault
   public var accounts: [HostingAccount] = []
+  public var disconnectedAccounts: [HostingDisconnectedAccount] = []
   public var configurations: [OAuthConfiguration] = []
   public var bindings: [RepositoryHostingBinding] = []
   public init() {}
-  private enum CodingKeys: String, CodingKey { case version, accounts, configurations, bindings, defaultStorageMode }
+  private enum CodingKeys: String, CodingKey { case version, accounts, disconnectedAccounts, configurations, bindings, defaultStorageMode }
   public init(from decoder: Decoder) throws {
     let c = try decoder.container(keyedBy: CodingKeys.self)
     let sourceVersion = try c.decode(Int.self, forKey: .version)
     guard [1, 2].contains(sourceVersion) else { throw HostingError.configurationUnreadable }
     version = 2
     accounts = try c.decode([HostingAccount].self, forKey: .accounts)
+    disconnectedAccounts = try c.decodeIfPresent([HostingDisconnectedAccount].self, forKey: .disconnectedAccounts) ?? []
     configurations = try c.decode([OAuthConfiguration].self, forKey: .configurations)
     bindings = try c.decode([RepositoryHostingBinding].self, forKey: .bindings)
     defaultStorageMode = try c.decodeIfPresent(HostingStorageMode.self, forKey: .defaultStorageMode) ?? .localVault
@@ -77,8 +79,15 @@ public struct HostingMetadataStore: Sendable {
       let value = try JSONDecoder().decode(HostingMetadata.self, from: data)
       guard value.version == 2, Set(value.accounts.map(\.id)).count == value.accounts.count,
         Set(value.accounts.map(\.identity)).count == value.accounts.count,
+        Set(value.disconnectedAccounts.map(\.id)).count == value.disconnectedAccounts.count,
+        Set(value.accounts.map(\.id)).isDisjoint(with: value.disconnectedAccounts.map(\.id)),
+        !value.bindings.contains(where: { binding in value.disconnectedAccounts.contains(where: { $0.id == binding.accountID }) }),
         Set(value.bindings.map(\.repositoryID)).count == value.bindings.count else { throw HostingError.configurationUnreadable }
       for account in value.accounts { try account.validateCredentialContext() }
+      for record in value.disconnectedAccounts {
+        try record.account.validateCredentialContext()
+        guard Set(record.remainingStorage).count == record.remainingStorage.count else { throw HostingError.configurationUnreadable }
+      }
       return value
     } catch { throw HostingError.configurationUnreadable }
   }

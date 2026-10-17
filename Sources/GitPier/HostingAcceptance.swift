@@ -35,9 +35,9 @@ actor HostingAcceptanceTransport: HostingTransport {
     }
     if permissionFailure { return try response(["message": "fixture"], status: 403) }
     if path.hasSuffix("/version") { return try response(["version": "1.24.7"]) }
-    if path.contains("/branches/") { return try response(["commit": ["sha": sha, "id": sha]]) }
+    if path.contains("/branches/") { return try response(["commit": [(host == "api.github.com" ? "sha" : "id"): sha]]) }
     if path.hasSuffix("/check-runs") { return try response(["check_runs": [["name": "Build macOS", "head_sha": sha, "conclusion": "success", "html_url": "https://github.com/example/fixture/actions"]]]) }
-    if path.hasSuffix("/status") { return try response(["sha": sha, "statuses": [["context": "Unit tests", "state": "success", "target_url": "https://github.com/example/fixture/actions"]]]) }
+    if path.hasSuffix("/status") { return try response(["sha": sha, "total_count": 1, "statuses": [["context": "Unit tests", (host == "api.github.com" ? "state" : "status"): "success", "target_url": "https://github.com/example/fixture/actions"]]]) }
     if path.hasSuffix("/pipelines") { return try response([["id": 100, "sha": sha, "status": "running"]]) }
     if path.hasSuffix("/commits") { return try response([["sha": sha, "id": sha, "commit": ["message": "Add native code hosting"], "message": "Add native code hosting"]]) }
     if path.hasSuffix("/files") || path.hasSuffix("/diffs") { return try response([
@@ -160,7 +160,7 @@ extension UIAcceptance {
     }
     var second = metadata.accounts[0]; second = HostingAccount(instance: second.instance, user: HostingUser(stableID: "43", login: "second-fixture"), kind: .pat, scopes: [])
     metadata.accounts.append(second)
-    let account = metadata.accounts[0]
+    var account = metadata.accounts[0]
     let binding = try RepositoryHostingBinding(repositoryID: record.id, accountID: account.id, remote: originalRemotes.first!.name, repository: "example/fixture")
     metadata.bindings = [binding]
     try HostingMetadataStore(url: persistence.url.deletingPathExtension().appendingPathExtension("hosting.json")).save(metadata)
@@ -180,6 +180,7 @@ extension UIAcceptance {
     store.hosting = hosting
     for account in metadata.accounts.prefix(3) { hosting.verify(account) }
     try await waitFor { hosting.busy.isEmpty && hosting.states[account.id] == .connected }
+    account = try XCTHostingUnwrap(hosting.account(account.id))
     // Exercise the same PKCE callback/exchange and account verification with injected provider responses.
     var pkce = try OAuthPKCESession(configuration: metadata.configurations[1], redirectURL: URL(string: "gitpier://oauth/gitlab")!)
     let code = try pkce.consume(URL(string: "gitpier://oauth/gitlab?code=fixture-code&state=\(pkce.state)")!)
@@ -228,6 +229,7 @@ extension UIAcceptance {
           guard accessibleButton(host, title: store.text("Confirm & Create", "确认并创建"), enabled: true) != nil else { throw GitPierError.invalidInput("Creation confirmation was not shown") }
           try await captureHostingWindow(window, to: output.appendingPathComponent(prefix + "-create-confirm.png")); screenshots += 1
           guard await transport.postCount() == 0 else { throw GitPierError.invalidInput("Review unexpectedly posted a request") }
+          await hosting.detailCache.clear(account: account)
           await transport.denyPermission(true)
           try await show(HostingRequestDetail(hosting: hosting, binding: binding, account: account, request: item, initialTab: 4), name: prefix + "-permission", width: width, height: height)
           await transport.denyPermission(false)
@@ -296,6 +298,7 @@ extension UIAcceptance {
     }
     await transport.approve(); try await waitFor { !hosting.authorizing }
     guard hosting.metadata.accounts.count == metadata.accounts.count, hosting.error == nil else { throw GitPierError.invalidInput("Duplicate account OAuth did not preserve stable identity") }
+    account = try XCTHostingUnwrap(hosting.account(account.id))
     try await show(HostingSettingsView(hosting: hosting), name: "hosting-mock-oauth-success", width: 960, height: 640)
     let initial = HostingCreateDraft(sourceRepository: binding.repository, source: state.branch, target: "develop", title: "Add native hosting collaboration", body: "Synthetic API creation only.")
     try await show(HostingCreateSheet(hosting: hosting, model: model, binding: binding, account: account, initialDraft: initial), name: "hosting-mock-create-ready", width: 960, height: 640)
@@ -359,6 +362,8 @@ extension UIAcceptance {
     }
     let result: [String: Any] = ["duplicateConnectPreservedExistingMode": true, "storageOnly": storageOnly, "defaultLocalPATWithoutKeychain": true, "failedPersistenceSessionAndRecoveryMarker": true, "nativeStorageConfirmBothDirections": true, "localFilesRestartRestored": true, "keychainBackend": "injected synthetic store", "existingModesUnaffectedByDefault": true, "bindingsPreservedAcrossMigration": true, "explicitPreviousCopyCleanup": true, "screenshots": screenshots, "fixture": "injected mock OAuth/API; no real browser login", "nativeCopyCode": true, "githubAutomaticBrowserOpen": true, "officialLogosLoaded": true, "pkceCallbackMock": true, "createReviewDidNotPOST": true, "confirmedMockPOST": 1, "gitIndexHeadRemotesDraftPreserved": true, "realOAuthVerified": false]
     try JSONSerialization.data(withJSONObject: result, options: [.prettyPrinted, .sortedKeys]).write(to: output.appendingPathComponent("hosting-results.json"))
+    try await verifyHostingDisconnect(root: root, output: output)
+    try await verifyHostingDetailStability(root: root, output: output)
     if ProcessInfo.processInfo.environment["GITPIER_UI_ACCEPTANCE_INTERACTIVE_HOSTING"] == "1" {
       let page = ProcessInfo.processInfo.environment["GITPIER_UI_ACCEPTANCE_INTERACTIVE_HOSTING_PAGE"]
       if page == "storage" { host.rootView = AnyView(HostingSettingsView(hosting: hosting).environmentObject(store).modifier(AppAppearance(store: store))) }
@@ -369,10 +374,10 @@ extension UIAcceptance {
       while !FileManager.default.fileExists(atPath: output.appendingPathComponent("finish-gui").path) { try await Task.sleep(for: .milliseconds(250)) }
     }
   }
-  private static func XCTHostingUnwrap<T>(_ value: T?) throws -> T {
+  static func XCTHostingUnwrap<T>(_ value: T?) throws -> T {
     guard let value else { throw GitPierError.invalidInput("Missing synthetic hosting fixture value") }; return value
   }
-  private static func captureHostingWindow(_ window: NSWindow, to url: URL) async throws {
+  static func captureHostingWindow(_ window: NSWindow, to url: URL) async throws {
     // SwiftUI's render-server content is absent from NSView.cacheDisplay on newer macOS.
     // Capture this disposable window through WindowServer, including its real native controls.
     _ = try await ProcessRunner().run(executable: "/usr/sbin/screencapture", arguments: ["-x", "-o", "-l", String(window.windowNumber), url.path], directory: nil, timeout: 15)

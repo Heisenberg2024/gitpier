@@ -88,13 +88,19 @@ public actor OAuthLoopbackListener {
     do {
       _ = try session.consume(url); self.session = session
       reply(id, success: true); finish(.success(url), retaining: id)
-    } catch let error as HostingError where error == .denied || error == .expired {
-      reply(id, success: false); finish(.failure(error), retaining: id)
-    } catch { reply(id, success: false) }
+    } catch {
+      // A validated provider error ends this attempt, including unknown provider codes. Invalid
+      // origin/state/code callbacks keep listening; an expired session cannot accept any retry.
+      if session.callbackConsumed && error as? HostingError != .invalidCallback || error as? HostingError == .expired {
+        self.session = session
+        reply(id, success: false, terminalFailure: true); finish(.failure(error), retaining: id)
+      } else { reply(id, success: false) }
+    }
   }
-  private func reply(_ id: UUID, success: Bool) {
+  private func reply(_ id: UUID, success: Bool, terminalFailure: Bool = false) {
     guard let connection = connections[id] else { return }
-    let body = success ? "Authorization received. Return to GitPier." : "Invalid or expired authorization callback."
+    let body = success ? "Authorization received. Return to GitPier." : terminalFailure
+      ? "Authorization failed. Return to GitPier for details." : "Invalid or expired authorization callback."
     let text = "HTTP/1.1 \(success ? "200 OK" : "400 Bad Request")\r\nContent-Type: text/plain; charset=utf-8\r\nCache-Control: no-store\r\nContent-Security-Policy: default-src 'none'\r\nConnection: close\r\nContent-Length: \(body.utf8.count)\r\n\r\n" + body
     connection.send(content: Data(text.utf8), completion: .contentProcessed { [weak self] _ in Task { await self?.drop(id) } })
   }

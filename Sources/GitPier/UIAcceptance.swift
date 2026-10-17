@@ -7,7 +7,22 @@ import SwiftUI
   private static var hostingBrowserDelegate: AppDelegate?
   static func run() {
     _ = NSApplication.shared
-    if ProcessInfo.processInfo.environment["GITPIER_UI_ACCEPTANCE_SCOPE"] == "hosting-browser" {
+    let acceptanceScope = ProcessInfo.processInfo.environment["GITPIER_UI_ACCEPTANCE_SCOPE"]
+    if acceptanceScope == "hosting-live" {
+      guard (Bundle.main.bundleIdentifier ?? "").hasPrefix("com.heisenberg2024.gitpier.workspace-test.live-"),
+        let path = ProcessInfo.processInfo.environment["GITPIER_WORKSPACE_FILE"],
+        path.contains("/.cache/v151/oauth-live/") else {
+        FileHandle.standardError.write(Data("Live OAuth acceptance requires its isolated application and workspace.\n".utf8)); exit(1)
+      }
+      hostingBrowserDelegate = AppDelegate(); NSApp.delegate = hostingBrowserDelegate
+      NSApp.setActivationPolicy(.regular)
+      Task {
+        do { try await runLiveHostingAcceptance() }
+        catch { FileHandle.standardError.write(Data("Live acceptance could not start.\n".utf8)); exit(1) }
+      }
+      NSApp.run(); return
+    }
+    if acceptanceScope == "hosting-browser" {
       guard (Bundle.main.bundleIdentifier ?? "").hasPrefix("com.heisenberg2024.gitpier.workspace-test."),
         let path = ProcessInfo.processInfo.environment["GITPIER_WORKSPACE_FILE"],
         URL(fileURLWithPath: path).deletingLastPathComponent().lastPathComponent.hasPrefix("GitPier-ui.") else {

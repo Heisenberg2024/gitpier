@@ -16,6 +16,7 @@ struct HostingSettingsView: View {
   @State private var disconnecting: HostingAccount?
   @State private var changingStorage: HostingAccount?
   @State private var cleaningStorage: HostingAccount?
+  @State private var cleaningDisconnected: HostingDisconnectedAccount?
   var body: some View {
     ScrollView {
       VStack(alignment: .leading, spacing: 18) {
@@ -99,19 +100,47 @@ struct HostingSettingsView: View {
                 Spacer()
                 if hosting.busy.contains(account.id) { ProgressView().controlSize(.small) }
                 Button(store.text("Verify Connection", "验证连接")) { hosting.verify(account) }
+                  .disabled(hosting.busy.contains(account.id) || hosting.authorizing)
                 Button(store.text("Reauthorize…", "重新授权…")) { hosting.error = nil; connecting = HostingConnectionRequest(provider: account.instance.provider, account: account) }
+                  .disabled(hosting.busy.contains(account.id) || hosting.authorizing)
                 Button(store.text("Disconnect…", "断开连接…")) { disconnecting = account }
-              }.disabled(hosting.busy.contains(account.id) || hosting.authorizing)
+              }
             }.padding(14).background(.quaternary.opacity(0.3), in: RoundedRectangle(cornerRadius: 10))
           }
         }
-        Text(store.text("Local Vault restores credentials on demand without OAuth Keychain access. Keychain accounts use Verify Connection after restart; macOS may request authorization. Disconnect removes local credentials and bindings, but does not revoke the platform grant.", "本地库按需自动恢复凭证，不访问 OAuth 钥匙串。Keychain 账号重启后请点击“验证连接”，macOS 可能要求授权。断开连接删除本地凭证和关联，不会撤销平台授权。"))
+        if !hosting.metadata.disconnectedAccounts.isEmpty {
+          Text(store.text("Disconnected Accounts — Cleanup Pending", "已断开账号 · 待清理凭证")).font(.headline)
+          ForEach(hosting.metadata.disconnectedAccounts) { record in
+            VStack(alignment: .leading, spacing: 8) {
+              Text(record.account.instance.provider.title + " · @" + record.account.user.login).font(.headline)
+              Text(record.account.instance.baseURL.absoluteString).font(.caption).foregroundStyle(.secondary).textSelection(.enabled)
+              Text(store.text("Disconnected. Remaining credential copies: ", "已断开。仍待清理的凭证副本：") + record.remainingStorage.map(hosting.storageTitle).joined(separator: ", "))
+                .font(.callout).foregroundStyle(.orange).textSelection(.enabled)
+              Text(store.text("These copies cannot reconnect this account automatically. macOS authorization may be required to delete a Keychain copy. Retry only when you are ready to authorize cleanup.", "这些副本不会自动恢复账号连接。删除 Keychain 副本可能要求 macOS 授权，请在准备好授权清理时主动重试。"))
+                .font(.caption).foregroundStyle(.secondary)
+              HStack {
+                Spacer()
+                if hosting.busy.contains(record.id) { ProgressView().controlSize(.small) }
+                Button(store.text("Retry Cleanup…", "重试清理…")) { cleaningDisconnected = record }
+                  .disabled(hosting.busy.contains(record.id)).accessibilityIdentifier("hosting-retry-disconnected-cleanup")
+              }
+            }.padding(14).background(.quaternary.opacity(0.3), in: RoundedRectangle(cornerRadius: 10))
+          }
+        }
+        Text(store.text("Local Vault restores credentials on demand without OAuth Keychain access. Keychain accounts use Verify Connection after restart; macOS may request authorization. Disconnect stops the session and removes bindings immediately. Credential copies that cannot be deleted remain listed for cleanup. The platform grant is not revoked.", "本地库按需自动恢复凭证，不访问 OAuth 钥匙串。Keychain 账号重启后请点击“验证连接”，macOS 可能要求授权。断开会立即停止会话并移除关联，无法删除的凭证副本将保留在待清理列表中；不会撤销平台授权。"))
           .font(.caption).foregroundStyle(.secondary)
       }.padding(20).frame(maxWidth: 960)
         .frame(maxWidth: .infinity)
     }
     .sheet(item: $connecting) { request in HostingConnectSheet(hosting: hosting, request: request).environmentObject(store) }
     .sheet(item: $changingStorage) { account in HostingStorageSheet(hosting: hosting, account: account).environmentObject(store) }
+    .alert(store.text("Clean Up Disconnected Credentials?", "清理已断开账号的凭证？"), isPresented: Binding(get: { cleaningDisconnected != nil }, set: { if !$0 { cleaningDisconnected = nil } })) {
+      Button(store.text("Cancel", "取消"), role: .cancel) { cleaningDisconnected = nil }
+      Button(store.text("Clean Up", "清理")) {
+        if let record = cleaningDisconnected { Task { await hosting.cleanupDisconnected(record.id) } }
+        cleaningDisconnected = nil
+      }
+    } message: { Text(store.text("Delete only the remaining copies listed for this disconnected account. Keychain cleanup may request macOS authorization. Canceling authorization keeps the account disconnected and the copies listed.", "仅删除此已断开账号列表中的剩余副本。清理 Keychain 可能要求 macOS 授权；取消授权后，账号仍断开且保留待清理列表。")) }
     .alert(store.text("Clean Up Previous Credentials?", "清理旧凭证？"), isPresented: Binding(get: { cleaningStorage != nil }, set: { if !$0 { cleaningStorage = nil } })) {
       Button(store.text("Cancel", "取消"), role: .cancel) { cleaningStorage = nil }
       Button(store.text("Clean Up", "清理")) {
@@ -134,7 +163,7 @@ struct HostingSettingsView: View {
         if let account = disconnecting { Task { do { try await hosting.disconnect(account) } catch { hosting.error = hosting.message(error) } } }
         disconnecting = nil
       }
-    } message: { Text(store.text("All local hosting credential copies and bindings for this account will be removed. This does not revoke the platform OAuth grant. Git credentials remain available.", "将移除此账号的所有本地托管凭证副本和关联，不会撤销平台 OAuth 授权。Git 凭证继续保留。")) }
+    } message: { Text(store.text("Stop this account's session and API requests, then remove its hosting credential copies and bindings. Copies whose deletion is denied remain listed for explicit cleanup. The platform OAuth grant and Git credentials remain available.", "先停止此账号的会话和 API 请求，再删除托管凭证副本及关联。删除被拒绝的副本保留在列表中，供主动清理。平台 OAuth 授权与 Git 凭证继续保留。")) }
   }
 }
 

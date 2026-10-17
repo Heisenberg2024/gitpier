@@ -47,15 +47,20 @@ import SwiftUI
   let oauth: OAuthAuthorizationCoordinator
   let tokens: OAuthTokenManager
   let cache = HostingAPICache()
+  let detailCache = HostingRequestDetailCache()
   let publicConfiguration: HostingOAuthConfiguration
   private let persistence: HostingMetadataStore
   private var canSave = true
   private var authorization: Task<Void, Never>?
   private var authorizationID: UUID?
+  private var connectionRevision = UUID()
   private var loopback: OAuthLoopbackListener?
   private let browser = HostingBrowserSession()
   private let openExternalURL: @MainActor (URL) -> Bool
   private var accountTasks: [UUID: Task<Void, Never>] = [:]
+  private var accountTaskIDs: [UUID: UUID] = [:]
+  private var apiCancellations: [UUID: [UUID: () -> Void]] = [:]
+  private var connectionCancellations: [UUID: () -> Void] = [:]
   // A separate API budget never consumes the local Git scan/Fetch budget.
   let networkBudget = WorkspaceOperationBudget(limit: 2)
   private var signalCache: [String: (Date, HostingRequestSignals)] = [:]
@@ -98,6 +103,7 @@ import SwiftUI
     case .responseTooLarge: return "内容超过预览上限，请在浏览器中打开。"
     case .unauthorized: return "Token 无效或已过期，请重新授权。"
     case .permissionRequired: return "需要权限，请检查 Scope 并主动重新授权。"
+    case .scopeConflict: return "Gitea 已有不同 Scope 的授权。请自行在平台应用设置中处理旧授权，或使用独立 OAuth Client / PAT。GitPier 不会自动撤销授权，当前会话已保留。"
     case .notFound: return "内容不存在，或此账号没有私有仓库访问权限。"
     case .rateLimited: return "已达到平台请求限额，请稍后重试。"
     case .serverFailure: return "托管平台暂时不可用。"
@@ -142,6 +148,25 @@ import SwiftUI
     error = openExternalURL(url) ? nil : store.text("Could not open the browser. Use Open GitHub to try again.", "无法打开浏览器，请点击“打开 GitHub”重试。")
   }
   func binding(_ id: UUID) -> RepositoryHostingBinding? { metadata.bindings.first { $0.repositoryID == id } }
+  /// Own each account's API task so disconnect can cancel transport even while its view stays open.
+  func performAPI<T: Sendable>(account: HostingAccount, operation: @escaping @Sendable () async throws -> T) async throws -> T {
+    guard self.account(account.id) == account else { throw HostingError.accountChanged }
+    try Task.checkCancellation()
+    let id = UUID(), task = Task { try await operation() }
+    apiCancellations[account.id, default: [:]][id] = { task.cancel() }
+    defer {
+      apiCancellations[account.id]?[id] = nil
+      if apiCancellations[account.id]?.isEmpty == true { apiCancellations[account.id] = nil }
+    }
+    let result = try await withTaskCancellationHandler { try await task.value } onCancel: { task.cancel() }
+    try Task.checkCancellation()
+    guard self.account(account.id) == account else { throw HostingError.accountChanged }
+    return result
+  }
+  private func cancelAPI(_ id: UUID) {
+    let tasks = apiCancellations.removeValue(forKey: id) ?? [:]
+    for cancel in tasks.values { cancel() }
+  }
   func connect(configuration: OAuthConfiguration, level: HostingAuthorizationLevel, reauthorizing: HostingAccount? = nil, storageMode: HostingStorageMode? = nil) {
     guard !authorizing, canSave else { return }
     error = nil; authorizing = true; device = nil
@@ -194,8 +219,13 @@ import SwiftUI
     try await finishConnect(token: HostingToken(accessToken: secret, tokenType: instance.provider == .gitea ? "token" : "bearer"), instance: instance, kind: .pat, configuration: nil, expected: expected, storageMode: storageMode)
   }
   private func finishConnect(token: HostingToken, instance: HostingInstance, kind: HostingAuthenticationKind, configuration: OAuthConfiguration?, expected: HostingAccount?, storageMode: HostingStorageMode?) async throws {
-    let user = try await api.user(instance: instance, token: token)
+    let connectionTicket = connectionRevision
+    let api = api, userTask = Task { try await api.user(instance: instance, token: token) }, connectionID = UUID()
+    connectionCancellations[connectionID] = { userTask.cancel() }
+    defer { connectionCancellations[connectionID] = nil }
+    let user = try await withTaskCancellationHandler { try await userTask.value } onCancel: { userTask.cancel() }
     try Task.checkCancellation()
+    guard connectionRevision == connectionTicket else { throw HostingError.accountChanged }
     if let expected, expected.instance != instance || expected.user.stableID != user.stableID { throw HostingError.accountChanged }
     let existing = metadata.accounts.first { $0.instance == instance && $0.user.stableID == user.stableID }
     if let expected, self.account(expected.id) != expected { throw HostingError.accountChanged }
@@ -216,6 +246,9 @@ import SwiftUI
       do { try await tokens.install(token, account: account); credentialWarnings[account.id] = nil }
       catch HostingError.sessionOnly { account.credentialRecoveryRequired = true; credentialWarnings[account.id] = message(HostingError.sessionOnly) }
     }
+    try Task.checkCancellation()
+    guard !metadata.disconnectedAccounts.contains(where: { $0.id == account.id }),
+      existing == nil || self.account(account.id) != nil else { throw HostingError.accountChanged }
     var value = metadata; value.accounts.removeAll { $0.id == account.id }; value.accounts.append(account)
     if let configuration { value.configurations.removeAll { $0.id == configuration.id }; value.configurations.append(configuration) }
     do { try persist(value) }
@@ -270,9 +303,15 @@ import SwiftUI
     Task { await listener?.cancel() }
   }
   func verify(_ account: HostingAccount) {
-    guard !busy.contains(account.id) else { return }; busy.insert(account.id); error = nil
+    guard self.account(account.id) == account, !busy.contains(account.id) else { return }; busy.insert(account.id); error = nil
+    let taskID = UUID(); accountTaskIDs[account.id] = taskID
     accountTasks[account.id] = Task { [weak self] in
-      guard let self else { return }; defer { busy.remove(account.id); accountTasks[account.id] = nil }
+      guard let self else { return }
+      defer {
+        if accountTaskIDs[account.id] == taskID {
+          busy.remove(account.id); accountTasks[account.id] = nil; accountTaskIDs[account.id] = nil
+        }
+      }
       do {
         try await tokens.unlock(account)
         let token = try await tokens.token(for: account)
@@ -283,21 +322,66 @@ import SwiftUI
           value.accounts[i].user = user; value.accounts[i].lastVerified = Date(); value.accounts[i].scopes = token.scopes
         }
         try persist(value); states[account.id] = .connected
-      } catch { await failed(error, account: account); self.error = message(error) }
+      } catch {
+        guard self.account(account.id) == account, !Task.isCancelled else { return }
+        await failed(error, account: account); self.error = message(error)
+      }
     }
   }
   func disconnect(_ account: HostingAccount) async throws {
-    guard !busy.contains(account.id), !authorizing else { throw HostingError.operationInProgress }
+    guard let current = self.account(account.id), current.identity == account.identity else { throw HostingError.accountChanged }
+    connectionRevision = UUID(); cancelAuthorization()
+    for cancel in connectionCancellations.values { cancel() }; connectionCancellations.removeAll()
+    cancelAPI(account.id)
+    accountTaskIDs[account.id] = nil
+    accountTasks.removeValue(forKey: account.id)?.cancel()
     busy.insert(account.id); defer { busy.remove(account.id) }
-    try await tokens.forget(account)
-    // Credential deletion already succeeded even if the following metadata write fails.
-    states[account.id] = .reauthorize; revision = UUID(); await clearCaches(account: account)
-    var value = metadata; value.accounts.removeAll { $0.id == account.id }; value.bindings.removeAll { $0.accountID == account.id }
-    try persist(value); states[account.id] = nil; credentialWarnings[account.id] = nil; await clearCaches(account: account)
+    var value = metadata
+    value.accounts.removeAll { $0.id == current.id }; value.bindings.removeAll { $0.accountID == current.id }
+    value.disconnectedAccounts.removeAll { $0.id == current.id }
+    value.disconnectedAccounts.append(HostingDisconnectedAccount(account: current))
+    // Publish disconnection before the first suspension. Late UI/API results now fail identity checks.
+    metadata = value; states[current.id] = nil; credentialWarnings[current.id] = nil; revision = UUID()
+    try await tokens.stopSession(current)
+    await clearCaches(account: current)
+    await cleanupDisconnected(current.id)
+  }
+  /// Never loads a credential or restores an account. Each successful deletion is checkpointed;
+  /// denied copies stay visible here across restart until the user retries cleanup explicitly.
+  func cleanupDisconnected(_ id: UUID) async {
+    guard let record = metadata.disconnectedAccounts.first(where: { $0.id == id }) else { return }
+    busy.insert(id); defer { busy.remove(id) }
+    var metadataFailed = false
+    func checkpoint(_ value: HostingMetadata) {
+      do { try persist(value); metadataFailed = false }
+      catch { metadata = value; revision = UUID(); metadataFailed = true }
+    }
+    checkpoint(metadata) // Journal all possible copies before attempting deletion.
+    var cleanupError: Error?
+    do {
+      try await tokens.forget(record.account, modes: record.remainingStorage) { @MainActor [self] mode in
+        var value = metadata
+        guard let i = value.disconnectedAccounts.firstIndex(where: { $0.id == id }) else { return }
+        value.disconnectedAccounts[i].remainingStorage.removeAll { $0 == mode }
+        checkpoint(value)
+      }
+    } catch { cleanupError = error }
+    var value = metadata
+    value.disconnectedAccounts.removeAll { $0.id == id && $0.remainingStorage.isEmpty }
+    checkpoint(value)
+    if metadataFailed {
+      error = store.text("The account is disconnected in this session, but its cleanup record could not be saved. If any credential copy remains, restart may still show the old account. Retry cleanup before quitting. ", "账号在当前会话已断开，但无法保存清理记录。若仍有凭证副本，重启可能再次显示旧账号，请在退出前重试清理。")
+        + (cleanupError.map(message) ?? message(HostingError.storageFailure))
+    } else if let cleanupError {
+      error = store.text("Account disconnected. Credential copies listed below remain for explicit cleanup. ", "账号已断开。下方列出的凭证副本仍需主动清理。") + message(cleanupError)
+    } else { error = nil }
   }
   func bind(_ binding: RepositoryHostingBinding, account: HostingAccount) async throws {
-    let token = try await tokens.token(for: account)
-    try await api.validateRepository(binding, account: account, token: token)
+    let api = api, tokens = tokens
+    try await performAPI(account: account) {
+      let token = try await tokens.token(for: account); try Task.checkCancellation()
+      try await api.validateRepository(binding, account: account, token: token)
+    }
     guard self.account(account.id) == account else { throw HostingError.accountChanged }
     var value = metadata; value.bindings.removeAll { $0.id == binding.id }; value.bindings.append(binding); try persist(value)
   }
@@ -307,10 +391,11 @@ import SwiftUI
   func requests(_ binding: RepositoryHostingBinding, account: HostingAccount, filter: HostingRequestFilter, page: Int, refresh: Bool) async throws -> HostingPage<HostingPullRequest> {
     let ticket = revision
     do {
-      guard binding.accountID == account.id else { throw HostingError.accountChanged }
+      guard binding.accountID == account.id, self.account(account.id) == account else { throw HostingError.accountChanged }
       let token = try await tokens.token(for: account)
       if !refresh, let result = await cache.get(account: account, binding: binding, filter: filter, page: page) { return result }
-      let result = try await api.requests(binding, account: account, token: token, filter: filter, page: page)
+      let api = api
+      let result = try await performAPI(account: account) { try await api.requests(binding, account: account, token: token, filter: filter, page: page) }
       guard revision == ticket, self.account(account.id) == account, self.binding(binding.id) == binding else { throw HostingError.accountChanged }
       await cache.put(result, account: account, binding: binding, filter: filter, page: page); return result
     } catch { await failed(error, account: account); throw error }
@@ -349,15 +434,19 @@ import SwiftUI
     let key = account.identity + "|\(account.id)|" + binding.repository + "|\(request.number)|" + request.sha + "|" + request.updatedAt
     if let (date, value) = signalCache[key], Date().timeIntervalSince(date) < 60 { return value }
     let api = api, tokens = tokens
-    let result = try await networkBudget.perform {
+    let budget = networkBudget
+    let result = try await performAPI(account: account) { try await budget.perform {
       let token = try await tokens.token(for: account)
+      try Task.checkCancellation()
       var result = HostingRequestSignals()
       do { result.checks = try await api.checks(binding, sha: request.sha, account: account, token: token) }
       catch is CancellationError { throw CancellationError() } catch { result.ciError = error as? HostingError ?? .networkFailure }
       do {
+        try Task.checkCancellation()
         var page: Int? = 1
         var latest: [String: HostingReview] = [:]
         while let current = page {
+          try Task.checkCancellation()
           guard current <= 20 else { throw HostingError.responseTooLarge }
           let reviews = try await api.reviews(binding, number: request.number, account: account, token: token, page: current)
           for review in reviews.items where !review.state.isEmpty && review.state.uppercased() != "COMMENTED" {
@@ -369,14 +458,18 @@ import SwiftUI
         result.reviewStates = latest.values.map(\.state)
       } catch is CancellationError { throw CancellationError() } catch { result.reviewError = error as? HostingError ?? .networkFailure }
       return result
-    }
+    } }
     try Task.checkCancellation()
     guard revision == ticket, self.account(account.id) == account, self.binding(binding.id) == binding else { throw HostingError.accountChanged }
     if result.ciError == .unauthorized || result.reviewError == .unauthorized { await failed(HostingError.unauthorized, account: account); throw HostingError.unauthorized }
     if signalCache.count > 200 { signalCache.removeAll() }; signalCache[key] = (Date(), result); return result
   }
-  func clearCaches(account: HostingAccount) async { signalCache.removeAll(); await cache.clear(account: account) }
-  func shutdown() { cancelAuthorization(); accountTasks.values.forEach { $0.cancel() } }
+  func clearCaches(account: HostingAccount) async { signalCache.removeAll(); await cache.clear(account: account); await detailCache.clear(account: account) }
+  func shutdown() {
+    cancelAuthorization(); accountTasks.values.forEach { $0.cancel() }
+    for id in Array(apiCancellations.keys) { cancelAPI(id) }
+    for cancel in connectionCancellations.values { cancel() }; connectionCancellations.removeAll()
+  }
 }
 
 struct HostingRequestSignals: Sendable {

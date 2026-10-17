@@ -75,6 +75,12 @@ Connect multiple accounts and link each repository to an account and Remote. New
 
 Repository → More → Pull / Merge Requests provides paged lists, details, exact-commit CI/Pipeline, commits, read-only file diffs and reviews/comments. Create a PR/MR only after pushed-branch checks and confirmation; GitPier never auto-pushes or blindly retries uncertain creation. Dashboard adds a small connected-repository summary. Broad write scopes require explicit reauthorization. Real platform OAuth/private API acceptance results are recorded in the development guide; isolated tests do not substitute for real login. See [OAuth registration and limitations](docs/oauth-setup.md) and [development validation](docs/development.md).
 
+## Hosting stability — v1.5.1 (in development)
+
+Disconnect stops the account session and removes its bindings before credential cleanup. Copies that macOS refuses to delete stay visible as disconnected credentials awaiting an explicit cleanup retry; they cannot restore the account after restart.
+
+Request Overview, Commits, Files, Reviews and CI load independently on demand, with separate errors, paging, cancellation, cache and retry. Unavailable review APIs do not block files or commits, and denied CI access is shown as a permission error. Remote Diff remains read-only. See [validation and remaining real-platform checks](docs/development.md#v151-hosting-stability-validation).
+
 ## Screenshots
 
 

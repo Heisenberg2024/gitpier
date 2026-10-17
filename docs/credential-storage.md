@@ -1,4 +1,4 @@
-# Hosting credential storage — v1.5.0
+# Hosting credential storage — v1.5.1
 
 GitPier uses one OAuth/PAT account and token lifecycle with two persistence backends. Git network authentication remains independent.
 
@@ -34,7 +34,7 @@ Use **Change Storage Method** for one account. The confirmation explains the des
 
 Migration refuses to race an active refresh, freezes that account's persistence, records `pendingMigration`, saves the destination, then atomically commits `storageMode` and `pendingCleanup`. Before that metadata commit the source remains authoritative, including after interruption or failed metadata saving. Source tokens/keys are never deleted as part of the commit. Successful migration invalidates account API caches. A stale window cannot retarget a token to the previous mode.
 
-Previous-copy cleanup is an explicit separate action or confirmation option. Keychain cleanup can be postponed without blocking Local Vault use. Interrupted migration targets remain visible for retry/cleanup. Disconnect removes this account's active and retained copies, memory session and repository bindings; it does not revoke the provider grant. Official grant pages: [GitHub](https://github.com/settings/applications), [GitLab.com](https://gitlab.com/-/user_settings/applications); self-hosted instances manage grants on that instance. Git credentials, Git remotes/configuration, SSH, repositories and other accounts remain independent.
+Previous-copy cleanup is an explicit separate action or confirmation option. Keychain cleanup can be postponed without blocking Local Vault use. Interrupted migration targets remain visible for retry/cleanup. Disconnect first removes the active account/bindings, cancels account work and permanently invalidates its in-memory session. It journals a disconnected record before deleting the current credential and then each retained or interrupted-migration copy independently. A denied Keychain deletion cannot keep the Local Vault credential active. Remaining copies are explicitly listed under disconnected credentials, survive restart as cleanup-only records and can be retried without loading tokens or reconnecting. macOS authorization is never bypassed. If the cleanup metadata itself cannot be saved, the application reports the restart limitation and keeps the current process disconnected. Disconnect does not revoke the provider grant. Official grant pages: [GitHub](https://github.com/settings/applications), [GitLab.com](https://gitlab.com/-/user_settings/applications); self-hosted instances manage grants on that instance. Git credentials, Git remotes/configuration, SSH, repositories and other accounts remain independent.
 
 Local Vault avoids OAuth Keychain access. Git transport helpers, existing GitPier HTTPS credentials and update signing can still use Keychain; this is not a promise that the whole application never accesses Keychain.
 
@@ -48,6 +48,6 @@ Local Vault avoids OAuth Keychain access. Git transport helpers, existing GitPie
 
 窗口共用内存会话，本地凭证按需读取一次；Keychain 重启后明确“验证连接”。OAuth 刷新合并并整对保存，PAT 不刷新。保存失败保留刚取得的新 Token 供当前会话使用并明确提示，重启可能需重新授权，不能假定已轮换的旧 Token 仍有效。会尽可能保存非敏感恢复标记，使重启拒绝读取已知过时的旧凭证；OAuth 配置必须匹配账号自身实例，旧客户端配置在刷新前被拒绝。
 
-逐账号迁移须确认，推荐重新授权至目标以避免读取旧 Keychain；也可使用内存 Token 或明确允许读取原凭证。先记意图、保存目标，再原子切换元数据，之前始终以原模式为准；失败、中断或取消不会提前删除原凭证。迁移与刷新不同时进行，其他账号继续可用。旧副本由用户确认后清理，钥匙串授权可以暂缓；中断目标可重试或主动清理。断开仅删除本账号的本地凭证/密钥、会话、关联及缓存，不自动撤销平台授权，不更改原 Git 凭证助手/SSH/Remote/仓库或更新签名。Git 网络认证仍可能访问系统钥匙串。
+逐账号迁移须确认，推荐重新授权至目标以避免读取旧 Keychain；也可使用内存 Token 或明确允许读取原凭证。先记意图、保存目标，再原子切换元数据，之前始终以原模式为准；失败、中断或取消不会提前删除原凭证。迁移与刷新不同时进行，其他账号继续可用。旧副本由用户确认后清理，钥匙串授权可以暂缓；中断目标可重试或主动清理。断开优先移除活动账号/关联、取消账号请求并永久失效当前内存会话；持久记录已断开状态后，先删除有效凭证，再独立尝试历史副本和中断迁移目标。历史 Keychain 删除被拒绝不会让 Local Vault 凭证继续生效。剩余副本显示在已断开凭证列表，重启后仍仅用于主动重试清理，不读取 Token 或恢复登录，也不绕过 macOS 授权。若清理记录本身无法保存，会明确提示重启限制并保持当前进程断开。该操作不自动撤销平台授权，不更改原 Git 凭证助手/SSH/Remote/仓库或更新签名。Git 网络认证仍可能访问系统钥匙串。
 
 Implementation references: [Apple AES.GCM](https://developer.apple.com/documentation/cryptokit/aes/gcm), [random symmetric keys](https://developer.apple.com/documentation/cryptokit/symmetrickey/init(size:)).

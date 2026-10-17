@@ -21,7 +21,7 @@ public enum HostingError: String, Error, LocalizedError, Sendable {
   case unauthorized, permissionRequired, notFound, rateLimited, serverFailure, networkFailure
   case credentialsLocked, keychainDenied, storageFailure, configurationUnreadable, accountChanged
   case pushRequired, branchMissing, duplicateRequest, operationInProgress, creationUnknown
-  case vaultCorrupt, vaultUnavailable, sessionOnly
+  case vaultCorrupt, vaultUnavailable, sessionOnly, scopeConflict
   public var errorDescription: String? {
     switch self {
     case .invalidInstance: "Enter an HTTPS instance URL without credentials, query or fragment."
@@ -38,6 +38,7 @@ public enum HostingError: String, Error, LocalizedError, Sendable {
     case .responseTooLarge: "The response exceeds the preview limit. Open the item in your browser."
     case .unauthorized: "The token is invalid or expired. Reauthorize the account."
     case .permissionRequired: "Permission required. Review scopes and explicitly reauthorize."
+    case .scopeConflict: "Gitea has an existing grant with different scopes. Review the grant in the platform's application settings, or use a separate OAuth client or PAT. GitPier will not revoke the grant automatically; your existing session is preserved."
     case .notFound: "The item was not found, or this account cannot access the private repository."
     case .rateLimited: "The platform rate limit was reached. Try again later."
     case .serverFailure: "The hosting service is temporarily unavailable."
@@ -200,6 +201,20 @@ public struct HostingAccount: Codable, Identifiable, Equatable, Sendable {
     pendingMigration = try c.decodeIfPresent(HostingStorageMode.self, forKey: .pendingMigration)
     pendingCleanup = try c.decodeIfPresent([HostingStorageMode].self, forKey: .pendingCleanup) ?? []
     credentialRecoveryRequired = try c.decodeIfPresent(Bool.self, forKey: .credentialRecoveryRequired) ?? false
+  }
+}
+/// A disconnected identity is never an active account. Only the listed storage copies may remain.
+/// Keeping this separately from accounts prevents lazy Local Vault restoration after restart.
+public struct HostingDisconnectedAccount: Codable, Identifiable, Equatable, Sendable {
+  public var id: UUID { account.id }
+  public let account: HostingAccount
+  public var remainingStorage: [HostingStorageMode]
+  public init(account: HostingAccount) {
+    self.account = account
+    remainingStorage = [account.storageMode]
+    for mode in account.pendingCleanup + [account.pendingMigration].compactMap({ $0 }) where !remainingStorage.contains(mode) {
+      remainingStorage.append(mode)
+    }
   }
 }
 /// Encrypt or protect the complete token pair as one value. Never encode in ordinary configuration.

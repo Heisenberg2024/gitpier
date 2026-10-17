@@ -3,11 +3,27 @@ import Foundation
 public enum HostingRequestFilter: String, CaseIterable, Sendable { case open, draft, closed, merged, all }
 public enum HostingCIState: String, Sendable { case pending, running, success, failed, cancelled, skipped, unknown, noChecks }
 public struct HostingCheck: Identifiable, Sendable {
-  public var id: String { name + "|" + sha }
+  public var id: String { (identifier ?? name) + "|" + sha }
   public let name: String
   public let sha: String
   public let state: HostingCIState
   public let webURL: URL?
+  public let identifier: String?
+  public init(name: String, sha: String, state: HostingCIState, webURL: URL?, identifier: String? = nil) {
+    self.name = name; self.sha = sha; self.state = state; self.webURL = webURL; self.identifier = identifier
+  }
+}
+public struct HostingChecksCursor: Hashable, Sendable {
+  public enum Source: String, Sendable { case statuses, checkRuns }
+  public let source: Source
+  public let page: Int
+  public init(source: Source = .statuses, page: Int = 1) { self.source = source; self.page = page }
+  public var cacheKey: String { source.rawValue + "|\(page)" }
+}
+public struct HostingChecksPage: Sendable {
+  public let items: [HostingCheck]
+  public let next: HostingChecksCursor?
+  public init(items: [HostingCheck], next: HostingChecksCursor?) { self.items = items; self.next = next }
 }
 public struct HostingPullRequest: Identifiable, Sendable {
   public let number: Int
@@ -185,12 +201,25 @@ public struct HostingAPIClient: Sendable {
     }, nextPage: next(r, count: j.array.count, page: page))
   }
   public func giteaReviewComments(_ binding: RepositoryHostingBinding, number: Int, reviewID: String, account: HostingAccount, token: HostingToken) async throws -> [HostingReview] {
+    try await giteaReviewCommentsPage(binding, number: number, reviewID: reviewID, account: account, token: token).items
+  }
+  public func conversationComments(_ binding: RepositoryHostingBinding, number: Int, account: HostingAccount, token: HostingToken, page: Int = 1) async throws -> HostingPage<HostingReview> {
+    guard account.instance.provider == .github else { throw HostingError.unsupported }
+    guard binding.accountID == account.id, number > 0 else { throw HostingError.accountChanged }
+    let path = try repositoryPath(binding.repository, provider: .github) + "/issues/\(number)/comments"
+    let (j, r) = try await json(account, token: token, path: path, query: pagination(.github, page: page))
+    guard case .array = j else { throw HostingError.invalidResponse }
+    return HostingPage(items: j.array.map { v in
+      HostingReview(id: v["id"].string, author: v["user"]["login"].string, body: v["body"].string, state: "", path: "", line: "", webURL: safeWeb(v["html_url"].string))
+    }, nextPage: next(r, count: j.array.count, page: page))
+  }
+  public func giteaReviewCommentsPage(_ binding: RepositoryHostingBinding, number: Int, reviewID: String, account: HostingAccount, token: HostingToken, page: Int = 1) async throws -> HostingPage<HostingReview> {
     guard account.instance.provider == .gitea, Int(reviewID) != nil else { throw HostingError.invalidResponse }
     let path = try requestPath(binding, account: account, number: number) + "/reviews/\(reviewID)/comments"
-    let (j, _) = try await json(account, token: token, path: path)
+    let (j, r) = try await json(account, token: token, path: path, query: pagination(.gitea, page: page))
     guard case .array = j else { throw HostingError.invalidResponse }
-    return j.array.map { v in HostingReview(id: v["id"].string, author: v["user"]["login"].string, body: v["body"].string, state: "",
-      path: v["path"].string, line: v["position"].string, webURL: safeWeb(v["html_url"].string)) }
+    return HostingPage(items: j.array.map { v in HostingReview(id: v["id"].string, author: v["user"]["login"].string, body: v["body"].string, state: "",
+      path: v["path"].string, line: v["position"].string, webURL: safeWeb(v["html_url"].string)) }, nextPage: next(r, count: j.array.count, page: page))
   }
   public func giteaPatch(_ binding: RepositoryHostingBinding, number: Int, file: HostingChangedFile, account: HostingAccount, token: HostingToken) async throws -> String? {
     guard account.instance.provider == .gitea else { return file.patch }
@@ -226,43 +255,55 @@ public struct HostingAPIClient: Sendable {
     return String(bytes: output, encoding: .utf8) ?? ""
   }
   public func checks(_ binding: RepositoryHostingBinding, sha: String, account: HostingAccount, token: HostingToken) async throws -> [HostingCheck] {
-    guard binding.accountID == account.id else { throw HostingError.accountChanged }
-    guard sha.count >= 40, sha.count <= 64, sha.allSatisfy(\.isHexDigit) else { throw HostingError.invalidResponse }
-    let p = account.instance.provider, base = try repositoryPath(binding.repository, provider: account.instance.provider)
-    var result: [HostingCheck] = []
-    if p == .gitlab {
-      let values = try await ciPages(account, token: token, path: base + "/pipelines", query: [URLQueryItem(name: "sha", value: sha)])
-      result = values.filter { $0["sha"].string == sha }.map { HostingCheck(name: "Pipeline #" + $0["id"].string, sha: sha, state: ciState($0["status"].string), webURL: safeWeb($0["web_url"].string)) }
-    } else {
-      let statuses = try await ciPages(account, token: token, path: base + "/commits/" + sha + "/status", key: "statuses", expectedSHA: sha)
-      result = statuses.map { HostingCheck(name: $0["context"].string, sha: sha, state: ciState($0["state"].string), webURL: safeWeb($0["target_url"].string)) }
-      if p == .github {
-        let checks = try await ciPages(account, token: token, path: base + "/commits/" + sha + "/check-runs", key: "check_runs")
-        for v in checks where v["head_sha"].string == sha {
-          result.append(HostingCheck(name: v["name"].string, sha: sha,
-            state: ciState(v["conclusion"].string.isEmpty ? v["status"].string : v["conclusion"].string), webURL: safeWeb(v["html_url"].string)))
-        }
-      }
+    var result: [HostingCheck] = [], cursor: HostingChecksCursor? = HostingChecksCursor()
+    while let current = cursor {
+      try Task.checkCancellation()
+      let page = try await checksPage(binding, sha: sha, account: account, token: token, cursor: current)
+      result += page.items; cursor = page.next
     }
     return result
   }
-  private func ciPages(_ account: HostingAccount, token: HostingToken, path: String, query: [URLQueryItem] = [], key: String? = nil, expectedSHA: String? = nil) async throws -> [HostingJSON] {
-    var values: [HostingJSON] = []; var page = 1
-    while true {
-      guard page <= 20 else { throw HostingError.responseTooLarge }
-      let size = account.instance.provider == .gitea ? "limit" : "per_page"
-      let (j, response) = try await json(account, token: token, path: path, query: query + [URLQueryItem(name: size, value: "100"), URLQueryItem(name: "page", value: String(page))])
-      if let expectedSHA, j["sha"].string != expectedSHA { throw HostingError.invalidResponse }
-      let part = key.map { j[$0] } ?? j
-      guard case .array = part else { throw HostingError.invalidResponse }
-      values += part.array
-      let more: Bool
-      if let has = response.headers["x-hasmore"] { more = has.lowercased() == "true" }
-      else if let next = response.headers["x-next-page"] { more = !next.isEmpty }
-      else if let link = response.headers["link"] { more = link.contains("rel=\"next\"") }
-      else { more = j["total_count"].int > values.count || part.array.count == 100 }
-      guard more else { return values }; page += 1
+  /// One provider page per call. A later CI permission failure remains an error even when
+  /// commit statuses were empty; callers must not interpret an unfinished cursor as No Checks.
+  public func checksPage(_ binding: RepositoryHostingBinding, sha: String, account: HostingAccount, token: HostingToken, cursor: HostingChecksCursor = HostingChecksCursor()) async throws -> HostingChecksPage {
+    guard binding.accountID == account.id else { throw HostingError.accountChanged }
+    guard sha.count >= 40, sha.count <= 64, sha.allSatisfy(\.isHexDigit) else { throw HostingError.invalidResponse }
+    guard (1...20).contains(cursor.page) else { throw HostingError.responseTooLarge }
+    let p = account.instance.provider, base = try repositoryPath(binding.repository, provider: account.instance.provider)
+    guard cursor.source == .statuses || p == .github else { throw HostingError.invalidResponse }
+    let path: String, key: String?
+    if p == .gitlab {
+      path = base + "/pipelines"; key = nil
+    } else { path = base + "/commits/" + sha + (cursor.source == .checkRuns ? "/check-runs" : "/status"); key = cursor.source == .checkRuns ? "check_runs" : "statuses" }
+    let query = [URLQueryItem(name: p == .gitea ? "limit" : "per_page", value: "100"), URLQueryItem(name: "page", value: String(cursor.page))]
+      + (p == .gitlab ? [URLQueryItem(name: "sha", value: sha)] : [])
+    let (j, r) = try await json(account, token: token, path: path, query: query)
+    if p != .gitlab && cursor.source == .statuses && j["sha"].string != sha { throw HostingError.invalidResponse }
+    var values = key.map { j[$0] } ?? j
+    // Gitea serializes an explicitly empty CombinedStatus as null, not an array.
+    // Missing keys, coerced counts or contradictory pagination must remain failures.
+    if p == .gitea, case .object(let fields) = j,
+      case .null? = fields["statuses"], case .integer(0)? = fields["total_count"] {
+      guard r.headers["x-hasmore"]?.lowercased() != "true", (r.headers["x-next-page"] ?? "").isEmpty,
+        r.headers["link"]?.contains("rel=\"next\"") != true else { throw HostingError.invalidResponse }
+      values = .array([])
     }
+    guard case .array = values else { throw HostingError.invalidResponse }
+    let items = values.array.compactMap { v -> HostingCheck? in
+      if p == .gitlab { return v["sha"].string == sha ? HostingCheck(name: "Pipeline #" + v["id"].string, sha: sha, state: ciState(v["status"].string), webURL: safeWeb(v["web_url"].string), identifier: "pipeline:" + v["id"].string) : nil }
+      if cursor.source == .checkRuns {
+        return v["head_sha"].string == sha ? HostingCheck(name: v["name"].string, sha: sha, state: ciState(v["conclusion"].string.isEmpty ? v["status"].string : v["conclusion"].string), webURL: safeWeb(v["html_url"].string), identifier: "check:" + (v["id"].string.isEmpty ? v["name"].string : v["id"].string)) : nil
+      }
+      return HostingCheck(name: v["context"].string, sha: sha, state: ciState(v[p == .gitea ? "status" : "state"].string), webURL: safeWeb(v["target_url"].string), identifier: "status:" + v["context"].string)
+    }
+    let more: Bool
+    if let has = r.headers["x-hasmore"] { more = has.lowercased() == "true" }
+    else if let next = r.headers["x-next-page"] { more = !next.isEmpty }
+    else if let link = r.headers["link"] { more = link.contains("rel=\"next\"") }
+    else { more = j["total_count"].int > cursor.page * 100 || values.array.count == 100 }
+    let nextCursor = more ? HostingChecksCursor(source: cursor.source, page: cursor.page + 1)
+      : p == .github && cursor.source == .statuses ? HostingChecksCursor(source: .checkRuns) : nil
+    return HostingChecksPage(items: items, next: nextCursor)
   }
   public func branch(_ repository: String, name: String, account: HostingAccount, token: HostingToken) async throws -> (sha: String, projectID: String) {
     guard !name.isEmpty, !name.contains("\n") else { throw HostingError.branchMissing }
@@ -270,7 +311,7 @@ public struct HostingAPIClient: Sendable {
     let path = base + (account.instance.provider == .gitlab ? "/repository/branches/" : "/branches/") + HostingInstance.component(name)
     do {
       let (j, _) = try await json(account, token: token, path: path)
-      let sha = j["commit"][account.instance.provider == .gitlab ? "id" : "sha"].string
+      let sha = j["commit"][account.instance.provider == .github ? "sha" : "id"].string
       guard !sha.isEmpty else { throw HostingError.branchMissing }
       let (repo, _) = try await json(account, token: token, path: base)
       return (sha, repo["id"].string)
@@ -324,7 +365,10 @@ public struct HostingAPIClient: Sendable {
     } else {
       let fork = d.sourceRepository != review.binding.repository
       let owner = String(d.sourceRepository.split(separator: "/").first ?? "")
-      body = ["head": .string(fork ? owner + ":" + d.source : d.source), "base": .string(d.target), "title": .string(d.title), "body": .string(d.body)]
+      // Gitea needs the exact repository: owner-only heads can resolve a different repo
+      // under the same owner. An older server's rejection must never trigger a fallback.
+      let forkSource = p == .gitea ? d.sourceRepository : owner
+      body = ["head": .string(fork ? forkSource + ":" + d.source : d.source), "base": .string(d.target), "title": .string(d.title), "body": .string(d.body)]
       if p == .github { body["draft"] = .bool(d.draft); if fork { body["head_repo"] = .string(String(d.sourceRepository.split(separator: "/").last ?? "")) } }
     }
     do {

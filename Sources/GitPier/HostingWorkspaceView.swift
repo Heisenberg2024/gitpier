@@ -66,7 +66,6 @@ struct HostingWorkspaceView: View {
                   Text("@" + item.author + " · " + (item.draft ? store.text("Draft", "草稿") : requestState(item.state))).font(.caption).foregroundStyle(.secondary)
                   Text(item.source + " → " + item.target).font(.system(.caption, design: .monospaced)).foregroundStyle(.secondary).lineLimit(1)
                   Text(store.text("Updated ", "更新于 ") + item.updatedAt).font(.caption2).foregroundStyle(.tertiary).lineLimit(1)
-                  HostingRequestStatusLine(hosting: hosting, binding: binding, account: account, request: item)
                 }.padding(.vertical, 5).tag(item.number)
               }
               if nextPage != nil { Button(store.text("Load More", "加载更多")) { load(reset: false, refresh: false) }.disabled(loading) }
@@ -189,32 +188,29 @@ struct HostingRequestDetail: View {
   @ObservedObject var hosting: HostingModel
   let binding: RepositoryHostingBinding
   let account: HostingAccount
-  let request: HostingPullRequest
-  @State private var detail: HostingPullRequest?
-  @State private var commits: [HostingCommit] = []
-  @State private var files: [HostingChangedFile] = []
-  @State private var reviews: [HostingReview] = []
-  @State private var comments: [HostingReview] = []
-  @State private var checks: [HostingCheck] = []
-  @State private var filePage: Int? = nil
-  @State private var commitPage: Int? = nil
-  @State private var reviewPage: Int? = nil
-  @State private var commentPage: Int? = nil
+  @State private var loader: HostingRequestDetailLoader
   @State private var selectedFile: String?
   @State private var diff = DiffDocument.empty
   @State private var tab = 0
-  @State private var loading = true
-  @State private var moreLoading = false
-  @State private var error: String?
-  @State private var ciError: String?
-  @State private var moreTask: Task<Void, Never>?
   @State private var remotePatch: String?
   @State private var patchTask: Task<Void, Never>?
   @State private var patchLoading = false
+  @State private var patchError: String?
   @State private var reviewComments: [String: [HostingReview]] = [:]
-  var current: HostingPullRequest { detail ?? request }
+  @State private var reviewCommentPages: [String: Int] = [:]
+  @State private var reviewCommentErrors: [String: String] = [:]
+  @State private var reviewCommentTasks: [String: Task<Void, Never>] = [:]
+  @State private var generation = UUID()
+  var current: HostingPullRequest { loader.detail }
+  var section: HostingDetailSection { [.overview, .commits, .files, .reviews, .checks][min(4, max(0, tab))] }
   init(hosting: HostingModel, binding: RepositoryHostingBinding, account: HostingAccount, request: HostingPullRequest, initialTab: Int = 0) {
-    self.hosting = hosting; self.binding = binding; self.account = account; self.request = request; _tab = State(initialValue: initialTab)
+    self.hosting = hosting; self.binding = binding; self.account = account; _tab = State(initialValue: initialTab)
+    let revision = hosting.revision
+    _loader = State(initialValue: HostingRequestDetailLoader(request: request, binding: binding, account: account,
+      api: hosting.api, cache: hosting.detailCache, token: { try await hosting.tokens.token(for: account) },
+      validate: { @MainActor in
+        guard hosting.revision == revision, hosting.account(account.id) == account, hosting.binding(binding.id) == binding else { throw HostingError.accountChanged }
+      }, failed: { await hosting.failed($0, account: account) }))
   }
   var body: some View {
     VStack(alignment: .leading, spacing: 10) {
@@ -230,59 +226,102 @@ struct HostingRequestDetail: View {
       Picker("", selection: $tab) {
         Text(store.text("Overview", "概览")).tag(0); Text(store.text("Commits", "提交")).tag(1)
         Text(store.text("Files", "文件")).tag(2); Text(store.text("Reviews", "审查")).tag(3); Text("CI").tag(4)
-      }.pickerStyle(.segmented)
-      if let error { Text(error).font(.callout).foregroundStyle(.orange).textSelection(.enabled) }
-      if loading { ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity) }
-      else {
-        switch tab {
-        case 0:
-          ScrollView { VStack(alignment: .leading, spacing: 14) {
-            // Plain selectable text deliberately renders no HTML, remote images, scripts or active Markdown.
-            Text(current.body.isEmpty ? store.text("No Description", "暂无描述") : current.body).textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading)
-            Text(store.text("Reviewers: ", "审查者：") + (current.reviewers.isEmpty ? "—" : current.reviewers.joined(separator: ", "))).font(.caption).foregroundStyle(.secondary)
-          } }
-        case 1:
-          List { ForEach(commits) { c in VStack(alignment: .leading, spacing: 4) { Text(String(c.id.prefix(12))).font(.system(.caption, design: .monospaced)); Text(c.message).textSelection(.enabled) } }
-            if commitPage != nil { moreButton(1) }
-          }
-        case 2:
-          VStack(spacing: 0) {
-            HStack { Label(store.text("Read-only Remote Diff", "只读远端 Diff"), systemImage: "lock").font(.caption).foregroundStyle(.secondary); Spacer(); if filePage != nil { moreButton(2) } }
-            HSplitView {
-              List(selection: $selectedFile) { ForEach(files) { f in VStack(alignment: .leading) { Text(f.path).lineLimit(2); Text(f.kind + (f.oldPath.isEmpty ? "" : " · " + f.oldPath)).font(.caption).foregroundStyle(.secondary) }.tag(f.path) } }.frame(minWidth: 130, idealWidth: 170, maxWidth: 240)
-              if patchLoading { ProgressView().frame(maxWidth: .infinity) }
-              else if remotePatch != nil {
+      }.pickerStyle(.segmented).accessibilityIdentifier("hosting.detail.tabs")
+      moduleStatus(section)
+      switch tab {
+      case 0:
+        ScrollView { VStack(alignment: .leading, spacing: 14) {
+          // Selectable plain text: no HTML, remote images, scripts or active Markdown.
+          Text(current.body.isEmpty ? store.text("No Description", "暂无描述") : current.body).textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading)
+          Text(store.text("Reviewers: ", "审查者：") + (current.reviewers.isEmpty ? "—" : current.reviewers.joined(separator: ", "))).font(.caption).foregroundStyle(.secondary)
+        } }.accessibilityIdentifier("hosting.detail.overview")
+      case 1:
+        List {
+          ForEach(loader.commits) { c in VStack(alignment: .leading, spacing: 4) { Text(String(c.id.prefix(12))).font(.system(.caption, design: .monospaced)); Text(c.message).textSelection(.enabled) } }
+          if loader.nextPages[.commits] != nil { moreButton(.commits) }
+          if loader.state(.commits).loaded && loader.commits.isEmpty { Text(store.text("No Commits", "暂无提交")) }
+        }
+      case 2:
+        VStack(spacing: 0) {
+          HStack { Label(store.text("Read-only Remote Diff", "只读远端 Diff"), systemImage: "lock").font(.caption).foregroundStyle(.secondary); Spacer(); if loader.nextPages[.files] != nil { moreButton(.files) } }
+          if let patchError { HStack { Text(patchError).foregroundStyle(.orange); Button(store.text("Retry Preview", "重试预览")) { loadPatch() } }.font(.caption) }
+          HSplitView {
+            List(selection: $selectedFile) { ForEach(loader.files) { f in VStack(alignment: .leading) { Text(f.path).lineLimit(2); Text(f.kind + (f.oldPath.isEmpty ? "" : " · " + f.oldPath)).font(.caption).foregroundStyle(.secondary) }.tag(f.path) } }.frame(minWidth: 130, idealWidth: 170, maxWidth: 240)
+            if patchLoading { ProgressView().frame(maxWidth: .infinity) }
+            else if remotePatch != nil {
+              if diff.complexMetadata && diff.hunks.isEmpty {
+                ScrollView { VStack(alignment: .leading, spacing: 10) {
+                  Text(store.text("This patch has no safe structured preview. The original remote text is shown below.", "此 Patch 无法安全生成结构化预览，以下显示远端原始文本。"))
+                    .font(.caption).foregroundStyle(.secondary)
+                  Text(diff.raw).font(.system(.caption, design: .monospaced)).textSelection(.enabled)
+                }.frame(maxWidth: .infinity, alignment: .leading).padding(10) }
+              } else {
                 DiffTable(document: diff, path: selectedFile ?? "", key: "hosting|\(account.identity)|\(binding.repository)|\(current.number)|\(current.sha)", settings: store.settings, dark: scheme == .dark, selectedHunk: -1,
                   beforeTitle: current.target, afterTitle: current.source).frame(maxWidth: .infinity, maxHeight: .infinity)
-              } else { ContentUnavailableView(store.text("Preview Unavailable", "无可用预览"), systemImage: "doc", description: Text(store.text("Select a file. Binary, large or omitted patches can be viewed in your browser.", "请选择文件。二进制、大型或平台未返回的 Patch 可在浏览器中查看。"))).frame(maxWidth: .infinity) }
-            }
-          }
-        case 3:
-          List {
-            ForEach(reviews) { review in
-              reviewRow(review)
-              if account.instance.provider == .gitea {
-                if let values = reviewComments[review.id] { ForEach(values) { reviewRow($0) } }
-                else { Button(store.text("Load Review Comments", "加载审查评论")) { loadReviewComments(review.id) }.disabled(moreLoading) }
               }
-            }; if reviewPage != nil { moreButton(3) }
-            ForEach(comments) { review in reviewRow(review) }; if commentPage != nil { moreButton(4) }
-            if reviews.isEmpty && comments.isEmpty { Text(store.text("No Reviews or Comments", "暂无审查或评论")) }
-          }
-        default:
-          List {
-            Text(store.text("Commit: ", "提交：") + current.sha).font(.system(.caption, design: .monospaced)).textSelection(.enabled)
-            if let ciError { Text(ciError).foregroundStyle(.orange) }
-            else if let error { Text(error).foregroundStyle(.orange) }
-            else if checks.isEmpty { Text(store.text("No Checks", "无检查")) }
-            ForEach(checks) { check in HStack { Text(check.name); Spacer(); Text(ciTitle(check.state)).foregroundStyle(check.state == .success ? Color.green : .secondary); if let url = check.webURL { Link(store.text("Logs", "日志"), destination: url) } } }
+            } else { ContentUnavailableView(store.text("Preview Unavailable", "无可用预览"), systemImage: "doc", description: Text(store.text("Select a file. Binary, large or omitted patches can be viewed in your browser.", "请选择文件。二进制、大型或平台未返回的 Patch 可在浏览器中查看。"))).frame(maxWidth: .infinity) }
           }
         }
+      case 3:
+        List {
+          ForEach(loader.reviews) { review in
+            reviewRow(review)
+            if account.instance.provider == .gitea {
+              if let values = reviewComments[review.id] { ForEach(values) { reviewRow($0) } }
+              if let error = reviewCommentErrors[review.id] { Text(error).foregroundStyle(.orange) }
+              if reviewComments[review.id] == nil || reviewCommentPages[review.id] != nil {
+                Button(store.text("Load Review Comments", "加载审查评论")) { loadReviewComments(review.id) }.disabled(reviewCommentTasks[review.id] != nil)
+              }
+            }
+          }
+          if loader.nextPages[.reviews] != nil { moreButton(.reviews) }
+          moduleStatus(.comments)
+          ForEach(loader.comments) { reviewRow($0) }
+          if loader.nextPages[.comments] != nil { moreButton(.comments) }
+          if account.instance.provider == .github {
+            moduleStatus(.conversations)
+            ForEach(loader.conversations) { reviewRow($0) }
+            if loader.nextPages[.conversations] != nil { moreButton(.conversations) }
+          }
+          if loader.state(.reviews).loaded && loader.state(.comments).loaded && (account.instance.provider != .github || loader.state(.conversations).loaded) && loader.reviews.isEmpty && loader.comments.isEmpty && loader.conversations.isEmpty {
+            Text(store.text("No Reviews or Comments", "暂无审查或评论"))
+          }
+        }
+      default:
+        List {
+          Text(store.text("Commit: ", "提交：") + current.sha).font(.system(.caption, design: .monospaced)).textSelection(.enabled)
+          if loader.state(.checks).loaded && loader.state(.checks).error == nil && loader.nextChecks == nil && loader.checks.isEmpty { Text(store.text("No Checks", "无检查")) }
+          ForEach(loader.checks) { check in HStack { Text(check.name); Spacer(); Text(ciTitle(check.state)).foregroundStyle(check.state == .success ? Color.green : .secondary); if let url = check.webURL { Link(store.text("Logs", "日志"), destination: url) } } }
+          if loader.nextChecks != nil { moreButton(.checks) }
+        }.accessibilityIdentifier("hosting.detail.ci")
       }
     }.padding(14)
-    .task { await load() }
+    .onAppear { loader.select(section); if tab == 2 { loadPatch() } }
+    .onChange(of: tab) { _, _ in
+      loader.select(section)
+      if tab == 2 { loadPatch() } else { patchTask?.cancel(); patchLoading = false }
+      if tab != 3 { reviewCommentTasks.values.forEach { $0.cancel() }; reviewCommentTasks = [:] }
+    }
+    .onChange(of: loader.files.map(\.path)) { _, values in
+      if !values.contains(selectedFile ?? "") { selectedFile = values.first }
+    }
+    .onChange(of: current.sha) { _, _ in
+      generation = UUID(); patchTask?.cancel(); remotePatch = nil; diff = .empty; patchError = nil
+      reviewCommentTasks.values.forEach { $0.cancel() }; reviewCommentTasks = [:]; reviewComments = [:]; reviewCommentPages = [:]; reviewCommentErrors = [:]
+    }
     .onChange(of: selectedFile) { _, _ in loadPatch() }
-    .onDisappear { moreTask?.cancel(); patchTask?.cancel() }
+    .onDisappear { generation = UUID(); loader.cancelAll(); patchTask?.cancel(); patchTask = nil; patchLoading = false; reviewCommentTasks.values.forEach { $0.cancel() }; reviewCommentTasks = [:] }
+  }
+  @ViewBuilder func moduleStatus(_ section: HostingDetailSection) -> some View {
+    let state = loader.state(section)
+    if state.loading { HStack { ProgressView().controlSize(.small); Text(store.text("Loading…", "正在加载…")) }.font(.caption).foregroundStyle(.secondary) }
+    if let error = state.error {
+      HStack(alignment: .top) {
+        Text(hosting.message(error)).font(.callout).foregroundStyle(.orange).textSelection(.enabled)
+        Spacer()
+        Button(store.text("Retry", "重试")) { loader.retry(section) }.disabled(state.loading)
+      }.accessibilityIdentifier("hosting.detail.error." + section.rawValue)
+    }
   }
   func reviewRow(_ review: HostingReview) -> some View {
     VStack(alignment: .leading, spacing: 5) {
@@ -294,64 +333,43 @@ struct HostingRequestDetail: View {
   func ciTitle(_ state: HostingCIState) -> String {
     switch state { case .pending: store.text("Pending", "等待中"); case .running: store.text("Running", "运行中"); case .success: store.text("Success", "成功"); case .failed: store.text("Failed", "失败"); case .cancelled: store.text("Cancelled", "已取消"); case .skipped: store.text("Skipped", "已跳过"); case .unknown: store.text("Unknown", "未知"); case .noChecks: store.text("No Checks", "无检查") }
   }
-  func load() async {
-    loading = true; defer { loading = false }
-    do {
-      let token = try await hosting.tokens.token(for: account)
-      let loaded = try await hosting.api.request(binding, number: request.number, account: account, token: token)
-      try Task.checkCancellation(); detail = loaded
-      // Independent panes report failure explicitly; CI permission failures never become No Checks.
-      do { checks = try await hosting.api.checks(binding, sha: loaded.sha, account: account, token: token) }
-      catch is CancellationError { throw CancellationError() } catch { ciError = hosting.message(error); await hosting.failed(error, account: account) }
-      try await loadPage(1, token: token); try await loadPage(2, token: token); try await loadPage(3, token: token); try await loadPage(4, token: token)
-    } catch is CancellationError {} catch { self.error = hosting.message(error); await hosting.failed(error, account: account) }
-  }
-  func loadPage(_ kind: Int, token: HostingToken) async throws {
-    switch kind {
-    case 1:
-      let p = try await hosting.api.commits(binding, number: request.number, account: account, token: token, page: commitPage ?? 1)
-      try Task.checkCancellation(); let ids = Set(commits.map(\.id)); commits += p.items.filter { !ids.contains($0.id) }; commitPage = p.nextPage
-    case 2:
-      let p = try await hosting.api.files(binding, number: request.number, account: account, token: token, page: filePage ?? 1)
-      try Task.checkCancellation(); let ids = Set(files.map(\.id)); files += p.items.filter { !ids.contains($0.id) }; filePage = p.nextPage
-      if selectedFile == nil { selectedFile = files.first?.path }
-    case 3:
-      let p = try await hosting.api.reviews(binding, number: request.number, account: account, token: token, page: reviewPage ?? 1)
-      try Task.checkCancellation(); let ids = Set(reviews.map(\.id)); reviews += p.items.filter { !ids.contains($0.id) }; reviewPage = p.nextPage
-    default:
-      let p = try await hosting.api.reviews(binding, number: request.number, account: account, token: token, comments: true, page: commentPage ?? 1)
-      try Task.checkCancellation(); let ids = Set(comments.map(\.id)); comments += p.items.filter { !ids.contains($0.id) }; commentPage = p.nextPage
-    }
-  }
-  func moreButton(_ kind: Int) -> some View {
-    Button(store.text("Load More", "加载更多")) {
-      moreLoading = true
-      moreTask = Task { defer { moreLoading = false }; do { let token = try await hosting.tokens.token(for: account); try await loadPage(kind, token: token) }
-        catch is CancellationError {} catch { self.error = hosting.message(error); await hosting.failed(error, account: account) } }
-    }.disabled(moreLoading)
+  func moreButton(_ section: HostingDetailSection) -> some View {
+    Button(store.text("Load More", "加载更多")) { loader.loadMore(section) }.disabled(loader.state(section).loading)
   }
   func loadPatch() {
-    patchTask?.cancel(); remotePatch = nil; diff = .empty; patchLoading = false
-    guard let file = files.first(where: { $0.path == selectedFile }) else { return }
+    patchTask?.cancel(); remotePatch = nil; diff = .empty; patchLoading = false; patchError = nil
+    guard tab == 2, let file = loader.files.first(where: { $0.path == selectedFile }) else { return }
     if let patch = file.patch { remotePatch = patch; diff = DiffParser.parse(Data(patch.utf8)); return }
     guard account.instance.provider == .gitea else { return }; patchLoading = true
+    let ticket = generation
     patchTask = Task {
-      defer { if selectedFile == file.path { patchLoading = false } }
+      defer { if !Task.isCancelled && generation == ticket && selectedFile == file.path { patchLoading = false } }
       do {
         let token = try await hosting.tokens.token(for: account)
-        let patch = try await hosting.api.giteaPatch(binding, number: request.number, file: file, account: account, token: token)
-        try Task.checkCancellation(); guard selectedFile == file.path else { return }
+        try Task.checkCancellation()
+        let api = hosting.api, number = current.number
+        let patch = try await hosting.performAPI(account: account) { try await api.giteaPatch(binding, number: number, file: file, account: account, token: token) }
+        try Task.checkCancellation()
+        guard generation == ticket, selectedFile == file.path, hosting.account(account.id) == account, hosting.binding(binding.id) == binding else { return }
         remotePatch = patch; diff = DiffParser.parse(Data((patch ?? "").utf8))
-      } catch is CancellationError {} catch { self.error = hosting.message(error); await hosting.failed(error, account: account) }
+      } catch is CancellationError {} catch { if !Task.isCancelled && generation == ticket && selectedFile == file.path { patchError = hosting.message(error); await hosting.failed(error, account: account) } }
     }
   }
   func loadReviewComments(_ id: String) {
-    moreLoading = true
-    moreTask = Task {
-      defer { moreLoading = false }
-      do { let token = try await hosting.tokens.token(for: account); let values = try await hosting.api.giteaReviewComments(binding, number: request.number, reviewID: id, account: account, token: token)
-        try Task.checkCancellation(); reviewComments[id] = values
-      } catch is CancellationError {} catch { self.error = hosting.message(error) }
+    guard reviewCommentTasks[id] == nil else { return }
+    let ticket = generation, page = reviewCommentPages[id] ?? 1
+    reviewCommentErrors[id] = nil
+    reviewCommentTasks[id] = Task {
+      defer { if !Task.isCancelled && generation == ticket { reviewCommentTasks[id] = nil } }
+      do {
+        let token = try await hosting.tokens.token(for: account); try Task.checkCancellation()
+        let api = hosting.api, number = current.number
+        let value = try await hosting.performAPI(account: account) { try await api.giteaReviewCommentsPage(binding, number: number, reviewID: id, account: account, token: token, page: page) }
+        try Task.checkCancellation()
+        guard generation == ticket, hosting.account(account.id) == account, hosting.binding(binding.id) == binding else { return }
+        var known = Set((reviewComments[id] ?? []).map(\.id)); reviewComments[id, default: []] += value.items.filter { known.insert($0.id).inserted }
+        reviewCommentPages[id] = value.nextPage
+      } catch is CancellationError {} catch { if !Task.isCancelled && generation == ticket { reviewCommentErrors[id] = hosting.message(error) } }
     }
   }
 }
@@ -440,18 +458,20 @@ struct HostingCreateSheet: View {
         guard hosting.binding(binding.id) == binding, hosting.account(account.id)?.identity == account.identity else { throw HostingError.accountChanged }
         let state = try await model.git().hostingCreationState(sourceBranch: source)
         let token = try await hosting.tokens.token(for: account)
+        let api = hosting.api, operationInProgress = state.operation != nil || model.busy
         if let review {
           let git = await model.git()
-          created = try await hosting.api.create(review, localHead: state.head, localBranch: state.branch, operationInProgress: state.operation != nil || model.busy, account: account, token: token) {
+          created = try await hosting.performAPI(account: account) { try await api.create(review, localHead: state.head, localBranch: state.branch, operationInProgress: operationInProgress, account: account, token: token) {
             let final = try await git.hostingCreationState(sourceBranch: review.draft.source)
             guard final.head == review.sourceSHA, final.branch == review.draft.source, final.operation == nil else { throw HostingError.accountChanged }
             let valid = await MainActor.run { hosting.binding(binding.id) == binding && hosting.account(account.id)?.identity == account.identity && !model.busy }
             guard valid else { throw HostingError.accountChanged }
-          }
+          } }
           await hosting.clearCaches(account: account)
         } else {
-          review = try await hosting.api.prepareCreation(binding, draft: draftValue(), localHead: state.head, localBranch: state.branch,
-            operationInProgress: state.operation != nil || model.busy, account: account, token: token)
+          let draft = draftValue()
+          review = try await hosting.performAPI(account: account) { try await api.prepareCreation(binding, draft: draft, localHead: state.head, localBranch: state.branch,
+            operationInProgress: operationInProgress, account: account, token: token) }
         }
       } catch {
         if error as? HostingError == .creationUnknown { uncertain = true; review = nil }
@@ -465,8 +485,9 @@ struct HostingCreateSheet: View {
       defer { busy = false }
       do {
         let state = try await model.git().hostingCreationState(sourceBranch: source), token = try await hosting.tokens.token(for: account)
-        _ = try await hosting.api.prepareCreation(binding, draft: draftValue(), localHead: state.head, localBranch: state.branch,
-          operationInProgress: state.operation != nil || model.busy, account: account, token: token)
+        let api = hosting.api, draft = draftValue(), operationInProgress = state.operation != nil || model.busy
+        _ = try await hosting.performAPI(account: account) { try await api.prepareCreation(binding, draft: draft, localHead: state.head, localBranch: state.branch,
+          operationInProgress: operationInProgress, account: account, token: token) }
         uncertain = false // Query completed without finding a duplicate; user must review and confirm again.
       } catch { self.error = hosting.message(error) }
     }
