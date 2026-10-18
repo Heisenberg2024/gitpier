@@ -1,6 +1,26 @@
 # Security & privacy
 
-## v1.6.0 review writes (unreleased)
+## v1.6.1 operation recovery (unreleased)
+
+Confirmed review writes require a durable local intent before HTTP mutation begins. `~/Library/Application Support/GitPier/workspace.review-operations/` holds versioned JSON batches (0700 directory, 0600 files); custom workspaces use the same `review-operations` extension beside their own workspace file. Identity, SHA/version, operation type/state, timestamps and opaque receipt/reviewer IDs are stored. No tokens, keys, headers, comment bodies, body hashes, source paths, Diff or code are recorded. This metadata can still reveal account/repository/request identities and activity; private file permissions do not provide cryptographic tamper resistance against the same user.
+
+A possibly sent operation remains Unknown after a crash. Unreadable, unsafe or incompatible history is preserved and blocks new review writes; it never deletes credentials. Known receipts can be inspected using GET under an explicitly selected saved binding, with fresh stable-ID checks. Missing bodies/anchors cannot be fully verified after restart. A second manual acknowledgement clears only the block and never retries a request. Completed-history cleanup never removes an unresolved batch. Normal close warns before discarding memory-only bodies; disconnect explicitly discards this account's drafts across windows and keeps unknown metadata.
+
+The journal checks namespace synchronization for same-device parent directories, then requires file `fsync`, atomic rename, directory `fsync` and macOS `F_FULLFSYNC`. A failed or unsupported barrier prevents sending; failure after a later state replacement retains the live Unknown barrier, including failed manual acknowledgements, until a successful explicit retry. This requirement is specific to the review journal and does not change the existing Vault format or write path. Filesystem/device guarantees still apply; deterministic fault tests are not physical power-loss testing.
+
+Disconnect/shutdown clear both session drafts and the coordinator's cached private reports/contexts. Stable consumed-confirmation and uncertain-item IDs remain to prevent replay. Already running tasks/HTTP requests can retain their confirmed payload until cancellation or a response settles; late results are journaled without restoring the report cache. No secure memory erasure is claimed.
+
+Active and unknown write protection follows the stable remote user and target across local account UUID changes after reconnection. Receipt inspection and acknowledgement remain bound to the original local account identity; a new connection cannot implicitly acknowledge an old operation or access its credential.
+
+简体中文：审查写入必须先安全持久化意图。默认日志在 `~/Library/Application Support/GitPier/workspace.review-operations/`，自定义工作区使用其旁同扩展目录，目录0700/文件0600。只保存稳定身份、SHA/版本、操作类型/状态、时间与不透明结果/审查者 ID，不保存 Token、密钥、请求头、正文、正文哈希、源码路径、Diff 或代码。身份与活动仍是私有元数据，同用户文件权限不等于密码学防篡改。异常退出后可能已发送的操作保持未知；日志损坏/不兼容会保留原文件并阻止新写入，不删除凭证。已知结果可在明确选择的关联下只读回查，但无法完整恢复正文/位置；二次人工确认仅解除阻止，不重试请求。正常关闭提醒丢弃内存正文，账号断开确认所有窗口的丢弃并保留未知元数据。
+
+日志检查同设备父目录的命名空间同步，依次要求文件 fsync、原子替换、目录 fsync 和 macOS F_FULLFSYNC。同步失败或不受支持时不发送；后续状态替换或人工确认的最终屏障失败，当前进程仍保留 Unknown，需显式成功重试。此严格路径仅用于审查日志，原 Vault 格式与写入路径保持。保证受文件系统和设备能力约束，故障注入测试不代表实际断电测试。
+
+断开/关闭会清理会话草稿及协调器缓存的私有报告/版本上下文，只保留已消费确认与未知条目 ID 以阻止重发。已运行的任务或 HTTP 请求可能持有已确认正文，直至取消或响应结束；迟到结果仍记最小日志，但不恢复私有报告缓存，不声称安全擦除内存。
+
+同一远端用户重连生成新的本地账号 UUID 后，仍共享原目标的正在发送/未知写入保护。结果回查、凭证读取与人工确认继续绑定原本地账号，新连接不能隐式核实旧操作或访问旧凭证。
+
+## v1.6.0 review writes (released 2026-10-18)
 
 Review comments and approvals are explicit remote writes using the selected Hosting account, independently of Git transport. Immutable confirmation snapshots bind the stable account/repository/request and revision; complete patches and exact file coordinates validate inline positions. A shared per-target lock rejects duplicate concurrent submissions. Successful writes require stable-ID readback; ambiguous network, cancellation and verification outcomes preserve the draft and block automatic reposting. No review action applies code, changes local Git state or triggers Fetch/Push. Remote bodies remain plain text. See [provider capabilities and recovery](docs/code-review.md) for permission and API limitations, including Gitea's disabled formal-review/pending writes that may publish another client's draft, and unverified inline creation.
 

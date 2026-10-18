@@ -2,24 +2,48 @@ import AppKit
 import Combine
 import GitPierCore
 
-/// Memory only. A workspace owns one session per exact account/repository/request and one
-/// submission coordinator across all of its windows. Private drafts never enter persistence.
+/// A workspace owns one coordinator across all windows. Drafts stay in memory;
+/// only minimal write intent and receipt metadata enter the operation journal.
 @MainActor final class HostingReviewSessionRegistry: ObservableObject {
-  let coordinator = HostingReviewSubmissionCoordinator()
+  let coordinator: HostingReviewSubmissionCoordinator
+  let journalURL: URL
+  @Published var recoveredOperations: [HostingReviewOperationRecord] = []
+  @Published var recoveryError: String?
+  @Published var recoveryActionError: String?
+  @Published var recovering = false
+  @Published var recoveryEvidence: [UUID: String] = [:]
+  var recoveryLifecycle = UUID()
+  var recoveryTicket = UUID()
+  init(journalURL: URL) {
+    self.journalURL = journalURL
+    coordinator = HostingReviewSubmissionCoordinator(journal: HostingReviewOperationJournal(root: journalURL))
+  }
   private(set) var sessions: [String: HostingReviewSession] = [:]
   private var observations: [String: AnyCancellable] = [:]
   var pending: [HostingReviewSession] { sessions.values.filter(\.hasUnsavedContent).sorted { $0.displayName < $1.displayName } }
+  func unfinished(accountID: UUID) -> [HostingReviewSession] { pending.filter { $0.account.id == accountID } }
+  func disconnectAccount(_ id: UUID) {
+    for key in Array(sessions.keys) where sessions[key]?.account.id == id {
+      sessions[key]?.invalidateForDisconnect()
+      observations[key] = nil; sessions[key] = nil
+    }
+    Task { [coordinator] in await coordinator.discardPrivateContent(accountID: id) }
+    objectWillChange.send()
+  }
   func session(hosting: HostingModel, binding: RepositoryHostingBinding, account: HostingAccount, request: HostingPullRequest) -> HostingReviewSession {
     if let value = sessions.values.first(where: { $0.hosting === hosting && $0.account == account && $0.binding == binding && $0.number == request.number }) { return value }
     let key = UUID().uuidString
     let value = HostingReviewSession(hosting: hosting, binding: binding, account: account, request: request, coordinator: coordinator)
+    value.registry = self
     sessions[key] = value
     observations[key] = value.objectWillChange.sink { [weak self] _ in self?.objectWillChange.send() }
     return value
   }
   func stop() {
-    sessions.values.forEach { $0.stopReading(); $0.cancelSubmission() }
+    recoveryLifecycle = UUID()
+    sessions.values.forEach { $0.invalidateForDisconnect() }
     sessions.removeAll(); observations.removeAll(); objectWillChange.send()
+    Task { [coordinator] in await coordinator.discardPrivateContent() }
   }
   /// Keep is explicit: changing pages never silently discards or publishes a draft.
   func confirmNavigation(store: AppStore, session: HostingReviewSession?) -> Bool {
@@ -47,7 +71,7 @@ import GitPierCore
     guard !values.isEmpty else { return nil }
     let alert = NSAlert()
     alert.messageText = store.text(quitting ? "Quit with review work to check?" : "Close with review work to check?", quitting ? "仍有审查状态需要核实，确定退出？" : "仍有审查状态需要核实，确定关闭？")
-    alert.informativeText = store.text("Unpublished drafts and unresolved submission results are held in memory. Closing the last window discards drafts and result details; it does not prove that an unknown operation failed. Check the platform before submitting again, including reviewer requests or discussion resolution.", "未发布草稿与待核实提交结果保存在内存中。关闭最后一个窗口会丢弃草稿与结果详情，但不能证明结果未知的操作未成功。再次提交前请核实平台，包括审查者请求与讨论解决操作。") + "\n\n" + values.map(\.displayName).joined(separator: "\n")
+    alert.informativeText = store.text("Unpublished review bodies are held in memory and will be discarded. Minimal metadata for possibly sent operations remains in the local journal across restart. Closing does not prove that an unknown write failed. Check the platform before submitting again, including reviewer requests or discussion resolution.", "未发布的审查正文仅保存在内存中，关闭后将丢弃。可能已发送操作的最小元数据会保留在本机日志中，供重启后核实。关闭不能证明未知写入失败，再次提交前请核实平台，包括审查者请求与讨论解决操作。") + "\n\n" + values.map(\.displayName).joined(separator: "\n")
     let hasDrafts = values.contains { $0.hasPrivateDraftContent }
     alert.addButton(withTitle: hasDrafts ? store.text(quitting ? "Discard Drafts & Quit" : "Discard Drafts & Close", quitting ? "丢弃草稿并退出" : "丢弃草稿并关闭") : store.text(quitting ? "Quit Anyway" : "Close Anyway", quitting ? "仍然退出" : "仍然关闭"))
     alert.addButton(withTitle: store.text("Cancel", "取消"))
@@ -77,6 +101,7 @@ import GitPierCore
   let number: Int
   let request: HostingPullRequest
   let coordinator: HostingReviewSubmissionCoordinator
+  weak var registry: HostingReviewSessionRegistry?
   @Published private(set) var context: HostingReviewContext?
   @Published var draft: HostingReviewDraft? { didSet { if oldValue?.comments != draft?.comments { rebuildCommentIndex() } } }
   @Published var composer: Composer?
@@ -100,6 +125,7 @@ import GitPierCore
   @Published private(set) var submitting = false
   @Published private(set) var report: HostingReviewSubmissionReport?
   @Published private(set) var targetBlocked = false
+  @Published private(set) var disconnected = false
   @Published var reviewersPresented = false
   @Published private(set) var reviewerCandidates: [HostingReviewer] = []
   @Published private(set) var existingReviewers: [HostingReviewer] = []
@@ -150,7 +176,7 @@ import GitPierCore
   var hasPrivateDraftContent: Bool { draft?.hasContent == true || !composerBody.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
   var hasUnresolvedResult: Bool { targetBlocked || report?.hasUnknown == true }
   var hasUnsavedContent: Bool { submitting || hasPrivateDraftContent || hasUnresolvedResult }
-  var identityValid: Bool { hosting.account(account.id) == account && hosting.binding(binding.id) == binding }
+  var identityValid: Bool { !disconnected && hosting.account(account.id) == account && hosting.binding(binding.id) == binding }
   var outdated: Bool { if let draft, let context { return draft.context.target != context.target || draft.context.revision != context.revision }; return false }
   var canCompose: Bool { context != nil && identityValid && !submitting && !targetBlocked }
   var reviewBrowserExplanation: String? {
@@ -201,6 +227,15 @@ import GitPierCore
     countCache[key] = result; return result
   }
   func message(_ error: Error) -> String {
+    if let journal = error as? HostingReviewJournalError {
+      guard hosting.store.settings.language != .english else { return journal.localizedDescription }
+      switch journal {
+      case .unavailable: return "无法安全保存审查操作日志，新的写入已停止。请恢复磁盘访问后重试；可能已发送的操作仍需在平台核实。"
+      case .corrupt: return "无法安全恢复审查操作日志。请保留原始文件并核实平台，修复日志后再提交。"
+      case .unsupportedSchema: return "审查操作日志由不兼容的版本写入，新的审查写入已被阻止。"
+      case .capacityReached: return "审查操作日志已满。请主动清理已完成记录；待核实记录必须保留。"
+      }
+    }
     guard let value = error as? HostingReviewError else { return hosting.message(error) }
     if hosting.store.settings.language == .english { return value.localizedDescription }
     switch value {
@@ -311,6 +346,16 @@ import GitPierCore
     reviewerTicket = nil; reviewerTask?.cancel(); reviewerTask = nil; reviewerLoading = false
     approvalRulesTicket = nil; approvalRulesTask?.cancel(); approvalRulesTask = nil; approvalRulesLoading = false
   }
+  /// Called synchronously once disconnect has been explicitly confirmed across windows.
+  /// A late HTTP response may update the durable coordinator, but cannot restore private UI state.
+  func invalidateForDisconnect() {
+    disconnected = true; stopReading(); cancelSubmission()
+    composer = nil; composerBody = ""; composerContext = nil; editingComment = nil
+    draft = nil; confirmation = nil; draftConfirmations = [:]; composerConfirmations = [:]
+    inlineSelection = nil; inlineSources = [:]; inlineStartCandidates = []; inlineStartLineID = nil
+    stagedReviewers = nil; reviewerContext = nil; reviewersPresented = false
+    threads = [:]; report = nil; status = nil; targetBlocked = true
+  }
   func attach(_ reader: UUID) { readers.insert(reader) }
   func detach(_ reader: UUID) { readers.remove(reader); if readers.isEmpty { stopReading() } }
   func begin(_ value: Composer) {
@@ -370,7 +415,8 @@ import GitPierCore
   }
   func discardDraft() {
     guard !submitting else { return }
-    composer = nil; composerBody = ""; editingComment = nil; confirmation = nil
+    composer = nil; composerBody = ""; composerContext = nil; editingComment = nil; confirmation = nil
+    draftConfirmations = [:]; composerConfirmations = [:]
     inlineSelection = nil; inlineSources = [:]; inlineStartCandidates = []; inlineStartLineID = nil
     draft = context.map { HostingReviewDraft(context: $0) }; actionError = nil
   }
@@ -516,20 +562,30 @@ import GitPierCore
     let account = account
     return try await apiCall { try await $0.readReviewReceipt(receipt, mutation: mutation, context: context, account: account, token: $1) }
   }
+  private func send(_ mutation: HostingReviewMutation, context: HostingReviewContext) async throws -> HostingReviewReceipt {
+    try validateIdentity()
+    let token = try await hosting.tokens.token(for: account), api = hosting.api, account = account
+    try validateIdentity()
+    return try await hosting.performReviewWrite(account: account) {
+      try await api.performReviewMutation(mutation, context: context, account: account, token: token)
+    }
+  }
   func submit(_ snapshot: HostingReviewConfirmation) {
-    guard !submitting else { return }
+    guard identityValid, !submitting else { return }
     submitting = true; confirmation = nil; actionError = nil; status = nil
-    let account = account
     submissionTask = Task {
-      defer { submitting = false; submissionTask = nil }
+      defer { submitting = false; submissionTask = nil; Task { [weak registry] in await registry?.refreshRecovery() } }
+      guard identityValid else { return }
       do {
         let result = try await coordinator.submit(snapshot,
           current: { try await self.currentContext() }, validate: { try await self.validateIdentity() },
           validateAnchor: { try await self.validateAnchor($0) },
-          send: { mutation, context in try await self.apiCall { try await $0.performReviewMutation(mutation, context: context, account: account, token: $1) } },
+          send: { try await self.send($0, context: $1) },
           readback: { try await self.readback($0, mutation: $1, context: $2) })
+        guard identityValid else { return }
         apply(result, confirmation: snapshot)
       } catch {
+        guard identityValid else { return }
         if error as? HostingReviewError == .resultUnknown { targetBlocked = true }
         actionError = message(error)
       }
@@ -591,7 +647,7 @@ import GitPierCore
     } else if result.hasUnknown { actionError = message(HostingReviewError.resultUnknown) }
     else if result.submittedCount > 0 { actionError = message(HostingReviewError.partialSubmission) }
     else if let failure = result.results.compactMap({ result -> HostingReviewSubmissionFailure? in if case .failed(let failure) = result.outcome { failure } else { nil } }).first {
-      switch failure { case .review(let value): actionError = message(value); case .hosting(let value): actionError = message(value); case .cancelled: actionError = hosting.store.text("Cancelled before sending. Draft preserved.", "发送前已取消，草稿已保留。") }
+      switch failure { case .review(let value): actionError = message(value); case .hosting(let value): actionError = message(value); case .journal(let value): actionError = message(value); case .cancelled: actionError = hosting.store.text("Cancelled before sending. Draft preserved.", "发送前已取消，草稿已保留。") }
     }
     // Invalidate the affected remote modules only. No Git refresh, Fetch or workspace scan.
     if result.submittedCount > 0 {
@@ -619,20 +675,33 @@ import GitPierCore
     guard let report, !submitting else { return }
     submitting = true
     submissionTask = Task {
-      defer { submitting = false; submissionTask = nil }
+      defer { submitting = false; submissionTask = nil; Task { [weak registry] in await registry?.refreshRecovery() } }
       do {
         let result = try await coordinator.reconcile(report.confirmationID, validate: { try await self.validateIdentity() }, readback: { try await self.readback($0, mutation: $1, context: $2) })
+        guard identityValid else { return }
         apply(result, confirmation: nil)
-      } catch { actionError = message(error) }
+      } catch { if identityValid { actionError = message(error) } }
     }
   }
   func acknowledgePlatformCheck() {
     guard let context, !submitting else { return }
     Task {
-      await coordinator.acknowledgePlatformCheck(context.target)
-      guard self.context?.target == context.target else { return }
-      targetBlocked = false; report = nil; actionError = nil
+      defer { Task { [weak registry] in await registry?.refreshRecovery() } }
+      do {
+        try await coordinator.acknowledgePlatformCheck(context.target)
+        let blocked = await coordinator.isBlocked(context.target)
+        guard self.context?.target == context.target, identityValid else { return }
+        targetBlocked = blocked
+        if blocked { actionError = message(HostingReviewError.resultUnknown) }
+        else { report = nil; actionError = nil }
+      } catch { if identityValid { actionError = message(error) } }
     }
   }
   func cancelSubmission() { submissionTask?.cancel() }
+  func refreshBlockState() async {
+    guard let context else { return }
+    let blocked = await coordinator.isBlocked(context.target)
+    guard self.context?.target == context.target else { return }
+    targetBlocked = disconnected || blocked
+  }
 }

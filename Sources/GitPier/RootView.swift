@@ -13,6 +13,7 @@ struct RootView: View {
   @State private var collapsedGroups: Set<String> = []
   var body: some View {
     VStack(spacing: 0) {
+      HostingReviewRecoveryBanner(registry: store.reviewSessions)
       if let notice = store.notice {
         HStack(spacing: 10) {
           Text(notice).font(uiFont(size: 11)).textSelection(.enabled)

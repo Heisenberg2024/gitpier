@@ -37,6 +37,7 @@ private actor HostingReviewProviderAcceptanceTransport: HostingTransport {
     var conversations: [[String: Any]] = []
     var discussions: [[String: Any]] = []
     var replies = 0
+    var replyIDs: Set<Int> = []
     var approved = false
     var approvalRuleReads = 0
     var discussionAttempts = 0
@@ -67,13 +68,14 @@ private actor HostingReviewProviderAcceptanceTransport: HostingTransport {
     let key = key(.gitea, number); var value = states[key] ?? State(), reviewID = id()
     value.reviews = [["id": reviewID, "user": user(), "body": "Existing platform review", "state": "COMMENT", "commit_id": Self.head, "comments_count": 1]]
     value.comments = [["id": id(), "pull_request_review_id": reviewID, "body": "Existing platform inline comment", "user": user(),
-      "path": Self.path, "position": 5, "commit_id": Self.head, "created_at": "2026-10-18T00:01:00Z"]]
+      "path": Self.path, "position": 5, "original_position": 0, "commit_id": Self.head,
+      "pull_request_url": "https://gitea.provider.invalid/example/review/pulls/\(number)", "created_at": "2026-10-18T00:01:00Z"]]
     states[key] = value
   }
   func facts(_ provider: HostingProvider, number: Int) -> HostingReviewProviderFacts {
     let value = states[key(provider, number)] ?? State()
     return HostingReviewProviderFacts(writes: value.writes, reviews: value.reviews.count,
-      inlineComments: value.comments.filter { $0["in_reply_to_id"] == nil }.count, discussions: value.discussions.count,
+      inlineComments: value.comments.filter { $0["in_reply_to_id"] == nil && !value.replyIDs.contains($0["id"] as? Int ?? -1) }.count, discussions: value.discussions.count,
       replies: value.replies, approved: value.approved, lastReviewID: value.reviews.last?["id"].map { String(describing: $0) },
       lastReviewState: value.reviews.last?["state"] as? String, events: value.events, pinned: value.pinned,
       multiLineComments: value.comments.filter { $0["start_line"] != nil }.count,
@@ -84,7 +86,7 @@ private actor HostingReviewProviderAcceptanceTransport: HostingTransport {
   private func pull(_ provider: HostingProvider, number: Int) -> [String: Any] {
     let reviewers = states[key(provider, number)]?.requestedReviewers ?? [["id": 81, "login": "existing-reviewer", "username": "existing-reviewer"]]
     return ["id": 1000 + number, "number": number, "iid": number, "title": "Synthetic provider review \(number)",
-     "body": "Native review provider fixture", "description": "Native review provider fixture", "state": "open", "draft": false,
+     "body": "Native review provider fixture", "description": "Native review provider fixture", "state": provider == .gitlab ? "opened" : "open", "draft": false,
      "head": ["sha": Self.head, "ref": "feature/review", "repo": ["full_name": "example/review"]],
      "base": ["sha": Self.base, "ref": "main", "repo": ["id": 12]], "sha": Self.head,
      "diff_refs": ["head_sha": Self.head, "base_sha": Self.base, "start_sha": Self.start], "reviewers": reviewers, "requested_reviewers": reviewers,
@@ -229,7 +231,11 @@ private actor HostingReviewProviderAcceptanceTransport: HostingTransport {
     }
     if tail.count == 3, tail[0] == "comments", tail[2] == "replies", let parentID = Int(tail[1]),
       let parent = value.comments.first(where: { $0["id"] as? Int == parentID }), let body = fields["body"] as? String {
-      var reply = parent; reply["id"] = id(); reply["body"] = body; reply["in_reply_to_id"] = parentID
+      let replyID = id()
+      var reply = parent; reply["id"] = replyID; reply["body"] = body; reply["user"] = user()
+      if provider == .github { reply["in_reply_to_id"] = parentID }
+      else { reply.removeValue(forKey: "in_reply_to_id") } // Gitea returns the inherited review/path/signed line, not a parent ID.
+      value.replyIDs.insert(replyID)
       value.comments.append(reply); value.replies += 1; states[key] = value; return try response(reply, status: 201)
     }
     if tail == ["discussions"] {

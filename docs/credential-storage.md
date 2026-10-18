@@ -1,6 +1,6 @@
-# Hosting credential storage — v1.5.1
+# Hosting credential storage
 
-## v1.6.0 disconnect recovery and review drafts (unreleased)
+## v1.6.0 disconnect recovery and review drafts (released)
 
 Review APIs continue through `OAuthTokenManager`; they do not read or write storage directly. Unpublished review text stays in memory and is excluded from hosting metadata, credentials, disconnect journals and logs. Closing does not publish it.
 
@@ -59,3 +59,9 @@ Local Vault avoids OAuth Keychain access. Git transport helpers, existing GitPie
 逐账号迁移须确认，推荐重新授权至目标以避免读取旧 Keychain；也可使用内存 Token 或明确允许读取原凭证。先记意图、保存目标，再原子切换元数据，之前始终以原模式为准；失败、中断或取消不会提前删除原凭证。迁移与刷新不同时进行，其他账号继续可用。旧副本由用户确认后清理，钥匙串授权可以暂缓；中断目标可重试或主动清理。断开优先移除活动账号/关联、取消账号请求并永久失效当前内存会话；持久记录已断开状态后，先删除有效凭证，再独立尝试历史副本和中断迁移目标。历史 Keychain 删除被拒绝不会让 Local Vault 凭证继续生效。剩余副本显示在已断开凭证列表，重启后仍仅用于主动重试清理，不读取 Token 或恢复登录，也不绕过 macOS 授权。若清理记录本身无法保存，会明确提示重启限制并保持当前进程断开。该操作不自动撤销平台授权，不更改原 Git 凭证助手/SSH/Remote/仓库或更新签名。Git 网络认证仍可能访问系统钥匙串。
 
 Implementation references: [Apple AES.GCM](https://developer.apple.com/documentation/cryptokit/aes/gcm), [random symmetric keys](https://developer.apple.com/documentation/cryptokit/symmetrickey/init(size:)).
+
+## v1.6.1 review operations and upgrades (unreleased)
+
+`workspace.review-operations/` is separate from `workspace.hosting.json`, its disconnect intents, `HostingCredentials/`, and `GitPier.hosting.oauth` Keychain items. It records stable operation identity/state/receipts without OAuth/PAT data, comments or source. A journal decode/permission failure blocks review writes, preserves its original files and has no credential deletion or migration effect. New accounts still default to Local Vault, legacy accounts still default to Keychain, and AES-GCM generation/AAD/key formats and service/account query identities do not change. Reviews request tokens through the existing shared OAuthTokenManager and never copy them into native Git credentials. Ad-hoc upgrades may request Keychain access again; simulated denial is not proof of a real OS denial.
+
+简体中文：新增审查操作日志与托管元数据、断开意图、HostingCredentials 及 OAuth Keychain 完全分开，只保存操作身份/状态/结果元数据，不含凭证、评论或源码。日志损坏只阻止审查写入并保留原件，不能触发 Token 删除或迁移。默认 Local Vault、旧账号 Keychain、AES-GCM 格式/AAD/代次及 Keychain 查询身份不变；继续复用 OAuthTokenManager，绝不复制到原生 Git 凭证。Ad-hoc 升级后仍可能再次要求 Keychain 授权，模拟拒绝不能称为实际系统拒绝。

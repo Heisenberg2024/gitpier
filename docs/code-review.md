@@ -1,4 +1,4 @@
-# Code review and collaboration — v1.6.0
+# Code review and collaboration — v1.6.1 candidate
 
 Released [v1.6.0](https://github.com/Heisenberg2024/gitpier/releases/tag/v1.6.0), build 27. The [development guide](development.md#v160-publication--2026-10-18) records exact-commit CI, native fixture acceptance and publication verification. Released v1.5.1 live validation is historical evidence; it does not verify the new write workflows. No v1.6.0 real-service comments or approvals have been performed.
 
@@ -55,9 +55,9 @@ Review operations obtain current tokens through the existing `OAuthTokenManager`
 
 All windows share a per-target submission lock. A confirmation ticket is consumed once. Non-GET writes are never automatically retried. Definite permission/validation failures preserve the draft. Network cancellation after sending, timeout, 5xx, malformed success or failed verification may mean **Result Unknown**; do not claim that nothing was posted.
 
-If a server ID was received, read-only reconciliation fetches that exact object and verifies its author, state and commit before accepting success. Without a server ID, body/author/time matching cannot prove uniqueness; the unknown state remains and the user checks the platform. An explicit acknowledgement after that check can unlock a new attempt. Refreshing or reopening a request within the running application does not silently unlock an uncertain target. Drafts, confirmation snapshots and uncertainty locks are process memory: closing the application warns, but crash/relaunch recovery is not a persistent review journal. A new process never automatically resends a write. Successful entries are removed individually; failed/unsent entries remain.
+If a server ID was received, read-only reconciliation fetches that exact object and verifies its author, state and commit before accepting success. Without a server ID, body/author/time matching cannot prove uniqueness; the unknown state remains and the user checks the platform. An explicit acknowledgement after that check can unlock a new attempt. Refreshing or reopening a request within the running application does not silently unlock an uncertain target. Drafts and full confirmation snapshots remain process memory. The v1.6.1 operation journal retains minimal write intent and uncertainty barriers across crashes/relaunch. A new process never automatically resends a write. Successful entries are removed individually; failed/unsent entries remain.
 
-API data and drafts are memory-only and account-partitioned. Existing detail cache entries are invalidated only for the affected request/sections; pagination remains bounded and explicit, thread replies load on demand, and cancellation/generation checks reject late responses. Review writes do not enter `GitService`, trigger Fetch/Push, change HEAD/Index/branch or apply code suggestions.
+API content and drafts are memory-only and account-partitioned; the separate journal contains only minimal operation metadata. Existing detail cache entries are invalidated only for the affected request/sections; pagination remains bounded and explicit, thread replies load on demand, and cancellation/generation checks reject late responses. Review writes do not enter `GitService`, trigger Fetch/Push, change HEAD/Index/branch or apply code suggestions.
 
 ## Collaboration shortcuts
 
@@ -108,7 +108,7 @@ Gitea 普通对话依赖独立 Issue 权限，仓库审查按实例版本核实�
 
 草稿仅保存在内存，绑定完整账号、目标及版本，支持编辑、删除和提交前全文预览。用户明确确认后才写入；多窗口共享提交锁。每条写入前复核身份、权限、HEAD/Diff Version 和实际文件 Patch，变化则停止并重新确认，绝不自动搬移旧评论位置。成功后回读稳定 ID、作者、状态和 SHA；GitLab 逐条记录成功/失败/未发送结果。
 
-超时、发送后取消、服务异常或回读失败显示“提交结果未知”并保留草稿，不自动重复 POST。有服务器 ID 时只读回查该对象，没有 ID 时不以正文/时间猜测成功，必须先查看平台。同一运行进程内刷新或重开请求不会解除未知结果保护。草稿、确认快照与未知锁均在进程内存，关闭会提醒；崩溃/重启后不提供持久审查恢复，也不会自动重发。
+超时、发送后取消、服务异常或回读失败显示“提交结果未知”并保留草稿，不自动重复 POST。有服务器 ID 时只读回查该对象，没有 ID 时不以正文/时间猜测成功，必须先查看平台。同一运行进程内刷新或重开请求不会解除未知结果保护。正文草稿与完整确认快照仍仅在进程内存，关闭会提醒；v1.6.1 最小操作日志跨重启保留未知保护，但不恢复正文，也不自动重发。
 
 权限扩大由用户主动重新授权；GitHub repo 和 GitLab api 都是广泛权限。Gitea read/write:issue 与 repository 分开，旧 Grant 冲突时保留原会话，不自动撤销。PAT 权限由平台强制执行，不能自动提权。审查复用 OAuthTokenManager，不直接操作凭证后端；断开意图私有日志覆盖旧活动元数据，双重磁盘写入都失败时明确保留内存撤销/重试并暂停删凭证，不能承诺此时跨重启持久化成功。
 
@@ -119,3 +119,21 @@ P1：GitHub 多行范围限同侧、同 Hunk、最多 200 行，提交与回读�
 账号级审查收件箱仅主动加载，明确覆盖当前工作空间以外的账号仓库；GitHub 使用官方 PR Search，GitLab 使用官方个人 MR scope，Gitea 保留网页。每页 30 条、60 秒内存缓存，复用 Hosting 两并发预算，不扫描所有仓库或 Diff。GitHub 搜索 Issue ID 不充当 PR ID，进入详情按已绑定仓库和编号重新核实。当前分支入口按源仓库/项目、分支及完整 SHA 匹配并复核，支持 Fork 隔离，不执行 Fetch/Push。
 
 GitLab 讨论支持有权限时确认后 Resolve/Unresolve；Approval Rules 独立按需读取服务器规则状态，权限/套餐不可用单独提示，不把个人已批准当成规则全部满足。分支比较复用原有本地/remote-tracking 只读界面，保留提交、文件、Diff 和领先/落后；明确跟踪引用来自本地快照。平台远端比较、比较页关联请求标识、GitHub GraphQL Resolve 和更广泛 Gitea 版本验证留待后续。
+
+## v1.6.1 recovery workflow (unreleased)
+
+A confirmed batch is journaled without its text; each item records Not Sent, Possibly Sent/Unknown, Submitted and Verified, stopped before send or Manually Checked. The global workspace banner opens operation history after restart, including disconnected accounts. For a batch with two verified writes, one timeout and two unsent items, those five individual states remain visible; unsent bodies cannot be recovered. Already verified entries are removed from the current in-memory draft individually. Unknown entries block a fresh confirmation for the stable account/instance/repository/request, including path aliases.
+
+Open **Check Operations** to see stable target IDs, type, time and a known receipt ID. **Inspect Known Receipt (Read Only)** uses a saved repository binding chosen by you and checks fresh identity/revision before GET. Without the saved body and exact anchor this is metadata evidence, not full success verification. If no binding is available, open the instance and locate the request using its displayed IDs. After inspecting the platform, **I Checked the Platform** asks for confirmation: it only releases the unknown barrier, does not prove the previous write failed, and sends nothing. Remove already published text from any remaining draft, then prepare a new confirmation for content still to send. No receipt, no identity guessing from body/time.
+
+The default journal is `~/Library/Application Support/GitPier/workspace.review-operations/`; alternate workspaces have their own adjacent directory. Permissions, schema, size and count are checked. Corrupt/unknown-format files remain intact and block new review writes; restore a known-good original and Reload, rather than deleting evidence to retry a POST. Clear Completed History only removes batches with no unresolved records. See [security details](../SECURITY.md) and [current validation](v1.6.1-validation.md).
+
+简体中文：确认批次不保存正文，逐项记录未发送、可能已发送/未知、已提交并验证、发送前停止或已人工核实。重启后的全局提示展示待核实操作，账号断开后仍保留；未发送的正文无法恢复。已验证成功的条目从内存草稿逐项移除，未知结果按稳定账号/实例/仓库/请求阻止新确认，路径别名不能绕过。只读回查先由你选择已保存关联，核实稳定身份和版本，再按结果 ID 读取；由于正文/位置未落盘，不能宣称完整验证。无关联时可打开实例，按展示 ID 定位。人工核实需二次确认，仅解除阻止，不证明上次失败，也不发送请求；请移除已发布内容，再重新预览尚待提交的内容。日志损坏/不兼容保留原文件并阻止写入，不通过删除证据重发。
+
+Reconnecting the same platform user does not remove its old target's active/unknown write protection, even when the connection gets a new local account UUID. Inspect and acknowledge the original operation in Operation History. Readback, credentials and per-account acknowledgement stay attached to the original UUID; one acknowledgement never clears a different identity's unknown record. Different remote users remain independent.
+
+同一平台用户重新连接后，即使本地账号 UUID 改变，旧目标的正在发送/未知保护也不会消失。请在操作日志中核实原记录；结果回查、凭证和逐账号确认仍绑定原 UUID，不能通过确认另一身份来清除旧未知记录。不同远端用户继续独立。
+
+GitLab's current official GraphQL API includes `MergeRequestRequestChanges`, but its audited resolver accepts project path and IID without a commit-SHA precondition. Version/plan/permission handling, confirmation and stable-state live readback have not been verified here, so v1.6.1 keeps this action in the browser. A Discussion is never presented as a formal Request Changes decision.
+
+简体中文：GitLab 当前官方 GraphQL 已有 Request Changes 能力，但已审计的入口以项目路径与 IID 定位，没有提交 SHA 前提；版本/套餐/权限、确认及稳定状态真实回读仍未验证，v1.6.1 保留网页操作，绝不以 Discussion 冒充正式请求更改。

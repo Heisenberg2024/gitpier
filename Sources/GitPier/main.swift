@@ -205,6 +205,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     if let icon = AppResources.applicationIcon { NSApp.applicationIconImage = icon }
     NSApp.activate(ignoringOtherApps: true)
     AppStore.shared.updates.start()
+    Task { await HostingReviewUpgradeProbe.runIfRequested(store: AppStore.shared) }
     if let index = CommandLine.arguments.firstIndex(of: "--repository"),
       CommandLine.arguments.count > index + 1
     {

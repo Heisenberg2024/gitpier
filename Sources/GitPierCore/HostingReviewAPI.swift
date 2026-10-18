@@ -248,6 +248,9 @@ extension HostingAPIClient {
     let binding = try reviewBinding(context, account: account)
     let path = try reviewRequestPath(binding, number: context.target.requestNumber, account: account)
     let provider = account.instance.provider
+    guard receipt.authorID.isEmpty || receipt.authorID == context.target.userID else { throw HostingReviewError.readbackRequired }
+    if case .submitPending(let reviewID, _, _) = mutation, receipt.id != reviewID { throw HostingReviewError.readbackRequired }
+    try await reviewValidateReadbackTarget(context, account: account, token: token)
     let value: HostingJSON
     switch mutation {
     case .review(_, let decision, _, _ ) where provider == .gitlab && decision == .approve:
@@ -281,14 +284,17 @@ extension HostingAPIClient {
       if case .reply(let threadID, let commentID, _) = mutation {
         guard threadID == commentID, value["in_reply_to_id"].string == commentID else { throw HostingReviewError.readbackRequired }
       }
-    case .reply(let threadID, _, _) where provider == .gitea:
-      value = try await reviewGiteaComment(path: path, reviewID: threadID, commentID: receipt.id, account: account, token: token)
+    case .reply(let threadID, let parentID, _) where provider == .gitea:
+      value = try await reviewGiteaReply(path: path, reviewID: threadID, parentID: parentID, receiptID: receipt.id, account: account, token: token)
     default:
       guard provider == .gitlab, let threadID = receipt.threadID else { throw HostingReviewError.readbackRequired }
+      if case .reply(let expected, _, _) = mutation, expected != threadID { throw HostingReviewError.readbackRequired }
+      if case .resolve(let expected, _) = mutation, expected != threadID || receipt.id != expected { throw HostingReviewError.readbackRequired }
       let (discussion, _) = try await json(account, token: token, path: path + "/discussions/" + (try Self.reviewOpaqueID(threadID)))
       guard discussion["id"].string == threadID else { throw HostingReviewError.readbackRequired }
       if case .resolve(_, let resolved) = mutation {
-        guard discussion["id"].string == threadID, discussion["notes"].array.first?["resolved"].bool == resolved else { throw HostingReviewError.readbackRequired }
+        guard let root = discussion["notes"].array.first, root["resolvable"].bool,
+          case .bool(let actual) = root["resolved"], actual == resolved else { throw HostingReviewError.readbackRequired }
         return receipt
       }
       guard let note = discussion["notes"].array.first(where: { $0["id"].string == receipt.id }) else { throw HostingReviewError.readbackRequired }
@@ -313,8 +319,136 @@ extension HostingAPIClient {
     }
     let result = try Self.reviewReceipt(value, mutation: mutation, context: context)
     guard result.id == receipt.id, result.authorID == context.target.userID,
-      result.state == receipt.state, receipt.commitSHA.isEmpty || result.commitSHA == receipt.commitSHA else { throw HostingReviewError.readbackRequired }
+      receipt.authorID.isEmpty || receipt.authorID == result.authorID,
+      receipt.state == .unknown || result.state == receipt.state,
+      receipt.commitSHA.isEmpty || result.commitSHA == receipt.commitSHA else { throw HostingReviewError.readbackRequired }
+    // A successful POST and GET returning the same wrong state do not prove the
+    // confirmed decision happened. Incomplete POST receipts retain their stable ID,
+    // but only an authoritative read with the expected state/SHA can verify them.
+    switch mutation {
+    case .review(_, let decision, _, let pending):
+      let expected: HostingReviewState = pending ? .pending : decision == .approve ? .approved : decision == .requestChanges ? .changesRequested : .commented
+      guard result.state == expected, result.commitSHA == context.revision.headSHA else { throw HostingReviewError.readbackRequired }
+    case .submitPending(_, _, let decision):
+      let expected: HostingReviewState = decision == .approve ? .approved : decision == .requestChanges ? .changesRequested : .commented
+      guard result.state == expected, result.commitSHA == context.revision.headSHA else { throw HostingReviewError.readbackRequired }
+    default: break
+    }
+    let revisionBound: Bool
+    switch mutation {
+    case .inline, .submitPending: revisionBound = true
+    case .review: revisionBound = provider != .gitlab // approval above has its own final three-SHA snapshot
+    default: revisionBound = false
+    }
+    if revisionBound {
+      let latest = try await reviewContext(binding, number: context.target.requestNumber, account: account, token: token)
+      guard latest.target == context.target else { throw HostingReviewError.targetChanged }
+      guard latest.revision == context.revision else { throw HostingReviewError.revisionChanged }
+      try await reviewValidateReadbackTarget(context, account: account, token: token, requireRevision: true)
+    }
     return result
+  }
+
+  /// Paths and request numbers can be reused. Reconciliation also requires the
+  /// original server repository/request identities, even after the request closes.
+  private func reviewValidateReadbackTarget(_ context: HostingReviewContext, account: HostingAccount, token: HostingToken, requireRevision: Bool = false) async throws {
+    let binding = try reviewBinding(context, account: account)
+    let provider = account.instance.provider
+    let (repository, _) = try await json(account, token: token, path: repositoryPath(binding.repository, provider: provider))
+    let (request, _) = try await json(account, token: token, path: reviewRequestPath(binding, number: context.target.requestNumber, account: account))
+    let repositoryID = provider == .gitlab ? request["target_project_id"].string : request["base"]["repo"]["id"].string
+    guard repository["id"].string == context.target.repositoryID, repositoryID == context.target.repositoryID,
+      request["id"].string == context.target.requestID,
+      request[provider == .gitlab ? "iid" : "number"].int == context.target.requestNumber else { throw HostingReviewError.targetChanged }
+    if requireRevision {
+      let head = provider == .gitlab ? request["sha"].string : request["head"]["sha"].string
+      guard head == context.revision.headSHA else { throw HostingReviewError.revisionChanged }
+      if provider == .gitlab {
+        let refs = request["diff_refs"]
+        guard refs["head_sha"].string == context.revision.headSHA, refs["base_sha"].string == context.revision.baseSHA,
+          refs["start_sha"].string == context.revision.startSHA else { throw HostingReviewError.revisionChanged }
+      } else {
+        guard request["base"]["sha"].string == context.revision.baseSHA else { throw HostingReviewError.revisionChanged }
+      }
+    }
+  }
+
+  /// Inspects a known receipt without reconstructing a draft or sending a write.
+  /// The journal omits bodies and anchors: success here is metadata evidence only,
+  /// never complete content/placement verification or permission to resend.
+  public func readRecoveredReviewReceipt(record: HostingReviewOperationRecord, context: HostingReviewContext,
+    account: HostingAccount, token: HostingToken) async throws -> HostingReviewReceipt {
+    guard record.identity.matches(context.target), record.identity.requestNumber == context.target.requestNumber else { throw HostingReviewError.targetChanged }
+    guard record.revision.value == context.revision else { throw HostingReviewError.revisionChanged }
+    guard let receipt = record.receipt?.value, receipt.authorID.isEmpty || receipt.authorID == context.target.userID else { throw HostingReviewError.readbackRequired }
+    let binding = try reviewBinding(context, account: account)
+    let current = try await reviewContext(binding, number: context.target.requestNumber, account: account, token: token)
+    guard current.target == context.target else { throw HostingReviewError.targetChanged }
+    guard current.revision == record.revision.value else { throw HostingReviewError.revisionChanged }
+    let provider = account.instance.provider, operation = record.operation
+    let path = try reviewRequestPath(binding, number: context.target.requestNumber, account: account)
+    if operation.kind == .resolve {
+      guard provider == .gitlab, let thread = operation.threadID, let resolved = operation.resolved else { throw HostingReviewError.unsupported }
+      let result = try await readReviewReceipt(receipt, mutation: .resolve(threadID: thread, resolved: resolved), context: context, account: account, token: token)
+      try await reviewValidateReadbackTarget(context, account: account, token: token, requireRevision: true)
+      return result
+    }
+    if operation.kind == .requestReviewers {
+      let result = try await readRecoveredReviewerRequest(receipt, expectedIDs: operation.requestedReviewerIDs, context: context, account: account, token: token)
+      try await reviewValidateReadbackTarget(context, account: account, token: token, requireRevision: true)
+      return result
+    }
+    if provider == .gitlab, operation.kind == .review {
+      guard operation.expectedState == .approved else { throw HostingReviewError.unsupported }
+      return try await readReviewReceipt(receipt, mutation: .review(summary: "", decision: .approve, comments: [], pending: false), context: context, account: account, token: token)
+    }
+    let value: HostingJSON
+    switch operation.kind {
+    case .review, .submitPending:
+      guard provider == .github, operation.kind != .submitPending || operation.reviewID == receipt.id else { throw HostingReviewError.unsupported }
+      (value, _) = try await json(account, token: token, path: path + "/reviews/" + (try Self.reviewID(receipt.id)))
+    case .comment where provider != .gitlab:
+      value = try await reviewFindComment(binding, number: context.target.requestNumber, id: receipt.id, account: account, token: token)
+    case .inline where provider == .github, .reply where provider == .github:
+      value = try await reviewGithubComment(binding, number: context.target.requestNumber, id: receipt.id, account: account, token: token)
+      if operation.kind == .reply {
+        guard let parent = operation.parentCommentID, operation.threadID == parent,
+          value["in_reply_to_id"].string == parent else { throw HostingReviewError.readbackRequired }
+      }
+    case .reply where provider == .gitea:
+      guard let thread = operation.threadID, let parent = operation.parentCommentID else { throw HostingReviewError.readbackRequired }
+      value = try await reviewGiteaReply(path: path, reviewID: thread, parentID: parent, receiptID: receipt.id, account: account, token: token)
+    case .comment, .inline, .reply:
+      guard provider == .gitlab, let thread = receipt.threadID else { throw HostingReviewError.unsupported }
+      if operation.kind == .reply, operation.threadID != thread { throw HostingReviewError.readbackRequired }
+      let (discussion, _) = try await json(account, token: token, path: path + "/discussions/" + (try Self.reviewOpaqueID(thread)))
+      guard discussion["id"].string == thread,
+        let note = discussion["notes"].array.first(where: { $0["id"].string == receipt.id }) else { throw HostingReviewError.readbackRequired }
+      if operation.kind == .reply {
+        guard let parent = operation.parentCommentID, discussion["notes"].array.contains(where: { $0["id"].string == parent }) else { throw HostingReviewError.readbackRequired }
+      }
+      value = note
+    default: throw HostingReviewError.unsupported
+    }
+    let author = value[provider == .gitlab ? "author" : "user"]["id"].string
+    let sha = provider == .gitlab ? value["position"]["head_sha"].string : value["commit_id"].string
+    let state = HostingReviewState(provider: provider, value: value["state"].string)
+    guard value["id"].string == receipt.id, author == context.target.userID,
+      receipt.commitSHA.isEmpty || receipt.commitSHA == sha,
+      receipt.state == .unknown || receipt.state == state else { throw HostingReviewError.readbackRequired }
+    if operation.kind == .review || operation.kind == .submitPending {
+      guard operation.expectedState == state, sha == context.revision.headSHA else { throw HostingReviewError.readbackRequired }
+    }
+    if operation.kind == .inline {
+      guard sha == context.revision.headSHA else { throw HostingReviewError.readbackRequired }
+      if provider == .gitlab {
+        guard value["position"]["base_sha"].string == context.revision.baseSHA,
+          value["position"]["start_sha"].string == context.revision.startSHA else { throw HostingReviewError.readbackRequired }
+      }
+    }
+    try await reviewValidateReadbackTarget(context, account: account, token: token, requireRevision: true)
+    return HostingReviewReceipt(id: receipt.id, threadID: receipt.threadID, state: state, authorID: author,
+      commitSHA: sha, createdAt: value["created_at"].string)
   }
 
   private func reviewVerifyBatch(path: String, reviewID: String, expected: [HostingReviewDraftComment], context: HostingReviewContext,
@@ -373,6 +507,20 @@ extension HostingAPIClient {
     let comments = try await boundedGiteaReviewComments(path: path, reviewID: reviewID, account: account, token: token)
     guard let value = comments.first(where: { $0["id"].string == commentID }), value["pull_request_review_id"].string == reviewID else { throw HostingReviewError.targetChanged }
     return value
+  }
+  private func reviewGiteaReply(path: String, reviewID: String, parentID: String, receiptID: String, account: HostingAccount, token: HostingToken) async throws -> HostingJSON {
+    _ = try Self.reviewID(parentID); _ = try Self.reviewID(receiptID)
+    let comments = try await boundedGiteaReviewComments(path: path, reviewID: reviewID, account: account, token: token)
+    guard parentID != receiptID, let parent = comments.first(where: { $0["id"].string == parentID }),
+      let reply = comments.first(where: { $0["id"].string == receiptID }),
+      parent["pull_request_review_id"].string == reviewID, reply["pull_request_review_id"].string == reviewID,
+      !parent["path"].string.isEmpty, reply["path"].string == parent["path"].string,
+      reply["position"].int == parent["position"].int, reply["original_position"].int == parent["original_position"].int,
+      (parent["position"].int > 0) != (parent["original_position"].int > 0)
+    else { throw HostingReviewError.readbackRequired }
+    // Gitea has no in_reply_to_id. Its audited reply endpoint inherits the parent
+    // review, file and signed line; another line in that review is a different thread.
+    return reply
   }
   /// Gitea 1.27.3 returns this whole collection; page/limit are not implemented.
   /// Shared with the legacy detail reader so neither reader invents a second page.
@@ -453,14 +601,14 @@ extension HostingAPIClient {
         threadID = value["id"].string; guard let note = value["notes"].array.first else { throw HostingReviewError.resultUnknown }; item = note
       }
     }
-    let id = item["id"].string, author = item[provider == .gitlab ? "author" : "user"]["id"].string
-    guard !id.isEmpty, author == context.target.userID else { throw HostingReviewError.resultUnknown }
+    let id = item["id"].string, rawAuthor = item[provider == .gitlab ? "author" : "user"]["id"].string
+    // Keep a valid server ID even if the remaining POST payload is incomplete or
+    // inconsistent. Losing it would prevent safe read-only recovery after a crash.
+    guard (try? Self.reviewID(id)) != nil else { throw HostingReviewError.resultUnknown }
     let state = HostingReviewState(provider: provider, value: item["state"].string)
-    let sha = provider == .gitlab ? item["position"]["head_sha"].string : item["commit_id"].string
-    // A reply retains its original thread's commit, which can legitimately be outdated.
-    let requiresCurrentSHA: Bool
-    switch mutation { case .inline, .review, .submitPending: requiresCurrentSHA = true; default: requiresCurrentSHA = false }
-    if requiresCurrentSHA, !sha.isEmpty, sha != context.revision.headSHA { throw HostingReviewError.resultUnknown }
+    let rawSHA = provider == .gitlab ? item["position"]["head_sha"].string : item["commit_id"].string
+    let author = (try? Self.reviewID(rawAuthor)) == nil ? "" : rawAuthor
+    let sha = HostingReviewRevision.isSHA(rawSHA) ? rawSHA : ""
     return HostingReviewReceipt(id: id, threadID: threadID, state: state, authorID: author, commitSHA: sha,
       createdAt: item["submitted_at"].string.isEmpty ? item["created_at"].string : item["submitted_at"].string)
   }

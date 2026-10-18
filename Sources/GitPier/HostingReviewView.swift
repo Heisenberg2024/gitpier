@@ -270,7 +270,7 @@ struct HostingReviewStatus: View {
     case .unknown: store.text("Result Unknown — draft preserved", "结果未知，草稿已保留")
     case .notSent: store.text("Not Sent", "未发送")
     case .failed(let failure):
-      switch failure { case .review(let error): session.message(error); case .hosting(let error): session.message(error); case .cancelled: store.text("Cancelled before sending", "发送前已取消") }
+      switch failure { case .review(let error): session.message(error); case .hosting(let error): session.message(error); case .journal(let error): session.message(error); case .cancelled: store.text("Cancelled before sending", "发送前已取消") }
     }
   }
   private func statusTitle(_ status: HostingReviewSession.Status) -> String {

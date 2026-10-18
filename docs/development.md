@@ -1,5 +1,12 @@
 # Development
 
+## v1.6.1 stability candidate — 2026-10-18
+
+The baseline `main` cce72c4 passed all 772 Core tests (zero failures/skips, 263.890 s) and 10 release-tool gates. The final candidate passed 852 Core tests, 10 release gates, 418 native captures, Universal/DMG checks and an actual isolated 27 → 28 Sparkle install/relaunch with seven application data checks. See [the current validation report](v1.6.1-validation.md) for candidate results, exact evidence and authorization boundaries. No real hosted-service write or publication is implied by synthetic/native fixture success.
+
+简体中文：基线772项Core与10项发布门控已通过；最终候选版852项Core、418张原生截图、Universal/DMG及真实隔离27→28升级和7项应用数据检查已通过，详见[完整记录](v1.6.1-validation.md)，Fixture不能替代真实平台写入许可或正式发布。
+
+
 ## v1.6.0 code review validation
 
 Released **[1.6.0 (27)](https://github.com/Heisenberg2024/gitpier/releases/tag/v1.6.0)** at commit `d4e1657e2ff3afec31c5a9c7a541d670ccd173c8`. The local audit below preceded the Swift 6.1 CI fix and publication recorded at the end of this section. Provider capabilities, position safety, permission changes and deliberate fallbacks are specified in the [code review guide](code-review.md). The implementation reuses the v1.5.1 detail loader/cache, Diff parser and OAuth token manager. Real review writes require explicit maintainer authorization for named test requests. Existing v1.5.1 live results below do not establish v1.6.0 acceptance.
@@ -676,3 +683,11 @@ The released Universal DMG reuses the accepted candidate: **17,712,102 bytes**, 
 The 13 historical releases, 35 historical assets and 13 prior tags retained their recorded metadata/digests; all 34 local historical artifacts and 39 protected files remained unchanged. No application was installed, no production keys or credentials were exported, and publication adds no new real-platform OAuth, natural-expiry, Intel/macOS 14 hardware or production self-update evidence. Publication evidence is local in `.cache/releases/v1.5.1/release-20261017-204316/`.
 
 简体中文：v1.5.1（26）已于 **2026-10-17 21:22:49（Asia/Shanghai）**正式发布为 Latest，Release **415807601**，标签指向已通过 Main/Tag CI 的 `75b1552e88020bef2327c5e8eeb54be36978c746`。复用 209 项输入完全匹配的已验收 Universal 候选；原生产密钥签署、独立验签与等长篡改拒绝通过。先回读 Draft 三附件，再发布并验证公开三附件、canonical Latest Feed、正文、版本与标签。13 个历史版本、35 个远端历史附件、13 个旧标签及本地历史资产和保护文件保持；真实 OAuth、受控客户端过期刷新和模拟拒绝验收边界保持上文所述，本次发布未新增自然过期、Intel/macOS 14 真机或生产升级验收。
+
+## Review stability acceptance commands (v1.6.1)
+
+Use `Scripts/test.sh`, `python3 Scripts/test-release-tools.py`, `python3 Scripts/test-ci-validation.py` and `python3 Scripts/test-review-upgrade-fixture.py` for automated checks. After `UNIVERSAL=1 Scripts/build-app.sh`, keep GUI runs serial and use `Scripts/workspace-acceptance.sh full`, `Scripts/workspace-acceptance.sh review`, `Scripts/workspace-acceptance.sh review-stability` and `Scripts/workspace-acceptance.sh hosting-browser`, each with a fresh evidence directory. The wrapper copies and re-signs only a uniquely identified disposable application, uses temporary repositories/workspaces and removes its own preferences/copy. The `review` menu-entry subset still requires its documented explicit GUI-assisted Picker selection; automatic provider fixtures do not claim that interaction.
+
+For actual 27 → 28 updating, start `Scripts/serve-update-test.py` on a fresh ignored `.cache/update-acceptance/<name>/server`, then run `python3 Scripts/prepare-review-upgrade-test.py .cache/update-acceptance/<name> --old-app <real-1.6.0-app> --new-app dist/GitPier.app`. This rejects substituted versions, source code changes, existing outputs and unrelated server files; it records code-section hashes before/after test re-signing and replaces the callback scheme with an isolated test scheme. It creates a new private `/private/tmp/GitPier-update-acceptance-*` runtime. The installed old app belongs in the private runtime, outside Documents privacy-gated paths; the downloadable new app stays in the ignored fixture directory. Only a test flag, isolated identity/private path and explicit fixed synthetic marker can enable `HostingReviewUpgradeProbe`; production identity and environment variables alone cannot select it. The probe checks actual application Local Vault restoration and unknown-operation recovery, never unlocks Keychain or invokes provider APIs. An independent external data probe is separate evidence. Confirm installation/relaunch and all result files before reporting an update passed, then quit test apps, detach only owned mounts, stop the loopback server and remove the disposable keys/runtime.
+
+简体中文：上述命令分别检查自动化、隔离原生 UI 与真实 27→28 测试更新。GUI 串行运行，生产应用/偏好/Feed/更新私钥不参与；测试副本使用独立身份与 scheme。新应用探针只能由严格测试身份、私有路径和固定合成 marker 开启，只在应用内验证 Local Vault/元数据/Journal，绝不解锁 Keychain 或访问平台 API。外部解密、读取 Feed 或挂载镜像不能单独证明实际安装升级成功。

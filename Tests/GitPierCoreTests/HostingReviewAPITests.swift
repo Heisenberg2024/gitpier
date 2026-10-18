@@ -13,6 +13,8 @@ private actor ReviewAPIFixture: HostingTransport {
   var canApprove = true
   var version = "1.27.3"
   var approved = false
+  var requestedUsers: [Int] = []
+  func requested(_ ids: [Int]) { requestedUsers = ids }
   var reviewState = "COMMENTED"
   var reviewBodyJSON = "\"\""
   var headAfterReviewList: String?
@@ -72,7 +74,8 @@ private actor ReviewAPIFixture: HostingTransport {
     }
     else if path.hasSuffix("/reviews/77") { json = "{\"id\":77,\(user),\"body\":\(reviewBodyJSON),\"state\":\"\(reviewState)\",\"commit_id\":\"\(head)\"}" }
     else if path.hasSuffix("/pulls/7") || path.hasSuffix("/merge_requests/7") {
-      json = "{\"id\":\(requestID),\"number\":7,\"iid\":7,\"target_project_id\":\(targetRepositoryID),\"state\":\"\(state)\",\"author\":{\"id\":\(author)},\"user\":{\"id\":\(author)},\"sha\":\"\(head)\",\"head\":{\"sha\":\"\(head)\"},\"base\":{\"sha\":\"\(base)\",\"repo\":{\"id\":\(targetRepositoryID)}},\"diff_refs\":{\"head_sha\":\"\(head)\",\"base_sha\":\"\(base)\",\"start_sha\":\"\(start)\"}}"
+      let requestedJSON = "[" + requestedUsers.map { "{\"id\":\($0),\"login\":\"user\($0)\"}" }.joined(separator: ",") + "]"
+      json = "{\"id\":\(requestID),\"number\":7,\"iid\":7,\"target_project_id\":\(targetRepositoryID),\"state\":\"\(state)\",\"author\":{\"id\":\(author)},\"user\":{\"id\":\(author)},\"sha\":\"\(head)\",\"head\":{\"sha\":\"\(head)\"},\"base\":{\"sha\":\"\(base)\",\"repo\":{\"id\":\(targetRepositoryID)}},\"diff_refs\":{\"head_sha\":\"\(head)\",\"base_sha\":\"\(base)\",\"start_sha\":\"\(start)\"},\"requested_reviewers\":\(requestedJSON)}"
     } else if path.hasSuffix("/owner/repo") || path.hasSuffix("/owner%2Frepo") || path.hasSuffix("/projects/owner/repo") { json = "{\"id\":100,\"private\":\(privateRepository)}" }
     else if path.hasSuffix("/comments") || path.hasSuffix("/reviews") || path.hasSuffix("/discussions") {
       if path.hasSuffix("/reviews"), let value = headAfterReviewList { head = value; headAfterReviewList = nil }
@@ -566,4 +569,211 @@ private actor ReviewAPIFixture: HostingTransport {
     }
     let requests = await fixture.captured(); XCTAssertTrue(requests.allSatisfy { $0.httpMethod == "GET" }); XCTAssertFalse(requests.contains { $0.url!.path.hasSuffix("/reviews") })
   }
+
+  func testGithubReviewReadbackRequiresConfirmedDecisionInsteadOfReceiptAgreement() async throws {
+    for (decision, pending, returned) in [(HostingReviewDecision.approve, false, "COMMENTED"), (.requestChanges, false, "APPROVED"), (.comment, false, "PENDING"), (.comment, true, "COMMENTED")] {
+      let (api, fixture, account, binding, token) = try setup(), context = try await api.reviewContext(binding, number: 7, account: account, token: token)
+      let response = "{\"id\":77,\"user\":{\"id\":42},\"body\":\"summary\",\"state\":\"\(returned)\",\"commit_id\":\"\(sha)\"}"
+      await fixture.override("/reviews", json: response, method: "POST")
+      await fixture.override("/reviews/77", json: response)
+      let mutation = HostingReviewMutation.review(summary: "summary", decision: decision, comments: [], pending: pending)
+      let receipt = try await api.performReviewMutation(mutation, context: context, account: account, token: token)
+      XCTAssertEqual(receipt.id, "77")
+      await expect(.readbackRequired) { _ = try await api.readReviewReceipt(receipt, mutation: mutation, context: context, account: account, token: token) }
+      let requests = await fixture.captured(); XCTAssertEqual(requests.filter { $0.httpMethod == "POST" }.count, 1)
+    }
+  }
+  func testGithubReviewReadbackRequiresFullConfirmedCommitEvenWhenPOSTOmittedIt() async throws {
+    for commit in ["", "abc123", String(repeating: "d", count: 40)] {
+      let (api, fixture, account, binding, token) = try setup(), context = try await api.reviewContext(binding, number: 7, account: account, token: token)
+      let response = "{\"id\":77,\"user\":{\"id\":42},\"body\":\"summary\",\"state\":\"APPROVED\",\"commit_id\":\"\(commit)\"}"
+      await fixture.override("/reviews", json: response, method: "POST"); await fixture.override("/reviews/77", json: response)
+      let mutation = HostingReviewMutation.review(summary: "summary", decision: .approve, comments: [], pending: false)
+      let receipt = try await api.performReviewMutation(mutation, context: context, account: account, token: token)
+      XCTAssertEqual(receipt.id, "77")
+      await expect(.readbackRequired) { _ = try await api.readReviewReceipt(receipt, mutation: mutation, context: context, account: account, token: token) }
+    }
+  }
+  func testGithubIncompletePOSTReceiptKeepsIDForAuthoritativeReadback() async throws {
+    let (api, fixture, account, binding, token) = try setup(), context = try await api.reviewContext(binding, number: 7, account: account, token: token)
+    await fixture.override("/reviews", json: "{\"id\":77}", method: "POST")
+    await fixture.override("/reviews/77", json: "{\"id\":77,\"user\":{\"id\":42},\"body\":\"summary\",\"state\":\"APPROVED\",\"commit_id\":\"\(sha)\"}")
+    let mutation = HostingReviewMutation.review(summary: "summary", decision: .approve, comments: [], pending: false)
+    let receipt = try await api.performReviewMutation(mutation, context: context, account: account, token: token)
+    XCTAssertEqual(receipt.id, "77"); XCTAssertEqual(receipt.authorID, ""); XCTAssertEqual(receipt.state, .unknown); XCTAssertEqual(receipt.commitSHA, "")
+    let verified = try await api.readReviewReceipt(receipt, mutation: mutation, context: context, account: account, token: token)
+    XCTAssertEqual(verified.state, .approved); XCTAssertEqual(verified.commitSHA, sha); XCTAssertEqual(verified.authorID, "42")
+  }
+  func testGithubPOSTWithWrongAuthorRetainsReceiptButCannotVerify() async throws {
+    let (api, fixture, account, binding, token) = try setup(), context = try await api.reviewContext(binding, number: 7, account: account, token: token)
+    await fixture.override("/issues/7/comments", json: "{\"id\":77,\"user\":{\"id\":43},\"body\":\"saved\"}", method: "POST")
+    await fixture.override("/issues/7/comments", json: "[{\"id\":77,\"user\":{\"id\":43},\"body\":\"saved\"}]")
+    let mutation = HostingReviewMutation.comment(body: "saved"), receipt = try await api.performReviewMutation(mutation, context: context, account: account, token: token)
+    XCTAssertEqual(receipt.id, "77")
+    await expect(.readbackRequired) { _ = try await api.readReviewReceipt(receipt, mutation: mutation, context: context, account: account, token: token) }
+  }
+  func testGithubInvalidPOSTReceiptIDRemainsUnknownAfterSendingOnce() async throws {
+    let (api, fixture, account, binding, token) = try setup(), context = try await api.reviewContext(binding, number: 7, account: account, token: token)
+    await fixture.override("/issues/7/comments", json: "{\"id\":\"../77\",\"user\":{\"id\":42}}", method: "POST")
+    await expect(.resultUnknown) { _ = try await api.performReviewMutation(.comment(body: "saved"), context: context, account: account, token: token) }
+    let requests = await fixture.captured(); XCTAssertEqual(requests.filter { $0.httpMethod == "POST" }.count, 1)
+  }
+  func testGithubPendingSubmissionReadbackRequiresConfirmedDecision() async throws {
+    let (api, fixture, account, binding, token) = try setup(), context = try await api.reviewContext(binding, number: 7, account: account, token: token)
+    await fixture.override("/reviews/77", json: "{\"id\":77,\"user\":{\"id\":42},\"body\":\"summary\",\"state\":\"COMMENTED\",\"commit_id\":\"\(sha)\"}")
+    let receipt = HostingReviewReceipt(id: "77", state: .commented, authorID: "42", commitSHA: sha)
+    await expect(.readbackRequired) { _ = try await api.readReviewReceipt(receipt, mutation: .submitPending(reviewID: "77", summary: "summary", decision: .approve), context: context, account: account, token: token) }
+  }
+  func testCommentReadbackRejectsReusedRepositoryPathOrRequestNumber() async throws {
+    for provider in HostingProvider.allCases {
+      for field in ["repository", "request"] {
+        let (api, fixture, account, binding, token) = try setup(provider), context = try await api.reviewContext(binding, number: 7, account: account, token: token)
+        if field == "repository" { await fixture.override("/owner/repo", json: "{\"id\":101}"); await fixture.override("/projects/owner/repo", json: "{\"id\":101}") }
+        else { await fixture.override(provider == .gitlab ? "/merge_requests/7" : "/pulls/7", json: "{\"id\":201,\"number\":7,\"iid\":7,\"target_project_id\":100,\"base\":{\"repo\":{\"id\":100}}}") }
+        await expect(.targetChanged) { _ = try await api.readReviewReceipt(HostingReviewReceipt(id: "77", authorID: "42"), mutation: .comment(body: "saved"), context: context, account: account, token: token) }
+        let requests = await fixture.captured(); XCTAssertTrue(requests.allSatisfy { $0.httpMethod == "GET" })
+      }
+    }
+  }
+  func testGitlabReplyReadbackCannotUseAnotherReceiptThread() async throws {
+    let (api, _, account, binding, token) = try setup(.gitlab), context = try await api.reviewContext(binding, number: 7, account: account, token: token)
+    let receipt = HostingReviewReceipt(id: "77", threadID: "anotherThread", authorID: "42")
+    await expect(.readbackRequired) { _ = try await api.readReviewReceipt(receipt, mutation: .reply(threadID: "expectedThread", commentID: "5", body: "saved"), context: context, account: account, token: token) }
+  }
+  func testGitlabUnresolveReadbackRequiresExplicitBooleanAndResolvableRoot() async throws {
+    for fields in ["\"resolvable\":true", "\"resolved\":false", "\"resolvable\":true,\"resolved\":\"false\""] {
+      let (api, fixture, account, binding, token) = try setup(.gitlab), context = try await api.reviewContext(binding, number: 7, account: account, token: token)
+      await fixture.override("/discussions/threadA", json: "{\"id\":\"threadA\",\"notes\":[{\"id\":77,\(fields)}]}")
+      let receipt = HostingReviewReceipt(id: "threadA", threadID: "threadA", authorID: "42")
+      await expect(.readbackRequired) { _ = try await api.readReviewReceipt(receipt, mutation: .resolve(threadID: "threadA", resolved: false), context: context, account: account, token: token) }
+    }
+  }
+
+
+  private func recoveredRecord(_ context: HostingReviewContext, mutation: HostingReviewMutation, receipt: HostingReviewReceipt? = nil) throws -> HostingReviewOperationRecord {
+    let item = HostingReviewSubmissionItem(mutation: mutation), confirmation = try HostingReviewConfirmation(context: context, items: [item])
+    var record = HostingReviewOperationRecord(confirmation: confirmation, item: item, now: Date())
+    record.update(.resultUnknown, receipt: receipt); return record
+  }
+  func testRecoveredCommentReadsKnownIDWithoutBodyOrChangingUnknownState() async throws {
+    for provider in [HostingProvider.github, .gitea] {
+      let (api, fixture, account, binding, token) = try setup(provider), context = try await api.reviewContext(binding, number: 7, account: account, token: token)
+      await fixture.override("/issues/7/comments", json: "[{\"id\":77,\"user\":{\"id\":42},\"body\":\"not stored in journal\"}]")
+      let record = try recoveredRecord(context, mutation: .comment(body: "private draft absent after restart"), receipt: HostingReviewReceipt(id: "77", authorID: ""))
+      let value = try await api.readRecoveredReviewReceipt(record: record, context: context, account: account, token: token)
+      XCTAssertEqual(value.id, "77"); XCTAssertEqual(value.authorID, "42"); XCTAssertEqual(record.state, .resultUnknown)
+      let requests = await fixture.captured(); XCTAssertTrue(requests.allSatisfy { $0.httpMethod == "GET" })
+      let data = try JSONEncoder().encode(record); XCTAssertFalse(String(decoding: data, as: UTF8.self).contains("private draft"))
+    }
+  }
+  func testRecoveredOperationWithoutReceiptRefusesNetworkOrResend() async throws {
+    let (api, fixture, account, binding, token) = try setup(), context = try await api.reviewContext(binding, number: 7, account: account, token: token)
+    let record = try recoveredRecord(context, mutation: .comment(body: "unknown")), count = await fixture.captured().count
+    await expect(.readbackRequired) { _ = try await api.readRecoveredReviewReceipt(record: record, context: context, account: account, token: token) }
+    let after = await fixture.captured().count; XCTAssertEqual(after, count)
+  }
+  func testRecoveredReceiptRejectsDifferentAccountAndRevisionBeforeNetwork() async throws {
+    let (api, fixture, account, binding, token) = try setup(), context = try await api.reviewContext(binding, number: 7, account: account, token: token)
+    let record = try recoveredRecord(context, mutation: .comment(body: "unknown"), receipt: HostingReviewReceipt(id: "77", authorID: "42"))
+    let target = context.target
+    let another = HostingReviewContext(target: HostingReviewTarget(instance: target.instance, accountID: UUID(), userID: target.userID, repository: target.repository, repositoryID: target.repositoryID, requestNumber: target.requestNumber, requestID: target.requestID), revision: context.revision, capabilities: context.capabilities, state: context.state, authorID: context.authorID)
+    let changed = HostingReviewContext(target: target, revision: HostingReviewRevision(headSHA: String(repeating: "d", count: 40)), capabilities: context.capabilities, state: context.state, authorID: context.authorID)
+    let count = await fixture.captured().count
+    await expect(.targetChanged) { _ = try await api.readRecoveredReviewReceipt(record: record, context: another, account: account, token: token) }
+    await expect(.revisionChanged) { _ = try await api.readRecoveredReviewReceipt(record: record, context: changed, account: account, token: token) }
+    let after = await fixture.captured().count; XCTAssertEqual(after, count)
+  }
+  func testRecoveredReviewRequiresConfirmedStateAndCurrentFullSHA() async throws {
+    for state in ["COMMENTED", "APPROVED"] {
+      let (api, fixture, account, binding, token) = try setup(), context = try await api.reviewContext(binding, number: 7, account: account, token: token)
+      let record = try recoveredRecord(context, mutation: .review(summary: "not persisted", decision: .approve, comments: [], pending: false), receipt: HostingReviewReceipt(id: "77", authorID: ""))
+      await fixture.override("/reviews/77", json: "{\"id\":77,\"user\":{\"id\":42},\"state\":\"\(state)\",\"commit_id\":\"\(sha)\"}")
+      if state == "APPROVED" {
+        let value = try await api.readRecoveredReviewReceipt(record: record, context: context, account: account, token: token)
+        XCTAssertEqual(value.state, .approved); XCTAssertEqual(record.state, .resultUnknown)
+      } else {
+        await expect(.readbackRequired) { _ = try await api.readRecoveredReviewReceipt(record: record, context: context, account: account, token: token) }
+      }
+      let requests = await fixture.captured(); XCTAssertTrue(requests.allSatisfy { $0.httpMethod == "GET" })
+    }
+  }
+  func testRecoveredReceiptCannotReuseContextAfterServerHeadChanges() async throws {
+    let (api, fixture, account, binding, token) = try setup(), context = try await api.reviewContext(binding, number: 7, account: account, token: token)
+    let record = try recoveredRecord(context, mutation: .comment(body: "unknown"), receipt: HostingReviewReceipt(id: "77", authorID: "42"))
+    await fixture.configure(head: String(repeating: "d", count: 40))
+    await expect(.revisionChanged) { _ = try await api.readRecoveredReviewReceipt(record: record, context: context, account: account, token: token) }
+  }
+  func testRecoveredGitlabInlineRequiresAllThreeSHAsWithoutInventingAnchor() async throws {
+    for base in [String(repeating: "b", count: 40), String(repeating: "d", count: 40)] {
+      let (api, fixture, account, binding, token) = try setup(.gitlab), context = try await api.reviewContext(binding, number: 7, account: account, token: token)
+      let record = try recoveredRecord(context, mutation: .inline(body: "not persisted", anchor: anchor(context, side: .new, kind: .addition)), receipt: HostingReviewReceipt(id: "77", threadID: "threadA", authorID: "42"))
+      await fixture.override("/discussions/threadA", json: "{\"id\":\"threadA\",\"notes\":[{\"id\":77,\"author\":{\"id\":42},\"position\":{\"head_sha\":\"\(sha)\",\"base_sha\":\"\(base)\",\"start_sha\":\"\(context.revision.startSHA)\"}}]}")
+      if base == context.revision.baseSHA {
+        let value = try await api.readRecoveredReviewReceipt(record: record, context: context, account: account, token: token)
+        XCTAssertEqual(value.commitSHA, sha); XCTAssertEqual(record.state, .resultUnknown)
+      } else { await expect(.readbackRequired) { _ = try await api.readRecoveredReviewReceipt(record: record, context: context, account: account, token: token) } }
+    }
+  }
+  func testGiteaReplyReadbackRequiresParentFileAndSideCoordinates() async throws {
+    for (path, position, oldPosition, valid) in [("A.swift", 5, 0, true), ("Other.swift", 5, 0, false), ("A.swift", 6, 0, false), ("A.swift", 0, 5, false), ("A.swift", 5, 5, false)] {
+      let (api, fixture, account, binding, token) = try setup(.gitea), context = try await api.reviewContext(binding, number: 7, account: account, token: token)
+      await fixture.override("/reviews/8/comments", json: "[{\"id\":5,\"pull_request_review_id\":8,\"path\":\"A.swift\",\"position\":5,\"original_position\":0},{\"id\":77,\"pull_request_review_id\":8,\"user\":{\"id\":42},\"body\":\"saved\",\"path\":\"\(path)\",\"position\":\(position),\"original_position\":\(oldPosition)}]")
+      let mutation = HostingReviewMutation.reply(threadID: "8", commentID: "5", body: "saved"), receipt = HostingReviewReceipt(id: "77", authorID: "42")
+      let record = try recoveredRecord(context, mutation: mutation, receipt: receipt)
+      if valid {
+        let full = try await api.readReviewReceipt(receipt, mutation: mutation, context: context, account: account, token: token)
+        let metadata = try await api.readRecoveredReviewReceipt(record: record, context: context, account: account, token: token)
+        XCTAssertEqual(full.id, "77"); XCTAssertEqual(metadata.id, "77")
+      } else {
+        await expect(.readbackRequired) { _ = try await api.readReviewReceipt(receipt, mutation: mutation, context: context, account: account, token: token) }
+        await expect(.readbackRequired) { _ = try await api.readRecoveredReviewReceipt(record: record, context: context, account: account, token: token) }
+      }
+    }
+  }
+
+
+  func testRecoveredReviewerRequestRequiresTheEntireKnownSet() async throws {
+    for ids in [[500, 501], [501]] {
+      let (api, fixture, account, binding, token) = try setup(), context = try await api.reviewContext(binding, number: 7, account: account, token: token)
+      let selection = HostingReviewerSelection(context: context, reviewers: [HostingReviewer(id: "501", login: "user501")])
+      let receipt = HostingReviewReceipt(id: context.target.requestID, authorID: "42", commitSHA: sha, requestedReviewerIDs: ["500", "501"])
+      let record = try recoveredRecord(context, mutation: .requestReviewers(selection), receipt: receipt)
+      await fixture.requested(ids)
+      if ids.count == 2 {
+        let result = try await api.readRecoveredReviewReceipt(record: record, context: context, account: account, token: token)
+        XCTAssertEqual(result.requestedReviewerIDs, ["500", "501"]); XCTAssertEqual(record.state, .resultUnknown)
+      } else { await expect(.readbackRequired) { _ = try await api.readRecoveredReviewReceipt(record: record, context: context, account: account, token: token) } }
+      let requests = await fixture.captured(); XCTAssertTrue(requests.allSatisfy { $0.httpMethod == "GET" })
+    }
+  }
+
+
+  func testGithubReviewUpdatedAfterPOSTCannotVerifyOldReceipt() async throws {
+    let (api, fixture, account, binding, token) = try setup(), context = try await api.reviewContext(binding, number: 7, account: account, token: token)
+    let mutation = HostingReviewMutation.review(summary: "saved", decision: .approve, comments: [], pending: false)
+    let receipt = try await api.performReviewMutation(mutation, context: context, account: account, token: token)
+    await fixture.override("/reviews/77", json: "{\"id\":77,\"user\":{\"id\":42},\"body\":\"saved\",\"state\":\"APPROVED\",\"commit_id\":\"\(sha)\"}")
+    await fixture.configure(head: String(repeating: "d", count: 40))
+    await expect(.revisionChanged) { _ = try await api.readReviewReceipt(receipt, mutation: mutation, context: context, account: account, token: token) }
+    XCTAssertEqual(receipt.id, "77"); let requests = await fixture.captured(); XCTAssertEqual(requests.filter { $0.httpMethod == "POST" }.count, 1)
+  }
+  func testInlineUpdatedAfterPOSTCannotVerifyOldAnchor() async throws {
+    for provider in [HostingProvider.github, .gitlab] {
+      let (api, fixture, account, binding, token) = try setup(provider), context = try await api.reviewContext(binding, number: 7, account: account, token: token)
+      let anchor = try anchor(context, side: .new, kind: .addition), mutation = HostingReviewMutation.inline(body: "saved", anchor: anchor)
+      let receipt: HostingReviewReceipt
+      if provider == .github {
+        await fixture.override("/pulls/comments/77", json: "{\"id\":77,\"user\":{\"id\":42},\"body\":\"saved\",\"path\":\"A.swift\",\"side\":\"RIGHT\",\"line\":5,\"commit_id\":\"\(sha)\",\"pull_request_url\":\"https://api.github.com/repos/owner/repo/pulls/7\"}")
+        receipt = HostingReviewReceipt(id: "77", authorID: "42", commitSHA: sha)
+      } else {
+        let position = "\"position_type\":\"text\",\"head_sha\":\"\(sha)\",\"base_sha\":\"\(context.revision.baseSHA)\",\"start_sha\":\"\(context.revision.startSHA)\",\"old_path\":\"A.swift\",\"new_path\":\"A.swift\",\"new_line\":5"
+        await fixture.override("/discussions/threadA", json: "{\"id\":\"threadA\",\"notes\":[{\"id\":77,\"author\":{\"id\":42},\"body\":\"saved\",\"position\":{\(position)}}]}")
+        receipt = HostingReviewReceipt(id: "77", threadID: "threadA", authorID: "42", commitSHA: sha)
+      }
+      await fixture.configure(head: String(repeating: "d", count: 40))
+      await expect(.revisionChanged) { _ = try await api.readReviewReceipt(receipt, mutation: mutation, context: context, account: account, token: token) }
+      let requests = await fixture.captured(); XCTAssertTrue(requests.allSatisfy { $0.httpMethod == "GET" })
+    }
+  }
+
 }

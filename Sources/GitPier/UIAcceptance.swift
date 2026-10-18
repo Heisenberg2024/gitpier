@@ -114,6 +114,13 @@ import SwiftUI
           print("Native review fixture acceptance passed (synthetic HTTP only).")
           exit(0)
         }
+        if ProcessInfo.processInfo.environment["GITPIER_UI_ACCEPTANCE_SCOPE"] == "review-stability" {
+          window.close()
+          try await verifyHostingReviewStability(root: root, output: output)
+          store.shutdown()
+          print("Native review recovery/lifecycle acceptance passed (synthetic HTTP only).")
+          exit(0)
+        }
         if ProcessInfo.processInfo.environment["GITPIER_UI_ACCEPTANCE_SCOPE"] == "workspace-performance" {
           store.shutdown(); window.close()
           try await verifyWorkspacePerformance(output: output)

@@ -141,6 +141,25 @@ extension HostingAPIClient {
     return HostingReviewReceipt(id: receipt.id, authorID: receipt.authorID, commitSHA: latest.revision.headSHA, requestedReviewerIDs: ids.sorted())
   }
 
+  /// Journal recovery has stable user IDs, never reconstructed reviewer logins.
+  /// This proves the current requested set only; it cannot identify which client
+  /// added a reviewer or replace explicit acknowledgement of an unknown operation.
+  func readRecoveredReviewerRequest(_ receipt: HostingReviewReceipt, expectedIDs: [String], context: HostingReviewContext,
+    account: HostingAccount, token: HostingToken) async throws -> HostingReviewReceipt {
+    let binding = try reviewerBinding(context, account: account)
+    guard account.instance.provider != .gitlab else { throw HostingReviewError.unsupported }
+    guard !expectedIDs.isEmpty, receipt.id == context.target.requestID, receipt.authorID == context.target.userID,
+      receipt.commitSHA == context.revision.headSHA,
+      Set(receipt.requestedReviewerIDs).isSuperset(of: expectedIDs) else { throw HostingReviewError.readbackRequired }
+    let path = try reviewerRequestPath(binding, number: context.target.requestNumber, account: account)
+    let (snapshot, _) = try await json(account, token: token, path: path)
+    try Self.reviewerValidateSnapshot(snapshot, context: context)
+    let users = try Self.reviewerUsers(snapshot["requested_reviewers"], provider: account.instance.provider)
+    let ids = Set(users.map(\.id))
+    guard ids.isSuperset(of: receipt.requestedReviewerIDs) else { throw HostingReviewError.readbackRequired }
+    return HostingReviewReceipt(id: receipt.id, authorID: receipt.authorID, commitSHA: context.revision.headSHA, requestedReviewerIDs: ids.sorted())
+  }
+
   private func reviewerRequestPath(_ binding: RepositoryHostingBinding, number: Int, account: HostingAccount) throws -> String {
     try account.validateCredentialContext()
     guard binding.accountID == account.id, number > 0 else { throw HostingReviewError.targetChanged }

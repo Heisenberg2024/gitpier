@@ -1,6 +1,6 @@
 # Architecture and security boundaries
 
-## Review collaboration (v1.6.0 development)
+## Review collaboration (v1.6.0 released; v1.6.1 stability candidate)
 
 `HostingReviewModels.swift` adds typed provider capabilities, stable remote target/revision identities, code anchors, discussion comments/threads and memory-only review drafts. `HostingReviewAPI.swift` adapts native provider semantics using the existing HTTPS boundary. `HostingReviewSubmission.swift` owns immutable confirmation tickets, per-target serialization across windows, preflight revalidation, stable-ID readback and independent partial/unknown outcomes. These modules never enter the Git write actor or acquire its queue.
 
@@ -11,6 +11,20 @@ Native review sessions retain drafts across detail reconstruction. Timeline page
 `HostingDisconnectionIntentStore` persists one private file per disconnected account adjacent to hosting metadata. It is written before the first asynchronous suspension, overlaid at metadata load and removed only after main metadata has committed the disconnected/cleaned state. Cleanup progress merges monotonically; failed persistence retains a recovery row, and total persistence failure pauses credential deletion while revoking the in-memory session.
 
 GitPier is a native macOS application built as a SwiftPM executable. `GitPierCore` contains models, status/diff parsing, process execution, Git operations, persistence, Keychain access and FSEvents watching. SwiftUI coordinates views; AppKit provides the commit text editor, virtual Diff table and SwiftTerm PTY view. `PTYSupport` contains bounded native process/session cleanup.
+
+## Review operation recovery (v1.6.1)
+
+`HostingReviewOperationJournal` is a synchronous, bounded, versioned DTO store called inside the existing `HostingReviewSubmissionCoordinator` actor. Per-confirmation batches retain all items without bodies or anchors. The coordinator persists a batch and each item's possibly-sent transition before invoking the write closure, then checkpoints the receipt before readback and the verified result after strict validation. Failure to save an intent prevents sending. Failure to save a receipt/final state preserves the earlier uncertain barrier. Descriptor-relative private IO checks file ownership/mode/type and synchronizes same-device parent namespaces, then requires file fsync → atomic rename → checked directory fsync → macOS F_FULLFSYNC. These are journal-only opt-ins to the existing private-directory helper; default credential/disconnect writes retain their behavior. Unsupported barriers fail closed. Checked enumeration distinguishes an empty store from an unreadable one. Unknown states never expire or automatically replay.
+
+`AppStore` injects a journal beside its workspace into the single review registry shared across windows. `HostingReviewRecovery` shows startup disk recovery without contacting any platform. User-triggered receipt inspection uses an explicitly chosen existing binding, current account and fresh stable target/revision checks; it yields metadata evidence and retains the barrier because bodies/anchors were never persisted. Manual acknowledgement is durable and requires a separate UI confirmation. Disconnect permanently invalidates the account's old sessions before suspension, clears private memory and prevents late results from repopulating it. The journal does not participate in Vault/Keychain restoration or the Git write queue.
+
+The coordinator overlays live unresolved results and failed acknowledgements on disk snapshots when a replacement succeeded but its final durability barrier failed. Completed-history cleanup excludes those batches. A successful explicit acknowledgement retry, or complete live receipt reconciliation with a successful verified checkpoint, clears only the corresponding pending barrier.
+
+Disconnect and registry shutdown also discard cached coordinator reports and revision contexts, retaining only stable consumed-confirmation/unknown item IDs. A late task cannot repopulate the private report cache, restart a discarded submission or erase its durable uncertainty. Other accounts and new confirmations remain independent. An already running task or HTTP request can own its payload until cancellation/response settles; this is cache lifecycle control, not secure memory erasure. Explicit draft discard clears obsolete composer/confirmation snapshots as well.
+
+Write exclusion uses the remote provider/instance, stable remote user, repository ID and request ID. Reconnecting the same remote user with a new local account UUID cannot bypass an active/unknown operation. Credential access, recovery receipt inspection, per-account listing, acknowledgement and payload cleanup continue to require the original local UUID. Different remote users/instances remain independent; acknowledging one local identity does not dismiss another identity's unresolved record.
+
+简体中文：日志复用既有提交协调器，在逐条发送前持久化最小意图，取得结果 ID 后和完整回读成功后分别检查点；持久化失败不能授权发送或消除未知保护。跨窗口共用一个协调器；启动仅恢复本机元数据，平台回查由用户主动选择关联并严格核实稳定身份。正文/位置不落盘，回查只是元数据证据，仍需人工核实。断开同步永久失效旧会话，拒绝迟到响应恢复私有状态，与凭证和 Git 队列独立。
 
 ## Ownership and state
 

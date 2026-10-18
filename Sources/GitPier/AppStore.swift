@@ -26,7 +26,7 @@ import UserNotifications
   lazy var updates = UpdateManager(store: self)
   lazy var workspace = WorkspaceModel(store: self)
   lazy var hosting = HostingModel(store: self)
-  let reviewSessions = HostingReviewSessionRegistry()
+  let reviewSessions: HostingReviewSessionRegistry
   @Published var hostingReviewDestination: HostingReviewDashboardItem?
   var hasRunningGitOperations: Bool { hasBlockingGitOperations || workspace.automaticallyFetching }
   var hasBlockingGitOperations: Bool { cloning || workspace.manuallyFetching || models.values.contains { $0.busy || $0.committing } }
@@ -56,6 +56,7 @@ import UserNotifications
   var resolvedColorScheme: ColorScheme { colorScheme ?? systemColorScheme }
   init(persistence: ConfigurationStore = ConfigurationStore()) {
     self.persistence = persistence
+    reviewSessions = HostingReviewSessionRegistry(journalURL: persistence.url.deletingPathExtension().appendingPathExtension("review-operations"))
     do { configuration = try persistence.load() } catch {
       configuration = WorkspaceConfiguration()
       canSave = false
@@ -96,6 +97,7 @@ import UserNotifications
       models[record.id] = RepositoryModel(record: record, store: self)
     }
     workspace.start()
+    Task { await reviewSessions.refreshRecovery() }
     if !showDashboard, let selectedID, let model = models[selectedID] { Task { await model.activate() } }
   }
   private func configureFrameworkLanguage() {

@@ -27,9 +27,9 @@ private actor ReviewInterleaveIdentity {
 private enum ReviewInterleaveFixture {
   static let sha = String(repeating: "a", count: 40)
   static func context(_ provider: HostingProvider = .github, accountID: UUID = UUID(), repository: String = "owner/repo",
-    number: Int = 7, head: String = sha) throws -> HostingReviewContext {
+    number: Int = 7, head: String = sha, userID: String = "42") throws -> HostingReviewContext {
     let instance = try HostingInstance(provider: provider, url: provider == .github ? "https://github.com" : "https://gitlab.example.invalid")
-    return HostingReviewContext(target: HostingReviewTarget(instance: instance, accountID: accountID, userID: "42",
+    return HostingReviewContext(target: HostingReviewTarget(instance: instance, accountID: accountID, userID: userID,
       repository: repository, repositoryID: "repo-" + repository, requestNumber: number, requestID: "request-\(number)"),
       revision: HostingReviewRevision(headSHA: head, baseSHA: String(repeating: "b", count: 40),
         startSHA: String(repeating: "c", count: 40), diffID: "version-1"),
@@ -123,7 +123,7 @@ private enum ReviewInterleaveFixture {
       XCTFail("An unknown result must block a differently cased repository path")
     } catch { XCTAssertEqual(error as? HostingReviewError, .resultUnknown) }
     let sent = await count.get(); XCTAssertEqual(sent, 1)
-    await coordinator.acknowledgePlatformCheck(alias.target)
+    try await coordinator.acknowledgePlatformCheck(alias.target)
     let originalBlocked = await coordinator.isBlocked(context.target), aliasBlocked = await coordinator.isBlocked(alias.target)
     XCTAssertFalse(originalBlocked); XCTAssertFalse(aliasBlocked)
     do {
@@ -348,7 +348,7 @@ private enum ReviewInterleaveFixture {
     let old = try ReviewInterleaveFixture.confirmation(context), recent = try ReviewInterleaveFixture.confirmation(context)
     _ = try await coordinator.submit(old, current: { context }, validate: {}, validateAnchor: { _ in },
       send: { _, context in ReviewInterleaveFixture.receipt(context) }, readback: { _, _, _ in throw HostingError.networkFailure })
-    await coordinator.acknowledgePlatformCheck(context.target)
+    try await coordinator.acknowledgePlatformCheck(context.target)
     _ = try await coordinator.submit(recent, current: { context }, validate: {}, validateAnchor: { _ in },
       send: { _, _ in throw HostingError.networkFailure }, readback: { receipt, _, _ in receipt })
     let rechecked = try await coordinator.reconcile(old.id, validate: {}, readback: { receipt, _, _ in receipt })
@@ -422,7 +422,7 @@ private enum ReviewInterleaveFixture {
 
   func testUnknownAttemptDoesNotBlockAnotherAccountOrRequest() async throws {
     let context = try ReviewInterleaveFixture.context(), sameAccountOtherRequest = try ReviewInterleaveFixture.context(accountID: context.target.accountID, number: 8)
-    let anotherAccount = try ReviewInterleaveFixture.context(), coordinator = HostingReviewSubmissionCoordinator()
+    let anotherAccount = try ReviewInterleaveFixture.context(userID: "43"), coordinator = HostingReviewSubmissionCoordinator()
     _ = try await coordinator.submit(ReviewInterleaveFixture.confirmation(context), current: { context }, validate: {}, validateAnchor: { _ in },
       send: { _, _ in throw HostingError.networkFailure }, readback: { receipt, _, _ in receipt })
     for other in [sameAccountOtherRequest, anotherAccount] {

@@ -1,6 +1,19 @@
 # Changelog
 
-## Unreleased
+## 1.6.1 — Unreleased
+
+### Review write stability (28)
+
+- Persist minimal, versioned operation intent before each confirmed remote review write. Retain per-item known receipts, verified outcomes and unsent items; recover possibly sent writes as Unknown after restart, with no automatic replay.
+- Add a visible recovery panel, read-only inspection of known receipts, separately confirmed manual acknowledgement and explicit completed-history cleanup. Comment bodies, private code, Diff anchors and body hashes are never stored in this journal.
+- Confirm account-wide review discard before disconnect, cancel pending work and prevent late responses from restoring private drafts or old sessions across windows.
+- Require the confirmed review decision, complete commit SHA and stable repository/request identity during readback. Preserve an incomplete POST receipt for later checking. Keep unsafe Gitea reviews and unverified GitLab Request Changes in the browser.
+- Add isolated data/update compatibility fixtures for actual v1.6.0 (27) to v1.6.1 (28). Validation and real-service authorization boundaries are recorded in [v1.6.1 validation](docs/v1.6.1-validation.md).
+- 每条确认后的远端审查写入前持久化最小版本化意图，逐项保留已知结果 ID、验证成功和未发送状态；重启后将可能已发送的操作恢复为未知，不自动重发。
+- 新增可见恢复面板、已知结果只读回查、单独确认后的人工核实与已完成日志主动清理；日志不保存评论正文、私有代码、Diff 位置或正文哈希。
+- 断开前明确确认该账号所有窗口的审查丢弃，取消等待中的任务，阻止迟到响应恢复私有草稿或旧会话。
+- 回读严格核实确认的审查决定、完整提交 SHA 及稳定仓库/请求身份；保留不完整 POST 结果 ID 供核查。Gitea 不安全审查与 GitLab 未验证的 Request Changes 继续使用网页。
+- 新增真实 v1.6.0（27）到 v1.6.1（28）的隔离数据/更新兼容夹具；[验收记录](docs/v1.6.1-validation.md)区分自动化、真实平台与授权边界。
 
 ## 1.6.0 — 2026-10-18
 

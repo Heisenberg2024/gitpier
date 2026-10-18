@@ -85,6 +85,10 @@ Request Overview, Commits, Files, Reviews and CI load independently on demand, w
 
 Released [v1.6.0](https://github.com/Heisenberg2024/gitpier/releases/tag/v1.6.0) (build 27) adds confirmed comments, threaded replies and review drafts using each provider's native API semantics. Targets and line anchors bind to the exact account, repository and commit; unknown results preserve drafts and block automatic resubmission. GitHub review decisions and multiline comments, GitLab Discussions/Approval, thread resolution and approval rules, and Gitea's verified capabilities are documented in the [code review guide](docs/code-review.md). It also adds additive GitHub/Gitea reviewer requests and on-demand inbox/current-branch shortcuts. Local comparison explicitly uses this Mac's branch and remote-tracking snapshots. Gitea formal reviews and unsafe or unverified operations retain browser fallbacks. CI and fixture acceptance are recorded separately from real-service write acceptance in the [development guide](docs/development.md#v160-publication--2026-10-18).
 
+## Review stability — v1.6.1 (Unreleased)
+
+The v1.6.1 (28) candidate saves minimal operation intent before confirmed review writes and keeps unknown results visible across restart. Bodies and code are not saved; reopening never resends a request. Inspect known receipts read-only, check the platform and explicitly acknowledge the result before a new preview. Disconnect confirms draft loss across windows. See [recovery and platform limits](docs/code-review.md) and [validation status](docs/v1.6.1-validation.md). This candidate is not a published release.
+
 ## Screenshots
 
 

@@ -162,10 +162,17 @@ struct HostingSettingsView: View {
     .alert(store.text("Disconnect Account?", "断开账号连接？"), isPresented: Binding(get: { disconnecting != nil }, set: { if !$0 { disconnecting = nil } })) {
       Button(store.text("Cancel", "取消"), role: .cancel) { disconnecting = nil }
       Button(store.text("Disconnect", "断开连接")) {
-        if let account = disconnecting { Task { do { try await hosting.disconnect(account) } catch { hosting.error = hosting.message(error) } } }
+        if let account = disconnecting { Task { do { try await hosting.disconnect(account, discardReviewWork: true) } catch { hosting.error = hosting.message(error) } } }
         disconnecting = nil
       }
-    } message: { Text(store.text("Stop this account's session and API requests, then remove its hosting credential copies and bindings. Copies whose deletion is denied remain listed for explicit cleanup. The platform OAuth grant and Git credentials remain available.", "先停止此账号的会话和 API 请求，再删除托管凭证副本及关联。删除被拒绝的副本保留在列表中，供主动清理。平台 OAuth 授权与 Git 凭证继续保留。")) }
+    } message: { Text(disconnectionMessage) }
+  }
+  private var disconnectionMessage: String {
+    let base = store.text("Stop this account's session and API requests, then remove its hosting credential copies and bindings. Copies whose deletion is denied remain listed for explicit cleanup. The platform OAuth grant and Git credentials remain available.", "先停止此账号的会话和 API 请求，再删除托管凭证副本及关联。删除被拒绝的副本保留在列表中，供主动清理。平台 OAuth 授权与 Git 凭证继续保留。")
+    guard let account = disconnecting else { return base }
+    let pending = store.reviewSessions.unfinished(accountID: account.id)
+    let details = pending.map(\.displayName).joined(separator: "\n")
+    return base + "\n\n" + store.text("Continuing discards this account's review drafts in every window and cancels waiting requests. A request already sent may still succeed. Unresolved operation metadata remains in the journal for manual checking.", "继续将丢弃所有窗口中此账号的审查草稿，并取消等待中的请求。已经发送的请求仍可能成功；待核实操作元数据将保留在日志中。") + (details.isEmpty ? "" : "\n\n" + details)
   }
 }
 

@@ -6,15 +6,20 @@ import Foundation
 /// New sensitive files are private from open(O_EXCL, 0600), including temporary files.
 struct HostingPrivateDirectory {
   let fd: Int32
-  init(_ url: URL) throws {
+  init(_ url: URL, durableCreation: Bool = false, durabilityCheckpoint: @Sendable (String) throws -> Void = { _ in }) throws {
     var path = url.standardizedFileURL.path
     // macOS system aliases, not arbitrary user-controlled symlink resolution.
     if path.hasPrefix("/var/") { path = "/private" + path }
     if path.hasPrefix("/tmp/") { path = "/private" + path }
     var current = Darwin.open("/", O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW)
     guard current >= 0 else { throw HostingError.vaultUnavailable }
+    var ancestors: [Int32] = []
+    defer { for ancestor in ancestors { close(ancestor) } }
     do {
       let parts = path.split(separator: "/").map(String.init)
+      if durableCreation {
+        guard !parts.isEmpty, parts.count <= 128 else { throw HostingError.vaultUnavailable }
+      }
       for (index, part) in parts.enumerated() {
         let last = index == parts.count - 1
         var next = openat(current, part, O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW)
@@ -29,7 +34,24 @@ struct HostingPrivateDirectory {
           info.st_mode & 0o022 == 0 || (!last && info.st_uid == 0 && info.st_mode & S_ISVTX != 0)
         else { close(next); throw HostingError.vaultUnavailable }
         if last, fchmod(next, 0o700) != 0 { close(next); throw HostingError.vaultUnavailable }
-        close(current); current = next
+        if durableCreation { ancestors.append(current) } else { close(current) }
+        current = next
+      }
+      if durableCreation {
+        var rootInfo = stat()
+        guard fstat(current, &rootInfo) == 0 else { throw HostingError.vaultUnavailable }
+        // Keep every parent open until the final device is known. System/sealed
+        // ancestors on another filesystem are not part of this write's barrier.
+        // Sync existing paths too: an earlier mkdir/EEXIST attempt may have failed
+        // before syncing its parent, and a retry must finish that namespace work.
+        for ancestor in ancestors {
+          var info = stat()
+          guard fstat(ancestor, &info) == 0 else { throw HostingError.vaultUnavailable }
+          if info.st_dev == rootInfo.st_dev {
+            try durabilityCheckpoint("namespaceSync")
+            guard fsync(ancestor) == 0 else { throw HostingError.storageFailure }
+          }
+        }
       }
       fd = current
     } catch { close(current); throw error }
@@ -68,13 +90,19 @@ struct HostingPrivateDirectory {
     }
     return data
   }
-  func write(_ data: Data, name: String) throws {
+  func write(_ data: Data, name: String, fullSync: Bool = false, durabilityCheckpoint: @Sendable (String) throws -> Void = { _ in }) throws {
     guard data.count <= 131072 else { throw HostingError.storageFailure }
     _ = try read(name) // Reject symlinks, hard links and unsafe existing targets, without following them.
     let temporary = ".write-" + UUID().uuidString
     let file = openat(fd, temporary, O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC | O_NOFOLLOW, 0o600)
     guard file >= 0 else { throw HostingError.storageFailure }
     defer { close(file); unlinkat(fd, temporary, 0) }
+    if fullSync {
+      // open's mode is filtered by umask. Never authorize a POST with a newly
+      // written intent that recovery would later reject as unreadable/unsafe.
+      _ = try validate(file)
+      try durabilityCheckpoint("fileValidated")
+    }
     try data.withUnsafeBytes { bytes in
       var offset = 0
       while offset < data.count {
@@ -83,9 +111,22 @@ struct HostingPrivateDirectory {
         guard n > 0 else { throw HostingError.storageFailure }; offset += n
       }
     }
-    guard fsync(file) == 0, renameat(fd, temporary, fd, name) == 0 else { throw HostingError.storageFailure }
-    // Rename is the commit point. A directory fsync failure must not be reported as rollback.
-    _ = fsync(fd)
+    if fullSync {
+      try durabilityCheckpoint("fileSync")
+      guard fsync(file) == 0 else { throw HostingError.storageFailure }
+      try durabilityCheckpoint("rename")
+      guard renameat(fd, temporary, fd, name) == 0 else { throw HostingError.storageFailure }
+      try durabilityCheckpoint("directorySync")
+      guard fsync(fd) == 0 else { throw HostingError.storageFailure }
+      // After data and namespace fsync, require the drive-cache barrier on the
+      // still-open regular file. Unsupported/failed F_FULLFSYNC is not a fallback.
+      try durabilityCheckpoint("fullSync")
+      guard fcntl(file, F_FULLFSYNC) == 0 else { throw HostingError.storageFailure }
+    } else {
+      guard fsync(file) == 0, renameat(fd, temporary, fd, name) == 0 else { throw HostingError.storageFailure }
+      // Rename is the commit point. A directory fsync failure must not be reported as rollback.
+      _ = fsync(fd)
+    }
   }
   func remove(_ name: String) throws {
     guard try read(name) != nil else { return }

@@ -152,6 +152,15 @@ import SwiftUI
   func binding(_ id: UUID) -> RepositoryHostingBinding? { metadata.bindings.first { $0.repositoryID == id } }
   /// Own each account's API task so disconnect can cancel transport even while its view stays open.
   func performAPI<T: Sendable>(account: HostingAccount, operation: @escaping @Sendable () async throws -> T) async throws -> T {
+    try await performAccountRequest(account: account, preserveCompletedReceipt: false, operation: operation)
+  }
+  /// Only the submission coordinator consumes this result. Preserve an already returned receipt
+  /// through cancellation/disconnect so it can be journaled; normal readback/identity checks still fail.
+  func performReviewWrite(account: HostingAccount, operation: @escaping @Sendable () async throws -> HostingReviewReceipt) async throws -> HostingReviewReceipt {
+    try await performAccountRequest(account: account, preserveCompletedReceipt: true, operation: operation)
+  }
+  private func performAccountRequest<T: Sendable>(account: HostingAccount, preserveCompletedReceipt: Bool,
+    operation: @escaping @Sendable () async throws -> T) async throws -> T {
     guard self.account(account.id) == account else { throw HostingError.accountChanged }
     try Task.checkCancellation()
     let id = UUID(), task = Task { try await operation() }
@@ -161,8 +170,10 @@ import SwiftUI
       if apiCancellations[account.id]?.isEmpty == true { apiCancellations[account.id] = nil }
     }
     let result = try await withTaskCancellationHandler { try await task.value } onCancel: { task.cancel() }
-    try Task.checkCancellation()
-    guard self.account(account.id) == account else { throw HostingError.accountChanged }
+    if !preserveCompletedReceipt {
+      try Task.checkCancellation()
+      guard self.account(account.id) == account else { throw HostingError.accountChanged }
+    }
     return result
   }
   private func cancelAPI(_ id: UUID) {
@@ -330,8 +341,10 @@ import SwiftUI
       }
     }
   }
-  func disconnect(_ account: HostingAccount) async throws {
+  func disconnect(_ account: HostingAccount, discardReviewWork: Bool = false) async throws {
     guard let current = self.account(account.id), current.identity == account.identity else { throw HostingError.accountChanged }
+    guard discardReviewWork || store.reviewSessions.unfinished(accountID: current.id).isEmpty else { throw HostingError.operationInProgress }
+    store.reviewSessions.disconnectAccount(current.id)
     connectionRevision = UUID(); cancelAuthorization()
     for cancel in connectionCancellations.values { cancel() }; connectionCancellations.removeAll()
     cancelAPI(account.id)
