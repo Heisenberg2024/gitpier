@@ -51,6 +51,22 @@ The build script produces `dist/GitPier.app` for the current architecture. `CONF
 
 Scripts keep build caches in `.cache` and use SwiftPM's native build engine. The engine may report a deprecation warning on newer toolchains. Do not bypass hooks, signing, or transport verification to work around build or Git failures.
 
+## CI validation policy
+
+`.github/workflows/validate.yml` keeps the required check named `build-test`. A small Ubuntu planning job runs `python3 Scripts/test-ci-validation.py` and selects one of three paths:
+
+- **Full:** the original macOS toolchain check, real Git/Core tests, release metadata/signing gates, Release application build and signature verification, temporary DMG structure test, permission-preserving ZIP and artifact upload. Only successful completion of all these steps produces `Full macOS validation complete (v1)`.
+- **Documentation:** Ubuntu checks the complete Git diff for whitespace errors, UTF-8, NUL bytes and unresolved conflict markers, and still runs all ten offline release metadata/security gates. Only ordinary non-executable Markdown in `docs/`, `README.md`, `README.zh-CN.md`, `CHANGELOG.md`, `CONTRIBUTING.md`, `SECURITY.md` and `.github/pull_request_template.md` qualifies. Packaged branding/legal Markdown, licenses, source, resources, scripts, workflows and dependency files require full validation. Rename source and destination both count. New branches, force pushes, empty diffs and unavailable comparison history never qualify for the documentation shortcut.
+- **Reuse:** main/tag push runs for the same SHA queue at the workflow level (`queue: max`, no cancellation), without occupying a waiting runner. Whichever runs second can reuse the first's full validation. The planner checks the same repository, workflow, push source and exact commit; it reads all pages of the latest attempt's jobs and requires every full step and completion marker to have succeeded, then rechecks the run. The summary links to that run/attempt and its development artifact. A green documentation/reuse run, skipped step, failed run, API error or incomplete evidence cannot establish full validation. When no valid evidence exists, the tag runs the complete macOS path, even for a documentation-only release commit.
+
+PR and other branch runs do not reuse release evidence. Manual dispatches and explicit reruns always perform full validation, including failed-jobs-only reruns that retain an earlier plan's outputs. Rerun artifacts add an `-attempt-N` suffix to avoid name conflicts and preserve previous uploads. The SHA queue has GitHub's 100-pending-run limit. Planning failures fail `build-test`; the workflow does not hide required checks with top-level path exclusions. Tokens remain read-only: only planning needs `actions: read`, and checkout does not persist credentials. No CI path signs production updates, publishes releases or changes repository settings.
+
+For offline CI-policy validation, run `python3 Scripts/test-ci-validation.py` and `python3 Scripts/test-release-tools.py`. These do not build or launch the application. Changes to routing or the full-step contract require updating the corresponding regression coverage. Before publishing, inspect the **exact release SHA's successful full `build-test` steps and completion marker**, or follow a verified reuse link to those steps; a successful lightweight workflow alone is insufficient.
+
+简体中文：CI 保留原 `build-test` 检查名。普通文档由 Ubuntu 检查完整差异、空白、UTF-8、NUL 和冲突标记，并保留 10 项发布安全门控；打包使用的 Markdown/许可证、源码、资源、脚本、工作流和依赖不在轻量白名单。同 SHA 的 main/tag 先由 GitHub 排队，再逐项核对相同仓库、工作流、提交及最新 attempt 的完整成功步骤，避免占用 runner 等待。文档轻量成功或仅复用成功都不能冒充完整验收；API 异常、缺失或不完整证据回退完整 macOS 检查。纯文档提交后来打发布标签时也必须获得该 SHA 的完整验收。手动运行和显式重跑始终全验，原生测试、签名、包结构、DMG 和保权限归档均保留。发布前查看完整成功步骤/标记或复用链接，不能只看 workflow 绿色状态。
+
+## Local acceptance
+
 Core tests create temporary Git repositories. Keychain tests use synthetic entries and remove them. Native UI / PTY acceptance requires a logged-in macOS session:
 
 ```bash
@@ -127,7 +143,7 @@ Scripts/package-release.sh reviewed-release-notes.md
 
 Signing validates the Keychain public key, final DMG, EdDSA signature against the embedded public key, version/length/fixed download URL, signed appcast and unchanged DMG hash. Sparkle's official `generate_appcast` embeds the reviewed notes and signs the feed. Do not edit the feed/notes or DMG after signing. Copy only the DMG, .sha256 and appcast.xml into a future GitHub draft; no private keys, test fixtures or unsigned candidates. The scripts never upload or publish.
 
-Before release, confirm a clean approved source commit and passing CI, review the bilingual notes with the owner, create a draft only with authorization, upload all three assets and compare remote sizes/hashes. Publish only after authorization. Verify the latest feed redirects and a real old-version update after publication; retain historical ZIP releases unchanged.
+Before release, confirm a clean approved source commit and successful full CI for that exact SHA (see the CI validation policy above), review the bilingual notes with the owner, create a draft only with authorization, upload all three assets and compare remote sizes/hashes. Publish only after authorization. Verify the latest feed redirects and a real old-version update after publication; retain historical ZIP releases unchanged.
 
 ## Isolated updater acceptance
 
@@ -142,7 +158,7 @@ open .cache/update-acceptance/example/installed/GitPier.app
 
 Use Check for Updates in the test app, confirm installation and verify build 20 → 21, relaunch, workspace/draft preservation and framework loading. Also test invalid signed feeds, missing/invalid DMG signatures, altered archives, failed downloads, cancellation, active Git work, unsaved conflict drafts and read-only-DMG launch. Prefer isolated installation locations. When verifying /Applications, use a distinct filename plus the isolated test Bundle ID, preserve any existing GitPier.app, and remove only the verified test copy afterwards. Quit test apps, stop the loopback server, remove disposable private-key files and retain only redacted acceptance evidence. A mounted DMG or readable appcast alone does not prove a successful self-update.
 
-CI runs unit tests, metadata/security gate tests, native bundle builds and `Scripts/test-dmg-structure.sh`, which creates and deletes a clearly temporary image without claiming Finder layout. It must not generate production keys, publish releases or claim Finder visuals / actual self-updates in a headless job.
+Full CI runs unit tests, metadata/security gate tests, native bundle builds and `Scripts/test-dmg-structure.sh`, which creates and deletes a clearly temporary image without claiming Finder layout. It must not generate production keys, publish releases or claim Finder visuals / actual self-updates in a headless job.
 
 Failure cases can be prepared with `python3 Scripts/update-test-scenario.py .cache/update-acceptance/example invalid-signature` (or `invalid-feed`, `tampered-dmg`, `download-failure`, `restore`). These commands only modify the isolated loopback fixture. AppKit/Sparkle language preferences are stored only in the application's own defaults domain and follow the selected GitPier language after restart.
 

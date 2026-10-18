@@ -5,27 +5,94 @@ on:
   workflow_dispatch:
 permissions:
   contents: read
+concurrency:
+  # Serialize main/tag for the same commit without consuming a waiting runner.
+  group: ${{ github.workflow }}-${{ github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/')) && github.sha || github.run_id }}
+  cancel-in-progress: false
+  queue: max
 jobs:
-  build-test:
-    runs-on: macos-15
+  plan:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      mode: ${{ steps.plan.outputs.mode }}
+      base: ${{ steps.plan.outputs.base }}
+      reused_run: ${{ steps.plan.outputs.reused_run }}
+      reused_attempt: ${{ steps.plan.outputs.reused_attempt }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: CI policy regression tests
+        run: python3 Scripts/test-ci-validation.py
+      - name: Select validation path
+        id: plan
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 Scripts/ci_validation.py plan
+  build-test:
+    # Keep the existing required-check name; planning failures must fail it too.
+    needs: plan
+    if: ${{ always() }}
+    runs-on: ${{ (github.run_attempt > 1 || needs.plan.outputs.mode == 'full') && 'macos-15' || 'ubuntu-latest' }}
+    env:
+      # Failed-jobs-only reruns can retain an earlier successful plan's outputs.
+      VALIDATION_MODE: ${{ github.run_attempt > 1 && 'full' || needs.plan.outputs.mode }}
+    steps:
+      - name: Require a valid plan
+        env:
+          PLAN_RESULT: ${{ needs.plan.result }}
+        run: |
+          [[ "$PLAN_RESULT" == success ]] || exit 1
+          case "$VALIDATION_MODE" in full|docs|reuse) ;; *) exit 1 ;; esac
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Lightweight documentation checks
+        if: env.VALIDATION_MODE == 'docs'
+        env:
+          VALIDATION_BASE: ${{ needs.plan.outputs.base }}
+        run: python3 Scripts/ci_validation.py docs
       - name: Toolchain
+        if: env.VALIDATION_MODE == 'full'
         run: |
           swift --version
           /usr/bin/git --version
           gh --version
       - name: Real Git repository tests
+        if: env.VALIDATION_MODE == 'full'
         run: Scripts/test.sh
       - name: Release metadata and signing gates
+        if: env.VALIDATION_MODE != 'reuse'
         run: python3 Scripts/test-release-tools.py
       - name: Build application
+        if: env.VALIDATION_MODE == 'full'
         run: Scripts/build-app.sh
       - name: Temporary DMG structure (no Finder visual claim)
+        if: env.VALIDATION_MODE == 'full'
         run: Scripts/test-dmg-structure.sh
       - name: Archive development app preserving signatures and permissions
+        if: env.VALIDATION_MODE == 'full'
         run: ditto -c -k --sequesterRsrc --keepParent dist/GitPier.app dist/GitPier-development.zip
-      - uses: actions/upload-artifact@v4
+      - name: Upload development app
+        if: env.VALIDATION_MODE == 'full'
+        uses: actions/upload-artifact@v4
         with:
-          name: GitPier-development-app
+          name: ${{ github.run_attempt > 1 && format('GitPier-development-app-attempt-{0}', github.run_attempt) || 'GitPier-development-app' }}
           path: dist/GitPier-development.zip
+          if-no-files-found: error
+      - name: Full macOS validation complete (v1)
+        if: env.VALIDATION_MODE == 'full'
+        run: echo 'All full macOS validation steps passed.'
+      - name: Reused full validation
+        if: env.VALIDATION_MODE == 'reuse'
+        env:
+          REUSED_RUN: ${{ needs.plan.outputs.reused_run }}
+          REUSED_ATTEMPT: ${{ needs.plan.outputs.reused_attempt }}
+        run: |
+          [[ "$REUSED_RUN" =~ ^[0-9]+$ && "$REUSED_ATTEMPT" =~ ^[0-9]+$ ]] || exit 1
+          echo "Full validation and development artifact: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$REUSED_RUN/attempts/$REUSED_ATTEMPT" >> "$GITHUB_STEP_SUMMARY"
