@@ -141,8 +141,10 @@ public actor OAuthAuthorizationCoordinator {
   static func oauthError(_ code: String, provider: HostingProvider? = nil, description: String? = nil) -> HostingError {
     // Gitea rejects a scope change while retaining its existing grant. Match only this known
     // provider response; never surface the remote description, which may contain private data.
+    // Gitea's form-encoded callback uses '+' for spaces; URLComponents preserves those signs.
+    // Normalize only this diagnostic, never authorization codes, state or PKCE values.
     if provider == .gitea, code == "server_error",
-      description?.split(whereSeparator: \.isWhitespace).joined(separator: " ").lowercased() == "a grant exists with different scope" {
+      description?.replacingOccurrences(of: "+", with: " ").split(whereSeparator: \.isWhitespace).joined(separator: " ").lowercased() == "a grant exists with different scope" {
       return .scopeConflict
     }
     return switch code {

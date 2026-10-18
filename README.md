@@ -87,7 +87,7 @@ Released [v1.6.0](https://github.com/Heisenberg2024/gitpier/releases/tag/v1.6.0)
 
 ## Review stability — v1.6.1 (Unreleased)
 
-The v1.6.1 (28) candidate saves minimal operation intent before confirmed review writes and keeps unknown results visible across restart. Bodies and code are not saved; reopening never resends a request. Inspect known receipts read-only, check the platform and explicitly acknowledge the result before a new preview. Disconnect confirms draft loss across windows. See [recovery and platform limits](docs/code-review.md) and [validation status](docs/v1.6.1-validation.md). This candidate is not a published release.
+The v1.6.1 (28) candidate saves minimal operation intent before confirmed review writes and keeps unknown results visible across restart. Bodies and code are not saved; reopening never resends a request. Inspect known receipts read-only, check the platform and explicitly acknowledge the result before a new preview. Disconnect confirms draft loss across windows. See [recovery and platform limits](docs/code-review.md) and [validation status](docs/v1.6.1-validation.md). This candidate is not a published release. Authorized test repositories now have 17 verified review operations and one GitLab ordinary comment retained as Unknown; approvals and reviewer requests still lack eligible test accounts. See the validation matrix for exact scope.
 
 ## Screenshots
 

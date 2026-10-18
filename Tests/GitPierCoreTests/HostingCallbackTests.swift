@@ -126,6 +126,61 @@ import XCTest
     XCTAssertTrue(HostingError.scopeConflict.localizedDescription.contains("will not revoke"))
   }
 
+  private func formConflictURL(_ session: OAuthPKCESession, state: String? = nil) -> URL {
+    URL(string: session.redirectURL.absoluteString + "?state=\(state ?? session.state)&error=server_error&error_description=a+grant+exists+with+different+scope")!
+  }
+
+  func testFormEncodedGiteaConflictConsumesOnlyMatchingSession() async throws {
+    let (listener, original) = try await fixture(); await listener.cancel()
+    var session = original
+    XCTAssertThrowsError(try session.consume(formConflictURL(session, state: "wrong+state"))) {
+      XCTAssertEqual($0 as? HostingError, .invalidCallback)
+    }
+    XCTAssertFalse(session.callbackConsumed)
+    XCTAssertThrowsError(try session.consume(formConflictURL(session))) {
+      XCTAssertEqual($0 as? HostingError, .scopeConflict)
+    }
+    XCTAssertTrue(session.callbackConsumed)
+    XCTAssertThrowsError(try session.consume(formConflictURL(session))) {
+      XCTAssertEqual($0 as? HostingError, .invalidCallback)
+    }
+    XCTAssertEqual(OAuthAuthorizationCoordinator.oauthError("server_error", provider: .gitlab,
+      description: "a+grant+exists+with+different+scope"), .serverFailure)
+    XCTAssertEqual(OAuthAuthorizationCoordinator.oauthError("server_error", provider: .gitea,
+      description: "a+grant+exists+with+different+scope+extra"), .serverFailure)
+    let gitlab = try HostingInstance(provider: .gitlab, url: "https://callback-fixture.invalid")
+    var success = try OAuthPKCESession(configuration: OAuthConfiguration(instance: gitlab, clientID: "synthetic-client"), redirectURL: URL(string: "gitpier://oauth/gitlab")!)
+    XCTAssertEqual(try success.consume(URL(string: "gitpier://oauth/gitlab?state=\(success.state)&code=synthetic+literal%2Bcode")!), "synthetic+literal+code")
+  }
+
+  func testLoopbackFormEncodedConflictTerminatesWithoutExposingCallbackOrExchangingToken() async throws {
+    let (listener, session) = try await fixture(), transport = HostingFixtureTransport()
+    let task = Task { try await flow(listener, session: session, transport: transport) }
+    let rejected = try await send(formConflictURL(session, state: "wrong-state"))
+    XCTAssertEqual(rejected.0, 400); XCTAssertFalse(rejected.1 == terminalBody)
+    let response = try await send(formConflictURL(session))
+    XCTAssertEqual(response.0, 400); XCTAssertEqual(response.1, terminalBody)
+    XCTAssertFalse(response.1.contains(session.state)); XCTAssertFalse(response.1.contains("grant"))
+    await expectTerminal(.scopeConflict, listener: listener, task: task)
+    let requests = await transport.captured(); XCTAssertTrue(requests.isEmpty)
+  }
+
+  func testBrowserFormEncodedConflictIsTerminalAndCannotConsumeFreshReceiver() async throws {
+    let (listener, session) = try await fixture(); await listener.cancel()
+    let receiver = OAuthBrowserCallback(session: session)
+    let wrong = await receiver.receive(formConflictURL(session, state: "wrong-state")); XCTAssertFalse(wrong)
+    let accepted = await receiver.receive(formConflictURL(session)); XCTAssertTrue(accepted)
+    do { _ = try await receiver.wait(); XCTFail("Expected scope conflict") }
+    catch { XCTAssertEqual(error as? HostingError, .scopeConflict) }
+    let duplicate = await receiver.receive(formConflictURL(session)); XCTAssertFalse(duplicate)
+    let fresh = try OAuthPKCESession(configuration: session.configuration, redirectURL: session.redirectURL)
+    let retry = OAuthBrowserCallback(session: fresh)
+    let old = await retry.receive(formConflictURL(session)); XCTAssertFalse(old)
+    let correct = url(fresh, [URLQueryItem(name: "state", value: fresh.state), URLQueryItem(name: "code", value: "synthetic-fresh-code")])
+    let good = await retry.receive(correct); XCTAssertTrue(good)
+    let received = try await retry.wait(); XCTAssertEqual(received, correct)
+  }
+
   func testBrowserReceiverTerminatesProviderErrorsButIgnoresWrongStateAndMalformedErrors() async throws {
     let instance = try HostingInstance(provider: .gitlab, url: "https://callback-fixture.invalid")
     for (code, expected) in [("server_error", HostingError.serverFailure), ("temporarily_unavailable", .serverFailure), ("invalid_scope", .permissionRequired), ("unknown_error", .invalidResponse)] {

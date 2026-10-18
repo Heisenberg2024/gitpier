@@ -7,6 +7,10 @@ The baseline `main` cce72c4 passed all 772 Core tests (zero failures/skips, 263.
 简体中文：基线772项Core与10项发布门控已通过；最终候选版852项Core、418张原生截图、Universal/DMG及真实隔离27→28升级和7项应用数据检查已通过，详见[完整记录](v1.6.1-validation.md)，Fixture不能替代真实平台写入许可或正式发布。
 
 
+Latest authorized live continuation starts from committed `b2d90b7`: 17 review operations verified, one native GitLab ordinary comment remains Unknown without replay, and missing-account cases remain unverified. A real Gitea form-encoding compatibility fix passed 11 callback and all 855 Core tests, rebuilt Universal/DMG and a new native recovery launch. The earlier Sparkle update and 418 captures belong to the pre-fix build; see [current evidence and limits](v1.6.1-validation.md#current-post-live-candidate-and-cleanup). No GitPier commit, push or publication was performed in this continuation.
+
+简体中文：从已提交b2d90b7继续，真实17项成功、1项GitLab普通评论未知且不重发，账号不足项保留未验。Gitea回调兼容修复通过11专项与855项Core，已重建Universal/DMG并验新应用恢复界面；此前升级与418图属于修复前版本。本轮不提交、推送或发布GitPier。
+
 ## v1.6.0 code review validation
 
 Released **[1.6.0 (27)](https://github.com/Heisenberg2024/gitpier/releases/tag/v1.6.0)** at commit `d4e1657e2ff3afec31c5a9c7a541d670ccd173c8`. The local audit below preceded the Swift 6.1 CI fix and publication recorded at the end of this section. Provider capabilities, position safety, permission changes and deliberate fallbacks are specified in the [code review guide](code-review.md). The implementation reuses the v1.5.1 detail loader/cache, Diff parser and OAuth token manager. Real review writes require explicit maintainer authorization for named test requests. Existing v1.5.1 live results below do not establish v1.6.0 acceptance.
