@@ -1,6 +1,6 @@
 # Security & privacy
 
-## v1.6.1 operation recovery (unreleased)
+## v1.6.1 operation recovery (released 2026-10-18)
 
 Confirmed review writes require a durable local intent before HTTP mutation begins. `~/Library/Application Support/GitPier/workspace.review-operations/` holds versioned JSON batches (0700 directory, 0600 files); custom workspaces use the same `review-operations` extension beside their own workspace file. Identity, SHA/version, operation type/state, timestamps and opaque receipt/reviewer IDs are stored. No tokens, keys, headers, comment bodies, body hashes, source paths, Diff or code are recorded. This metadata can still reveal account/repository/request identities and activity; private file permissions do not provide cryptographic tamper resistance against the same user.
 

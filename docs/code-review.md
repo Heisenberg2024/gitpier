@@ -1,6 +1,6 @@
-# Code review and collaboration — v1.6.1 candidate
+# Code review and collaboration — v1.6.1
 
-Released [v1.6.0](https://github.com/Heisenberg2024/gitpier/releases/tag/v1.6.0), build 27. The [development guide](development.md#v160-publication--2026-10-18) records exact-commit CI, native fixture acceptance and publication verification. Released v1.5.1 live validation is historical evidence; it does not verify the new write workflows. No v1.6.0 real-service comments or approvals have been performed.
+Released [v1.6.1](https://github.com/Heisenberg2024/gitpier/releases/tag/v1.6.1), build 28, adds durable recovery to the v1.6.0 review workflows. The [validation report](v1.6.1-validation.md#formal-publication--2026-10-18) records exact-commit CI, signed publication and public downloads. The real-service matrix separately records 17 verified operations, one retained GitLab Unknown and the remaining account/capability limits. Earlier v1.5.1/v1.6.0 fixture and release results remain historical evidence.
 
 ## Provider capabilities
 
@@ -100,7 +100,7 @@ Disconnect-intent fault fixtures verify recovery behavior, not physical disk or 
 
 ## 简体中文
 
-v1.6.0（27）已正式发布；最终提交 CI、重建 Universal、生产签名与公开附件核验见开发指南。本轮新增评论和审批未执行真实测试目标写入，不能把 Fixture 或 v1.5.1 历史记录称为本轮真实服务验收。
+v1.6.1（28）已正式发布，在v1.6.0审查工作流上增加持久恢复；同提交CI、生产签名和公开附件核验见[验收报告](v1.6.1-validation.md#formal-publication--2026-10-18)。真实平台矩阵单独记录17项验证成功、1项GitLab未知及剩余账号/能力限制，历史Fixture不能替代本轮真实验收。
 
 GitHub 普通评论使用 Issue Comment，逐行评论使用准确 `commit_id + line + side`；原生 Review 支持 Comment、Approve、Request Changes 和 Pending 提交。GitLab 使用 Discussion/Note ID 与真实 Diff Version 的 Base/Start/Head SHA，新增行只发 new_line、删除行只发 old_line、上下文保留两者；Approval 是独立且带 SHA 的写入，受 `user_can_approve`、规则、套餐和重新认证要求限制，本适配器未验证 GitLab Request Changes 的独立接口，保留讨论/网页操作，不能把普通 Discussion 当成正式拒绝审批；也不伪造原子批次。
 
@@ -120,7 +120,7 @@ P1：GitHub 多行范围限同侧、同 Hunk、最多 200 行，提交与回读�
 
 GitLab 讨论支持有权限时确认后 Resolve/Unresolve；Approval Rules 独立按需读取服务器规则状态，权限/套餐不可用单独提示，不把个人已批准当成规则全部满足。分支比较复用原有本地/remote-tracking 只读界面，保留提交、文件、Diff 和领先/落后；明确跟踪引用来自本地快照。平台远端比较、比较页关联请求标识、GitHub GraphQL Resolve 和更广泛 Gitea 版本验证留待后续。
 
-## v1.6.1 recovery workflow (unreleased)
+## v1.6.1 recovery workflow
 
 Maintainer-authorized live continuation: GitHub nine operations, GitLab seven and Gitea one passed real receipt readback. One native GitLab ordinary comment remains Unknown after a network failure and is preserved across restart without replay. Non-author approval/Request Changes, eligible reviewer requests and Gitea existing-review replies remain unverified. See the [exact live matrix, revisions and receipts](v1.6.1-validation.md#real-platform-acceptance-and-authorization). Gitea form-encoded scope conflicts are recognized without automatic grant changes.
 

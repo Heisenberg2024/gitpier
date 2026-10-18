@@ -1,9 +1,11 @@
 # Changelog
 
-## 1.6.1 — Unreleased
+## 1.6.1 — 2026-10-18
 
 ### Review write stability (28)
 
+- Published as [Latest](https://github.com/Heisenberg2024/gitpier/releases/tag/v1.6.1) from `74dc071`: exact-commit Swift 6.1.2 CI passed 855 Core tests and 10 release gates. Draft asset readback, production DMG/Feed signatures, anonymous public downloads and the canonical Latest Feed passed verification.
+- 已从`74dc071`正式发布为[Latest](https://github.com/Heisenberg2024/gitpier/releases/tag/v1.6.1)；同提交Swift 6.1.2 CI通过855项Core与10项发布门控，Draft附件回读、生产DMG/Feed签名、匿名公开下载与Latest固定Feed均验证通过。
 - Persist minimal, versioned operation intent before each confirmed remote review write. Retain per-item known receipts, verified outcomes and unsent items; recover possibly sent writes as Unknown after restart, with no automatic replay.
 - Add a visible recovery panel, read-only inspection of known receipts, separately confirmed manual acknowledgement and explicit completed-history cleanup. Comment bodies, private code, Diff anchors and body hashes are never stored in this journal.
 - Confirm account-wide review discard before disconnect, cancel pending work and prevent late responses from restoring private drafts or old sessions across windows.

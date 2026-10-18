@@ -1,15 +1,25 @@
 # Development
 
-## v1.6.1 stability candidate — 2026-10-18
+## v1.6.1 publication — 2026-10-18
 
-The baseline `main` cce72c4 passed all 772 Core tests (zero failures/skips, 263.890 s) and 10 release-tool gates. The final candidate passed 852 Core tests, 10 release gates, 418 native captures, Universal/DMG checks and an actual isolated 27 → 28 Sparkle install/relaunch with seven application data checks. See [the current validation report](v1.6.1-validation.md) for candidate results, exact evidence and authorization boundaries. No real hosted-service write or publication is implied by synthetic/native fixture success.
+[GitPier v1.6.1 (28)](https://github.com/Heisenberg2024/gitpier/releases/tag/v1.6.1) was published as **Latest** at **2026-10-18 22:58:47 Asia/Shanghai**, release `416510671`, tag/source `74dc071187cfbf6e0b6f6a574eb94e155f140d07`. The owner approved the exact bilingual release notes and publication. [Main CI 39135432486](https://github.com/Heisenberg2024/gitpier/actions/runs/39135432486) passed full macOS validation with Swift 6.1.2: **855 Core tests**, zero failures, **486.628 s**, **10 release gates**, **1.184 s**, build, temporary DMG, signature/permission-preserving archive and upload. [Tag CI 39138220447](https://github.com/Heisenberg2024/gitpier/actions/runs/39138220447) passed by explicitly reusing that exact full run, attempt 1; it did not rerun the macOS suite.
+
+The tested Universal DMG was reused without rebuilding: **21,139,037 bytes**, SHA256 `8dfc1677ed44431022295e6b83acf06c72d0ed22a1c3ac82ce50db7ee5d82c5f`. The existing production Keychain key signed the DMG and Feed; CryptoKit and independent Node Ed25519 verification plus equal-length tamper rejection passed. All three Draft assets were downloaded by ID and verified before publication. Anonymous downloads of the DMG, SHA256 file and appcast, and the canonical Latest Feed, returned HTTP 200 with exact hashes, signatures, version/build and approved notes. A read-only mount matched all **179** app entries, Finder's normal default layout passed, and an isolated mounted-app copy launched with About **1.6.1 (28)**. Production installation was not changed.
+
+Preservation checks passed for **248** frozen inputs, **130** protected files, **121** historical local assets, **15** prior releases, **41** remote assets and **15** tags. The installed app, hosting/Vault data and default URL handler remain unchanged; task-owned apps/runtime/preferences/tamper files and both owned mounts were cleaned. The 17 verified live operations and one unresolved GitLab comment remain distinct; unavailable approval/reviewer cases are not passes. The actual isolated Sparkle update and 418 captures below belong to the earlier b2d90b7 build. See [full scope and release evidence](v1.6.1-validation.md). Evidence: `.cache/releases/v1.6.1/prepare-20261018-224113/`.
+
+简体中文：v1.6.1（28）已于 **2026-10-18 22:58:47（Asia/Shanghai）**按已确认双语说明正式发布为Latest，Tag指向74dc071。main同提交Swift6.1.2完整CI通过855项Core与10项门控；Tag CI明确复用该完整记录，不冒充重新运行。原生产Keychain签DMG/Feed，Draft三附件按ID回读及公开匿名HTTP200、哈希、签名、正文与固定Latest Feed验证全部通过。179项包镜像、Finder默认布局、隔离About启动通过；248输入、130保护文件、121本地历史资产与15旧Release/41附件/15Tag保持，实际安装和配置未改。真实17项成功与1项未知及未覆盖账号/硬件/生产升级边界继续保留；任务临时资源已清理。发布记录仅在本地更新，尚未提交。
+
+### Development checkpoints
+
+The baseline `main` cce72c4 passed all 772 Core tests (zero failures/skips, 263.890 s) and 10 release-tool gates. The b2d90b7 candidate passed 852 Core tests, 10 release gates, 418 native captures, Universal/DMG checks and an actual isolated 27 → 28 Sparkle install/relaunch with seven application data checks. See [the validation report](v1.6.1-validation.md) for exact build provenance and authorization boundaries. Synthetic/native fixture success does not establish real hosted-service writes.
 
 简体中文：基线772项Core与10项发布门控已通过；最终候选版852项Core、418张原生截图、Universal/DMG及真实隔离27→28升级和7项应用数据检查已通过，详见[完整记录](v1.6.1-validation.md)，Fixture不能替代真实平台写入许可或正式发布。
 
 
-Latest authorized live continuation starts from committed `b2d90b7`: 17 review operations verified, one native GitLab ordinary comment remains Unknown without replay, and missing-account cases remain unverified. A real Gitea form-encoding compatibility fix passed 11 callback and all 855 Core tests, rebuilt Universal/DMG and a new native recovery launch. The earlier Sparkle update and 418 captures belong to the pre-fix build; see [current evidence and limits](v1.6.1-validation.md#current-post-live-candidate-and-cleanup). No GitPier commit, push or publication was performed in this continuation.
+The authorized live continuation started from committed `b2d90b7`: 17 review operations verified, one native GitLab ordinary comment remains Unknown without replay, and missing-account cases remain unverified. A real Gitea form-encoding compatibility fix passed 11 callback and all 855 Core tests, rebuilt Universal/DMG and a new native recovery launch. The earlier Sparkle update and 418 captures belong to the pre-fix build; see [current evidence and limits](v1.6.1-validation.md#current-post-live-candidate-and-cleanup). That phase performed no GitPier commit, push or publication; the maintainer subsequently committed/pushed 74dc071 and explicitly authorized the release above.
 
-简体中文：从已提交b2d90b7继续，真实17项成功、1项GitLab普通评论未知且不重发，账号不足项保留未验。Gitea回调兼容修复通过11专项与855项Core，已重建Universal/DMG并验新应用恢复界面；此前升级与418图属于修复前版本。本轮不提交、推送或发布GitPier。
+简体中文：真实验收阶段从已提交b2d90b7继续，17项成功、1项GitLab普通评论未知且不重发，账号不足项保留未验。Gitea回调兼容修复通过11专项与855项Core，已重建Universal/DMG并验新应用恢复界面；此前升级与418图属于修复前版本。该阶段未提交、推送或发布；随后由所有者提交推送74dc071，并另行明确授权上述正式发布。
 
 ## v1.6.0 code review validation
 
