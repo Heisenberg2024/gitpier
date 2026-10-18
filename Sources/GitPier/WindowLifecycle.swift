@@ -22,6 +22,8 @@ struct WindowLifecycle: NSViewRepresentable {
     let proxy = WindowDelegateProxy(original: window.delegate, store: store)
     self.proxy = proxy
     window.delegate = proxy
+    // Fulfil a CLI request that arrived before this cold-start window existed.
+    store.presentNavigationWindow(window)
     if !CommandLine.arguments.contains("--ui-acceptance") {
       window.setFrameAutosaveName("GitPier.Workspace")
     }

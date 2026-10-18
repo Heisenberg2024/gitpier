@@ -1,5 +1,15 @@
 # Architecture and security boundaries
 
+## Workflow observation and navigation (v1.7.0 development)
+
+`OperationCenterHistory` is a pure in-memory event reducer. App-owned `OperationsCenter` bridges existing `OperationProgress` tickets, BatchFetchCoordinator updates and the existing Review journal's readback. Ordinary local refresh progress opts out. No Git execution queue, polling timer or duplicate journal is introduced; UI lifetime cannot own cancellation. UUID/revision checks reject stale/duplicate events; completed records cannot become active again. Normal recent summaries are capped at 100; automatic Fetch coalesces completed records per repository, while unresolved Review metadata remains governed by the existing journal. Recovery navigation captures and rechecks root/Common Directory, metadata directory filesystem identities, HEAD/Index/operation and remotes. Writes still run through their original confirmation and service checks.
+
+`NavigationRequest` allows only versioned open/page requests. The distinct `GitPierCommandLine` SwiftPM product is packaged as the signed `Helpers/gitpier`; main/CLI product names must not differ only by case. Launch Services explicitly targets a bookmarked selected app. SwiftUI `onOpenURL` and AppDelegate feed the same serialized, UUID-deduplicated receiver. Existing windows prefer `gitpier://` external events. OAuth remains separately path/state/PKCE validated. The launcher and receiver both validate directory access and System Git working-tree identity. Installation uses descriptor-relative no-follow IO, exclusive names and a versioned private hash/bookmark receipt, without shell edits or same-name overwrites. Uninstall verifies current ownership and file identity.
+
+The existing Quick Open sheet uses the `WorkspaceCommand` navigation vocabulary, memory recent commands and disabled reasons. Terminal shortcut protection and existing page IDs remain unchanged. Repository navigation stays in its existing toolbar and recovery banners; the duplicate Next Steps menu was removed after evaluating all conditional entries. CLI installation sections share the existing Terminal tab (3); About remains the rightmost tab (7). Explicit CLI navigation presents an existing workspace window, restores a minimized window, or defers presentation until the cold-start window hook attaches.
+
+简体中文：操作中心只观察既有任务/批量Fetch/审查日志，普通本地扫描不记为任务，不新增写队列或日志。CLI只接受固定导航请求，通过原生Launch Services定位用户选定应用，冷/热入口共用去重顺序路由，OAuth继续独立核验。安装拒绝符号链接/同名覆盖，卸载验证归属；现有命令面板、终端焦点、Git确认与凭证边界保持。
+
 ## Review collaboration (v1.6.0 released; v1.6.1 stability candidate)
 
 `HostingReviewModels.swift` adds typed provider capabilities, stable remote target/revision identities, code anchors, discussion comments/threads and memory-only review drafts. `HostingReviewAPI.swift` adapts native provider semantics using the existing HTTPS boundary. `HostingReviewSubmission.swift` owns immutable confirmation tickets, per-target serialization across windows, preflight revalidation, stable-ID readback and independent partial/unknown outcomes. These modules never enter the Git write actor or acquire its queue.

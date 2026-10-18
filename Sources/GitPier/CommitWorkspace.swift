@@ -11,7 +11,6 @@ struct RepositoryWorkspace: View {
   }
   @EnvironmentObject var store: AppStore
   @Environment(\.colorScheme) var scheme
-  @State private var rebaseRecovery = false
   @State private var importedPatch: PatchImportRequest?
   var body: some View {
     VStack(spacing: 0) {
@@ -27,7 +26,7 @@ struct RepositoryWorkspace: View {
               model.busy)
           }
           if operation == .rebase {
-            Button(store.text("Review Rebase…", "审查变基…")) { rebaseRecovery = true }.disabled(model.busy)
+            Button(store.text("Review Rebase…", "审查变基…")) { model.showRebaseRecovery = true }.disabled(model.busy)
           } else {
           Button(store.text("Continue", "继续")) {
             if operation == .merge {
@@ -113,7 +112,7 @@ struct RepositoryWorkspace: View {
     .sheet(isPresented: $model.needsUpstream) {
       PushUpstreamSheet(model: model).environmentObject(store)
     }
-    .sheet(isPresented: $rebaseRecovery) { RebaseRecoveryView(model: model).environmentObject(store) }
+    .sheet(isPresented: $model.showRebaseRecovery) { RebaseRecoveryView(model: model).environmentObject(store) }
     .sheet(item: $importedPatch) { PatchImportView(model: model, input: $0).environmentObject(store) }
     .alert(
       model.confirmation?.title ?? "",

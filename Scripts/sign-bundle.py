@@ -17,3 +17,8 @@ for path in sorted(framework.rglob('*'), key=lambda p: len(p.parts), reverse=Tru
         subprocess.run(['codesign', '--force', '--sign', sys.argv[2], '--preserve-metadata=identifier,entitlements', str(path)], check=True)
 subprocess.run(['codesign', '--force', '--sign', sys.argv[2], str(framework)], check=True)
 
+
+# Standalone navigation launcher is nested executable code and must be signed before the app.
+for helper in sorted((app / "Contents/Helpers").glob("*")):
+    assert helper.is_file() and not helper.is_symlink(), "Unsafe CLI helper"
+    subprocess.run(["codesign", "--force", "--sign", sys.argv[2], str(helper)], check=True)

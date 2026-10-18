@@ -137,8 +137,9 @@ public actor BatchFetchCoordinator {
     jobs[index].completedAt = Date()
     pump()
   }
-  public func cancel(_ ids: Set<String>? = nil) {
+  public func cancel(_ ids: Set<String>? = nil, expectedAttempts: [String: UUID]? = nil) {
     for index in jobs.indices where ids == nil || ids!.contains(jobs[index].id) {
+      if let expectedAttempts, expectedAttempts[jobs[index].id] != jobs[index].attemptID { continue }
       if jobs[index].state == .queued { jobs[index].state = .cancelled }
       running[jobs[index].id]?.cancel()
     }

@@ -1,5 +1,17 @@
 # Changelog
 
+## Unreleased — 1.7.0 (29)
+
+- Add a shared, event-driven Operations Center with bounded memory history, accurate cancellation requests and links to existing recovery workflows and Review Journal history.
+- Add a strict navigation-only CLI with native cold/hot app routing and a no-overwrite user-directory installer/uninstaller. Preserve OAuth callback and production update identities.
+- Enhance the existing Quick Open with commands and recent command choices; document Developer ID/notarization planning.
+- Keep completed operation cards live while the center stays open; explicitly label session-only history. Bring CLI-opened workspaces forward and move CLI controls into Terminal settings in one button row.
+- 修复操作中心打开期间卡片停留旧状态，明确会话级历史；补齐 CLI 前台窗口展示，将命令行工具设置并入终端标签，三个按钮同行。
+- 新增跨窗口事件驱动操作中心、有界内存历史、取消请求状态及既有恢复/审查日志入口。
+- 新增仅负责导航的原生CLI、冷/热唤起及不覆盖已有文件的用户目录安装/卸载，保持OAuth和更新身份。
+- 增强既有快速打开的命令和最近选择，提供Developer ID/公证实施方案。
+- The initial v1.7 checkpoint passed local Core/native/CLI/Universal/DMG and isolated Sparkle acceptance; follow-up live-card/window/settings results are recorded separately in [validation](docs/v1.7.0-validation.md). Exact-source Swift 6.1 CI and independent review remain release gates. 初始检查点验收与后续修复验证分别记录，同源码Swift6.1 CI与独立审核仍待完成，当前未发布。
+
 ## 1.6.1 — 2026-10-18
 
 ### Review write stability (28)

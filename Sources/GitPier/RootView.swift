@@ -56,6 +56,7 @@ struct RootView: View {
           .help(store.current?.title ?? "GitPier")
       }
       ToolbarItemGroup(placement: .primaryAction) {
+        OperationsCenterButton(center: store.operations)
         Button {
           store.openRepository()
         } label: {
@@ -93,6 +94,8 @@ struct RootView: View {
     }
     .sheet(isPresented: $store.showWorkspaceSearch) { WorkspaceSearchView().environmentObject(store) }
     .sheet(isPresented: $store.showQuickOpen) { QuickOpenView().environmentObject(store) }
+    .sheet(isPresented: $store.showOperationsCenter) { OperationsCenterView(center: store.operations).environmentObject(store) }
+    .sheet(isPresented: $store.showReviewRecovery) { HostingReviewRecoveryView(registry: store.reviewSessions, hosting: store.hosting).environmentObject(store) }
     .modifier(WorkspaceFetchPresentation(workspace: store.workspace))
     .alert(store.text("Create Organization", "创建组织"), isPresented: $creatingOrganization) {
       TextField(store.text("Name", "名称"), text: $organizationName)

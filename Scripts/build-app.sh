@@ -13,20 +13,24 @@ export SWIFTPM_MODULECACHE_OVERRIDE="$task_root/.cache/swift"
 # Regenerate every icon surface from the canonical PNG before SwiftPM copies resources.
 swift Scripts/generate-branding.swift
 swift build --build-system native --disable-sandbox --cache-path "$task_root/.cache/swiftpm" -c "$configuration" --product GitPier
+swift build --build-system native --disable-sandbox --cache-path "$task_root/.cache/swiftpm" -c "$configuration" --product GitPierCommandLine
 task_bin="$(swift build --build-system native --disable-sandbox --cache-path "$task_root/.cache/swiftpm" -c "$configuration" --show-bin-path)"
 mkdir -p "$task_root/dist"
 task_stage="$(mktemp -d "$task_root/.cache/app-build.XXXXXX")"
 trap 'rm -rf "$task_stage"' EXIT
 task_app="$task_stage/GitPier.app"
-mkdir -p "$task_app/Contents/MacOS" "$task_app/Contents/Resources"
+mkdir -p "$task_app/Contents/MacOS" "$task_app/Contents/Resources" "$task_app/Contents/Helpers"
 cp "$task_bin/GitPier" "$task_app/Contents/MacOS/GitPier"
+cp "$task_bin/GitPierCommandLine" "$task_app/Contents/Helpers/gitpier"
 if [[ "${UNIVERSAL:-0}" == 1 ]]; then
   for task_arch in arm64 x86_64; do
     swift build --build-system native --disable-sandbox --cache-path "$task_root/.cache/swiftpm" -c "$configuration" --arch "$task_arch" --product GitPier
+    swift build --build-system native --disable-sandbox --cache-path "$task_root/.cache/swiftpm" -c "$configuration" --arch "$task_arch" --product GitPierCommandLine
   done
   task_arm_bin="$(swift build --build-system native --disable-sandbox --cache-path "$task_root/.cache/swiftpm" -c "$configuration" --arch arm64 --show-bin-path)"
   task_intel_bin="$(swift build --build-system native --disable-sandbox --cache-path "$task_root/.cache/swiftpm" -c "$configuration" --arch x86_64 --show-bin-path)"
   lipo -create "$task_arm_bin/GitPier" "$task_intel_bin/GitPier" -output "$task_app/Contents/MacOS/GitPier"
+  lipo -create "$task_arm_bin/GitPierCommandLine" "$task_intel_bin/GitPierCommandLine" -output "$task_app/Contents/Helpers/gitpier"
 fi
 # AppResources resolves packaged resources inside Contents/Resources, with SwiftPM fallback for development.
 for task_bundle in "$task_bin"/*.bundle; do

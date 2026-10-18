@@ -8,6 +8,12 @@ import UserNotifications
     let info = Bundle.main
     let testing = info.object(forInfoDictionaryKey: "GitPierTestingUpdates") as? Bool == true
       && (info.bundleIdentifier ?? "").hasPrefix("com.heisenberg2024.gitpier.update-test.")
+    if info.object(forInfoDictionaryKey: "GitPierWorkflowTesting") as? Bool == true,
+      (info.bundleIdentifier ?? "").hasPrefix("com.heisenberg2024.gitpier.workspace-test.workflow170"),
+      let path = info.object(forInfoDictionaryKey: "GitPierTestWorkspacePath") as? String,
+      (path.contains("/.cache/v170/") || path.hasPrefix("/private/tmp/GitPier-workflow170-")) {
+      return AppStore(persistence: ConfigurationStore(url: URL(fileURLWithPath: path)))
+    }
     if testing {
       guard let path = info.object(forInfoDictionaryKey: "GitPierTestWorkspacePath") as? String,
             path.contains("/.cache/update-acceptance/") || path.hasPrefix("/private/tmp/GitPier-update-acceptance-") else {
@@ -23,6 +29,13 @@ import UserNotifications
   @Published var showDashboard = true
   @Published var error: String?
   @Published var notice: String?
+  let operations = OperationsCenter()
+  var pendingNavigation: [NavigationRequest] = []
+  var routingNavigation = false
+  var recentNavigationIDs: [UUID] = []
+  var operationNavigation: [UUID: OperationNavigationSnapshot] = [:]
+  @Published var showOperationsCenter = false
+  @Published var showReviewRecovery = false
   lazy var updates = UpdateManager(store: self)
   lazy var workspace = WorkspaceModel(store: self)
   lazy var hosting = HostingModel(store: self)
@@ -38,6 +51,7 @@ import UserNotifications
   @Published var showOrganizations = false
   @Published var showWorkspaceSearch = false
   @Published var showQuickOpen = false
+  @Published var recentCommands: [WorkspaceCommand] = []
   @Published var dashboardOrganization: String?
   @Published private(set) var systemColorScheme: ColorScheme = .light
   private var pendingSave: Task<Void, Never>?
@@ -47,6 +61,7 @@ import UserNotifications
   let persistence: ConfigurationStore
   private var canSave = true
   var managedWindows: Set<ObjectIdentifier> = []
+  @Published var navigationPresentationPending = false
   var settings: AppSettings { configuration.settings }
   var repositories: [RepositoryRecord] { configuration.repositories }
   var current: RepositoryModel? { selectedID.flatMap { models[$0] } }
@@ -96,6 +111,9 @@ import UserNotifications
     for record in configuration.repositories {
       models[record.id] = RepositoryModel(record: record, store: self)
     }
+    cloneActivity.center = operations
+    cloneActivity.cancelOperation = { [weak self] in self?.cloneTask?.cancel() }
+    reviewSessions.operationCenter = operations
     workspace.start()
     Task { await reviewSessions.refreshRecovery() }
     if !showDashboard, let selectedID, let model = models[selectedID] { Task { await model.activate() } }
@@ -326,7 +344,7 @@ import UserNotifications
     guard !cloning else { return }
     cloning = true
     notice = nil
-    let progressTicket = cloneActivity.begin(text("Cloning", "克隆仓库"))
+    let progressTicket = cloneActivity.begin(text("Cloning", "克隆仓库"), kind: .clone)
     let progress = cloneActivity.receiver()
     cloneTask = Task {
       var result = OperationResult.succeeded
@@ -340,6 +358,7 @@ import UserNotifications
         let auth = try AuthenticationContext.make(
           profile: profile, executable: Bundle.main.executablePath ?? CommandLine.arguments[0],
           configurationPath: persistence.url.path)
+        cloneActivity.markRunning()
         try await GitService.clone(
           url: url, destination: destination, gitPath: settings.gitPath,
           environment: auth.environment, authArguments: auth.arguments, progress: progress)
@@ -496,6 +515,7 @@ struct DiffTab: Identifiable, Equatable {
   private var pendingMergeReview: (MergeReview, Bool)?
   lazy var conflictEditor = ConflictEditorModel(repository: self)
   @Published private(set) var networkFetching = false
+  @Published var showRebaseRecovery = false
   @Published var needsUpstream = false
   @Published var lastCommit: String?
   @Published var amend = false
@@ -553,6 +573,14 @@ struct DiffTab: Identifiable, Equatable {
     self.store = store
     panels = WorkspacePanels(record.layout)
     terminal = TerminalManager(root: record.path)
+    activity.center = store.operations
+    activity.repositoryID = record.id
+    activity.repositoryIdentity = { [weak self] in
+      guard let self else { return nil }
+      return OperationRepositoryIdentity(workingTree: self.record.path,
+        commonDirectory: self.store.workspace.entries[self.record.id]?.snapshot?.commonDirectory)
+    }
+    activity.cancelOperation = { [weak self] in self?.cancel() }
   }
   var title: String { record.name }
   var stagedCount: Int { fileIndex.stagedCount }
@@ -648,7 +676,7 @@ struct DiffTab: Identifiable, Equatable {
       ? nil
       : activity.begin(
         store.text(available ? "Refreshing" : "Opening repository", available ? "刷新仓库" : "打开仓库"),
-        cancellable: false)
+        cancellable: false, observed: false)
     let task = Task { [weak self] in
       guard let self else { return }
       await self.performRefresh()
@@ -1013,6 +1041,7 @@ struct DiffTab: Identifiable, Equatable {
   }
   func run(
     label: String? = nil, completion: String? = nil, notify: Bool = false,
+    kind: WorkflowOperationKind = .git,
     _ action: @escaping (GitService) async throws -> Void
   ) {
     guard !busy else { return }
@@ -1023,7 +1052,7 @@ struct DiffTab: Identifiable, Equatable {
     error = nil
     output = nil
     outputResult = .succeeded
-    let progressTicket = activity.begin(label ?? store.text("Git operation", "Git 操作"))
+    let progressTicket = activity.begin(label ?? store.text("Git operation", "Git 操作"), kind: kind)
     let hadConflicts = status.files.contains(where: \.isConflicted)
     activeTask = Task {
       defer {
@@ -1044,6 +1073,7 @@ struct DiffTab: Identifiable, Equatable {
       var result = OperationResult.succeeded
       do {
         try Task.checkCancellation()
+        activity.markRunning()
         try await action(await git())
         if error != nil {
           result = .failed
@@ -1066,7 +1096,7 @@ struct DiffTab: Identifiable, Equatable {
         self.error = localizedUI(error.localizedDescription)
       }
       await store.workspace.endManualOperation()
-      activity.advance(store.text("Refreshing", "刷新仓库"), cancellable: false)
+      activity.advance(store.text("Refreshing", "刷新仓库"), cancellable: false, phase: .refreshing)
       await refresh()
       if !hadConflicts, status.files.contains(where: \.isConflicted) {
         setPage("conflicts")
@@ -1079,13 +1109,17 @@ struct DiffTab: Identifiable, Equatable {
         error = nil
         result = .needsAttention
       }
-      activity.finish(result, ticket: progressTicket)
+      if result == .needsAttention || status.operation != nil || status.files.contains(where: \.isConflicted) {
+        await captureOperationRecovery(progressTicket.id)
+      }
+      activity.finish(result, ticket: progressTicket,
+        waitingForUser: result == .needsAttention && (pendingPushRecovery != nil || pendingMergeReview != nil || needsUpstream))
       if notify, let output { store.notifyCompletion(output) }
     }
   }
   func cancel() {
     guard !committing else { return }
-    activity.advance(store.text("Cancelling", "取消中"), cancellable: false)
+    activity.advance(store.text("Cancelling", "取消中"), cancellable: false, phase: .cancelling)
     activeTask?.cancel()
   }
   func commit(push: Bool) {
@@ -1119,7 +1153,7 @@ struct DiffTab: Identifiable, Equatable {
     let reviewed = reviewedPatches
     run(
       label: store.text(push ? "Commit & Push" : "Committing", push ? "提交并推送" : "提交"),
-      completion: "", notify: true
+      completion: "", notify: true, kind: push ? .commitAndPush : .commit
     ) {
       [weak self] git in
       guard let self else { return }
@@ -1202,7 +1236,7 @@ struct DiffTab: Identifiable, Equatable {
       : operation == "pull"
         ? store.text("Pull completed.", "拉取已完成。")
         : store.text("Fetch completed.", "获取已完成。")
-    run(label: title, completion: completed, notify: true) { [weak self] git in
+    run(label: title, completion: completed, notify: true, kind: operation == "push" ? .push : operation == "pull" ? .pull : .fetch) { [weak self] git in
       guard let self else { return }
       networkFetching = operation == "fetch"
       defer { networkFetching = false }
@@ -1273,7 +1307,7 @@ struct DiffTab: Identifiable, Equatable {
   }
   private func mergeAndPush(_ rejection: PushRejection) {
     run(
-      label: store.text("Merge & Push", "合并并推送"), completion: "", notify: true
+      label: store.text("Merge & Push", "合并并推送"), completion: "", notify: true, kind: .mergeAndPush
     ) { [weak self] git in
       guard let self else { return }
       defer { committing = false }
@@ -1336,7 +1370,7 @@ struct DiffTab: Identifiable, Equatable {
   }
   func reviewMergeContinuation(push: Bool = false) {
     guard status.operation == .merge, !status.files.contains(where: \.isConflicted) else { return }
-    run(label: store.text("Reviewing merge", "审查合并"), completion: "") { [weak self] git in
+    run(label: store.text("Reviewing merge", "审查合并"), completion: "", kind: .merge) { [weak self] git in
       guard let self else { return }
       pendingMergeReview = (try await git.reviewMerge(), push)
       outputResult = .needsAttention
@@ -1370,7 +1404,7 @@ struct DiffTab: Identifiable, Equatable {
       label: store.text(
         target == nil ? "Continuing merge" : "Continue Merge & Push",
         target == nil ? "继续合并" : "继续合并并推送"),
-      completion: "", notify: true
+      completion: "", notify: true, kind: target == nil ? .merge : .mergeAndPush
     ) { [weak self] git in
       guard let self else { return }
       committing = true
@@ -1420,7 +1454,7 @@ struct DiffTab: Identifiable, Equatable {
     }
     run(
       label: store.text("Pushing", "推送"), completion: store.text("Push completed.", "推送已完成。"),
-      notify: true
+      notify: true, kind: .push
     ) { [weak self] git in
       guard let self else { return }
       do {
@@ -1537,7 +1571,7 @@ struct DiffTab: Identifiable, Equatable {
     confirmationReviewID = UUID()
     confirmationReviewTask?.cancel()
     let action: (GitOperationReview?) -> Void = { [weak self] review in
-      self?.run { [weak self] git in
+      self?.run(kind: args.first == "rebase" ? .rebase : args.first == "merge" ? .merge : .git) { [weak self] git in
         self?.output = try await git.perform(args, expected: review)
         if args == ["merge", "--abort"] { self?.conflictPush = nil }
       }

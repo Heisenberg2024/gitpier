@@ -24,6 +24,14 @@ for executable in ['Autoupdate', 'Updater.app/Contents/MacOS/Updater', 'XPCServi
     assert path.stat().st_mode & 0o111, f'Non-executable Sparkle helper: {executable}'
     assert set(subprocess.check_output(['lipo', '-archs', str(path)], text=True).split()) == {'arm64', 'x86_64'}, f'Missing helper architecture: {executable}'
 assert (framework / 'Versions/Current').is_symlink() and (framework / 'Sparkle').is_symlink(), 'Framework links lost'
+launcher = app / 'Contents/Helpers/gitpier'
+# Historical upgrade fixtures retain their real pre-CLI bundle contents.
+if tuple(map(int, config['version'].split('.'))) >= (1, 7, 0) or launcher.exists():
+    assert launcher.is_file() and not launcher.is_symlink() and launcher.stat().st_mode & 0o111, 'Missing CLI launcher'
+    launcher_architectures = set(subprocess.check_output(['lipo', '-archs', str(launcher)], text=True).split())
+    if args.universal == '1':
+        assert launcher_architectures == {'arm64', 'x86_64'}, 'Missing CLI universal slice'
+    subprocess.run(['codesign', '--verify', '--strict', str(launcher)], check=True)
 binary = app / 'Contents/MacOS/GitPier'
 assert binary.stat().st_mode & 0o111, 'App is not executable'
 architectures = subprocess.check_output(['lipo', '-archs', str(binary)], text=True).split()

@@ -2,7 +2,7 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 task_mode="${1:-version140}"
-case "$task_mode" in review|review-stability|hosting|hosting-browser|version144|version142|version140|dashboard|full|workspace-performance) ;; *) echo 'Use review, review-stability, hosting, hosting-browser, version144, version142, version140, dashboard, full or workspace-performance.' >&2; exit 1;; esac
+case "$task_mode" in workflow170|review|review-stability|hosting|hosting-browser|version144|version142|version140|dashboard|full|workspace-performance) ;; *) echo 'Use workflow170, review, review-stability, hosting, hosting-browser, version144, version142, version140, dashboard, full or workspace-performance.' >&2; exit 1;; esac
 task_output="${2:-$PWD/.cache/ui-acceptance/workspace}"
 [[ -x dist/GitPier.app/Contents/MacOS/GitPier ]] || { echo 'Build GitPier.app through Scripts/build-app.sh first.' >&2; exit 1; }
 mkdir -p .cache "$task_output"

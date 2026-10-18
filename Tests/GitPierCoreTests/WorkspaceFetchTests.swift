@@ -51,6 +51,32 @@ final class WorkspaceFetchTests: XCTestCase {
     let remote = GitRemote(name: name, fetchURL: "fixture", pushURL: "fixture", configuredFetchURLs: ["fixture"], configuredPushURLs: [], configurationID: "fixture")
     return WorkspaceFetchTarget(record: record, commonDirectory: common, remote: remote, configurationIdentity: "fixture")
   }
+  func testAttemptScopedCancelCannotCancelANewerRetry() async throws {
+    let probe = FetchProbe(pause: true)
+    let coordinator = BatchFetchCoordinator(concurrency: 1, executor: { try await probe.run($0) })
+    let target = target()
+    await coordinator.submit([target]); await probe.started(1)
+    let firstJobs = await coordinator.current(); let first = try XCTUnwrap(firstJobs.first)
+    await probe.release(); await coordinator.waitUntilIdle()
+    await coordinator.submit([target]); await probe.started(2)
+    let secondJobs = await coordinator.current(); let second = try XCTUnwrap(secondJobs.first)
+    XCTAssertNotEqual(first.attemptID, second.attemptID)
+    await coordinator.cancel([target.id], expectedAttempts: [target.id: first.attemptID])
+    await probe.release(); await coordinator.waitUntilIdle()
+    let finished = await coordinator.current()
+    XCTAssertEqual(finished.first?.state, .succeeded)
+  }
+  func testAttemptScopedCancelStillCancelsItsCurrentAttempt() async throws {
+    let probe = FetchProbe(pause: true)
+    let coordinator = BatchFetchCoordinator(concurrency: 1, executor: { try await probe.run($0) })
+    let target = target()
+    await coordinator.submit([target]); await probe.started(1)
+    let currentJobs = await coordinator.current(); let current = try XCTUnwrap(currentJobs.first)
+    await coordinator.cancel([target.id], expectedAttempts: [target.id: current.attemptID])
+    await probe.release(); await coordinator.waitUntilIdle()
+    let finished = await coordinator.current()
+    XCTAssertEqual(finished.first?.state, .cancelled)
+  }
   func testReviewedFetchPreservesHEADWorkingTreeIndexAndFETCHHEAD() async throws {
     try "staged\n".write(to: root.appendingPathComponent("file.txt"), atomically: true, encoding: .utf8); try await raw(["add", "file.txt"])
     try "working\n".write(to: root.appendingPathComponent("file.txt"), atomically: true, encoding: .utf8)

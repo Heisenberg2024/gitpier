@@ -96,12 +96,19 @@ struct GitPierApp: App {
   var body: some Scene {
     WindowGroup("GitPier", id: "workspace") {
       RootView().environmentObject(store).modifier(AppAppearance(store: store))
+        .onOpenURL { url in AppDelegate.routeURLs([url]) }
+        .handlesExternalEvents(preferring: ["gitpier://"], allowing: ["gitpier://"])
         .safeAreaInset(edge: .top, spacing: 0) { HostingReviewDraftBanner(registry: store.reviewSessions).environmentObject(store) }
         .environment(
           \.locale, Locale(identifier: store.settings.language == .english ? "en_US" : "zh_Hans")
         )
         .frame(minWidth: 960, minHeight: 640)
     }.defaultSize(width: 1440, height: 920).windowToolbarStyle(.unifiedCompact)
+      .onChange(of: store.navigationPresentationPending, initial: true) { _, pending in
+        // URL launch may create no workspace at all. Activation alone cannot
+        // present a window; ask the original WindowGroup to create it once.
+        if pending && store.managedWindows.isEmpty { openWindow(id: "workspace") }
+      }
       .commands {
         CommandGroup(replacing: .appInfo) {
           Button(store.text("About GitPier", "关于 GitPier")) {
@@ -185,8 +192,12 @@ struct GitPierApp: App {
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
   nonisolated(unsafe) private var keyMonitor: Any?
-  func application(_ application: NSApplication, open urls: [URL]) {
+  func application(_ application: NSApplication, open urls: [URL]) { Self.routeURLs(urls) }
+  @MainActor static func routeURLs(_ urls: [URL]) {
     let callbacks = urls.filter { $0.scheme == "gitpier" && $0.host == "oauth" && $0.path == "/gitlab" }
+    for url in urls where url.host == "navigate" {
+      if let request = try? NavigationRequest(url: url) { AppStore.shared.enqueueNavigation(request) }
+    }
     guard !callbacks.isEmpty else { return }
     Task { @MainActor in
       for url in callbacks {

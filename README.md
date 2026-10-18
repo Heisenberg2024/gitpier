@@ -89,6 +89,10 @@ Released [v1.6.0](https://github.com/Heisenberg2024/gitpier/releases/tag/v1.6.0)
 
 Released [v1.6.1](https://github.com/Heisenberg2024/gitpier/releases/tag/v1.6.1) (build 28) saves minimal operation intent before confirmed review writes and keeps unknown results visible across restart. Bodies and code are not saved; reopening never resends a request. Inspect known receipts read-only, check the platform and explicitly acknowledge the result before a new preview. Disconnect confirms draft loss across windows. See [recovery and platform limits](docs/code-review.md) and [validation status](docs/v1.6.1-validation.md). Exact-commit Swift 6.1.2 CI passed 855 Core tests and 10 release gates; signed public downloads and the Latest update Feed were verified. Authorized test repositories have 17 verified review operations and one GitLab ordinary comment retained as Unknown; approvals and reviewer requests still lack eligible test accounts. See the validation matrix for exact scope.
 
+## Workflow integration — v1.7.0 (Unreleased)
+
+The upcoming v1.7.0 adds a shared [Operations Center](docs/operations-center.md), commands in the existing **⌘⇧P Quick Open**, and the navigation-only [GitPier CLI](docs/cli.md). Run `gitpier open . --page history` to return from a terminal to the selected app. Install/uninstall in Settings → Terminal; existing files and shell configuration are preserved. These additions retain existing Git write confirmations, credentials and Review Journal recovery. This version is in development; release gates and remaining system checks are tracked in [validation](docs/v1.7.0-validation.md).
+
 ## Screenshots
 
 

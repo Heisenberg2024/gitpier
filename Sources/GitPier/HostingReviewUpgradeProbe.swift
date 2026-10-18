@@ -42,6 +42,8 @@ enum HostingReviewUpgradeProbePathGate {
   private struct Result: Encodable {
     let passed: Bool
     let actualApplicationProcess: Bool
+    let applicationVersion: String
+    let applicationBuild: String
     let accountIDs: [UUID]
     let checks: [String: Bool]
   }
@@ -65,8 +67,9 @@ enum HostingReviewUpgradeProbePathGate {
     let info = Bundle.main
     guard info.object(forInfoDictionaryKey: "GitPierTestingUpdates") as? Bool == true,
       let identity = info.bundleIdentifier, identity.hasPrefix("com.heisenberg2024.gitpier.update-test."),
-      info.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String == "1.6.1",
-      info.object(forInfoDictionaryKey: "CFBundleVersion") as? String == "28",
+      let version = info.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String,
+      let build = info.object(forInfoDictionaryKey: "CFBundleVersion") as? String,
+      ["1.6.1:28", "1.7.0:29"].contains(version + ":" + build),
       let configuredPath = info.object(forInfoDictionaryKey: "GitPierTestWorkspacePath") as? String
     else { return }
     let workspace = store.persistence.url
@@ -95,6 +98,7 @@ enum HostingReviewUpgradeProbePathGate {
       "workspaceAndSettings": false, "metadataAndBinding": false, "localVaultDecryptedByApplication": false,
       "keychainMetadataRemainsLocked": false, "disconnectionIntentApplied": false,
       "reviewJournalRecoveredAsUnknown": false, "unknownTargetBlocked": false,
+      "operationCenterReflectsJournal": false, "ordinaryTasksNotRestored": false,
     ]
     let hosting = store.hosting
     checks["workspaceAndSettings"] = store.configuration.selectedRepository == repositoryID
@@ -130,12 +134,16 @@ enum HostingReviewUpgradeProbePathGate {
       let target = HostingReviewTarget(instance: local.instance, accountID: local.id, userID: local.user.stableID,
         repository: "upgrade/fixture", repositoryID: "88", requestNumber: 7, requestID: "99")
       checks["unknownTargetBlocked"] = await store.reviewSessions.coordinator.isBlocked(target)
+      checks["operationCenterReflectsJournal"] = store.operations.records.contains {
+        $0.id == confirmationID && $0.kind == .review && $0.state == .resultUnknown && $0.recovery == .reviewJournal
+      }
+      checks["ordinaryTasksNotRestored"] = store.operations.records.allSatisfy { $0.kind == .review }
     } catch { /* Keep failed checks explicit without writing errors or credential data. */ }
     writeResult(checks, resultFile)
   }
   private static func writeResult(_ checks: [String: Bool], _ url: URL) {
     let result = Result(passed: checks.values.allSatisfy { $0 }, actualApplicationProcess: true,
-      accountIDs: [localID, keychainID, disconnectedID], checks: checks)
+      applicationVersion: AppResources.version, applicationBuild: AppResources.build, accountIDs: [localID, keychainID, disconnectedID], checks: checks)
     guard let data = try? JSONEncoder().encode(result) else { return }
     do {
       try data.write(to: url, options: .atomic)

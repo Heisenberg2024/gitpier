@@ -5,6 +5,7 @@ import GitPierCore
 /// A workspace owns one coordinator across all windows. Drafts stay in memory;
 /// only minimal write intent and receipt metadata enter the operation journal.
 @MainActor final class HostingReviewSessionRegistry: ObservableObject {
+  weak var operationCenter: OperationsCenter?
   let coordinator: HostingReviewSubmissionCoordinator
   let journalURL: URL
   @Published var recoveredOperations: [HostingReviewOperationRecord] = []
@@ -573,8 +574,16 @@ import GitPierCore
   func submit(_ snapshot: HostingReviewConfirmation) {
     guard identityValid, !submitting else { return }
     submitting = true; confirmation = nil; actionError = nil; status = nil
+    registry?.operationCenter?.begin(id: snapshot.id, kind: .review, repositoryID: binding.repositoryID, state: .running)
     submissionTask = Task {
-      defer { submitting = false; submissionTask = nil; Task { [weak registry] in await registry?.refreshRecovery() } }
+      defer {
+        let currentReport = report?.confirmationID == snapshot.id ? report : nil
+        let outcome: WorkflowOperationState = currentReport?.hasUnknown == true ? .resultUnknown
+          : currentReport?.complete == true ? .succeeded : .needsAttention
+        registry?.operationCenter?.update(snapshot.id, state: outcome, recovery: .reviewJournal)
+        submitting = false; submissionTask = nil
+        Task { [weak registry] in await registry?.refreshRecovery() }
+      }
       guard identityValid else { return }
       do {
         let result = try await coordinator.submit(snapshot,

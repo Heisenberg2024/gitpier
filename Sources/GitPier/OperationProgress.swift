@@ -16,40 +16,57 @@ struct OperationState {
 @MainActor final class OperationProgress: ObservableObject {
   @Published private(set) var state: OperationState?
   @Published private(set) var canCancel = false
+  weak var center: OperationsCenter?
+  var repositoryIdentity: (() -> OperationRepositoryIdentity?)?
+  var repositoryID: UUID?
+  var cancelOperation: (() -> Void)?
   private var id = UUID()
   private var stage = 0
   private var originalTitle = ""
   private var dismissal: Task<Void, Never>?
   var ticket: OperationTicket { OperationTicket(id: id, stage: stage) }
-  @discardableResult func begin(_ title: String, cancellable: Bool = true) -> OperationTicket {
+  @discardableResult func begin(_ title: String, cancellable: Bool = true, kind: WorkflowOperationKind = .git, observed: Bool = true) -> OperationTicket {
     dismissal?.cancel()
     id = UUID()
     stage = 0
     originalTitle = title
     canCancel = cancellable
     state = OperationState(title: title)
+    if observed { center?.begin(id: id, kind: kind, repositoryID: repositoryID, identity: repositoryIdentity?(), cancel: cancellable ? cancelOperation : nil) }
     return ticket
   }
-  func advance(_ title: String, cancellable: Bool? = nil) {
+  func advance(_ title: String, cancellable: Bool? = nil, phase: WorkflowOperationPhase = .executing) {
     stage += 1
     if let cancellable { canCancel = cancellable }
     state = OperationState(title: title)
+    center?.update(id, cancellable: canCancel, phase: phase)
   }
+  func markRunning() { center?.update(id, state: .running) }
   func receiver() -> @Sendable (GitTransferProgress) -> Void {
     let expected = ticket
     return { [weak self] progress in
       Task { @MainActor [weak self] in
         guard let self, self.ticket == expected, self.state?.result == .running else { return }
         self.state?.transfer = progress
+        self.center?.update(expected.id, transfer: progress)
       }
     }
   }
-  func finish(_ result: OperationResult, ticket expected: OperationTicket) {
-    guard id == expected.id else { return }
+  func finish(_ result: OperationResult, ticket expected: OperationTicket, waitingForUser: Bool = false) {
+    guard id == expected.id, state?.result == .running else { return }
     state?.title = originalTitle
     state?.result = result
     state?.transfer = nil
     canCancel = false
+    let outcome: WorkflowOperationState
+    switch result {
+    case .running: return
+    case .succeeded: outcome = .succeeded
+    case .failed: outcome = .failed
+    case .cancelled: outcome = .cancelled
+    case .needsAttention: outcome = waitingForUser ? .waitingForUser : .needsAttention
+    }
+    center?.update(id, state: outcome)
     let completed = id
     dismissal = Task { [weak self] in
       do { try await Task.sleep(for: .seconds(result == .succeeded ? 1.5 : 3)) } catch { return }

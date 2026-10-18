@@ -1,5 +1,23 @@
 # Development
 
+## v1.7.0 workflow development (Unreleased)
+
+See the [acceptance matrix](v1.7.0-validation.md), [CLI guide](cli.md), [Operations Center guide](operations-center.md) and [Developer ID/notarization plan](developer-id-notarization.md). Internal CLI product name `GitPierCommandLine` avoids collisions with `GitPier` on case-insensitive filesystems; packaging renames it to the signed `Contents/Helpers/gitpier`. Production version/build still have one source in ReleaseConfiguration.json.
+
+```sh
+Scripts/test.sh --filter 'OperationCenterTests|NavigationRequestTests|CLIToolInstallationTests'
+Scripts/test.sh
+Scripts/build-app.sh
+UNIVERSAL=1 Scripts/build-app.sh
+Scripts/workspace-acceptance.sh workflow170 .cache/ui-acceptance/workflow170
+Scripts/workspace-acceptance.sh full .cache/ui-acceptance/workflow170-full
+python3 Scripts/test-release-tools.py
+```
+
+Native routing acceptance uses a disposable app with no `CFBundleURLTypes`, fixture-only workspace metadata and a unique runtime Bundle ID under the existing `workspace-test.workflow170` namespace. Use a private `/private/tmp/GitPier-workflow170-*` workspace to avoid changing Documents privacy permissions. The production URL handler must remain unchanged. Do not install into the real user bin directory during fixtures; use `CLIToolInstallation(directory:)` with an owned temporary directory. Exact-source Swift 6.1 CI and independent review remain release gates, not implied by a local build.
+
+简体中文：v1.7.0为未发布开发版，专项/完整Core、原生UI、CLI与Universal/DMG分别记录证据。CLI内部产物须避免与主程序仅大小写不同，正式命令仍为gitpier。夹具使用私有临时目录/独立身份，不更改生产回调或实际安装。Swift6.1同源码CI与独立复核保持发布门槛。
+
 ## v1.6.1 publication — 2026-10-18
 
 [GitPier v1.6.1 (28)](https://github.com/Heisenberg2024/gitpier/releases/tag/v1.6.1) was published as **Latest** at **2026-10-18 22:58:47 Asia/Shanghai**, release `416510671`, tag/source `74dc071187cfbf6e0b6f6a574eb94e155f140d07`. The owner approved the exact bilingual release notes and publication. [Main CI 39135432486](https://github.com/Heisenberg2024/gitpier/actions/runs/39135432486) passed full macOS validation with Swift 6.1.2: **855 Core tests**, zero failures, **486.628 s**, **10 release gates**, **1.184 s**, build, temporary DMG, signature/permission-preserving archive and upload. [Tag CI 39138220447](https://github.com/Heisenberg2024/gitpier/actions/runs/39138220447) passed by explicitly reusing that exact full run, attempt 1; it did not rerun the macOS suite.
@@ -705,3 +723,11 @@ Use `Scripts/test.sh`, `python3 Scripts/test-release-tools.py`, `python3 Scripts
 For actual 27 → 28 updating, start `Scripts/serve-update-test.py` on a fresh ignored `.cache/update-acceptance/<name>/server`, then run `python3 Scripts/prepare-review-upgrade-test.py .cache/update-acceptance/<name> --old-app <real-1.6.0-app> --new-app dist/GitPier.app`. This rejects substituted versions, source code changes, existing outputs and unrelated server files; it records code-section hashes before/after test re-signing and replaces the callback scheme with an isolated test scheme. It creates a new private `/private/tmp/GitPier-update-acceptance-*` runtime. The installed old app belongs in the private runtime, outside Documents privacy-gated paths; the downloadable new app stays in the ignored fixture directory. Only a test flag, isolated identity/private path and explicit fixed synthetic marker can enable `HostingReviewUpgradeProbe`; production identity and environment variables alone cannot select it. The probe checks actual application Local Vault restoration and unknown-operation recovery, never unlocks Keychain or invokes provider APIs. An independent external data probe is separate evidence. Confirm installation/relaunch and all result files before reporting an update passed, then quit test apps, detach only owned mounts, stop the loopback server and remove the disposable keys/runtime.
 
 简体中文：上述命令分别检查自动化、隔离原生 UI 与真实 27→28 测试更新。GUI 串行运行，生产应用/偏好/Feed/更新私钥不参与；测试副本使用独立身份与 scheme。新应用探针只能由严格测试身份、私有路径和固定合成 marker 开启，只在应用内验证 Local Vault/元数据/Journal，绝不解锁 Keychain 或访问平台 API。外部解密、读取 Feed 或挂载镜像不能单独证明实际安装升级成功。
+
+### Workflow live-update and CLI window regression
+
+`Scripts/workspace-acceptance.sh workflow170` keeps one Operations Center mounted across asynchronous running/progress/cancellation/final events; a begin-and-finish pair in the same run-loop turn cannot detect stale rows. It also exercises deferred/minimized window presentation and the actual Terminal settings form at 760 points in both languages/themes. Static SwiftUI text must be read through AXValue as well as AXLabel.
+
+Cold URL launches explicitly request the original workspace using SwiftUI’s [OpenWindowAction](https://developer.apple.com/documentation/swiftui/openwindowaction) when no managed window exists; the window hook then fulfils foreground presentation.
+
+For external CLI acceptance, check both the foreground PID and a visible workspace window before using any GUI tool that might open or raise GitPier. A successful Launch Services callback, an active process, or an early navigation snapshot with zero windows is insufficient. Use only disposable app identities and fixture repositories; never install/uninstall the user's real launcher during UI acceptance.

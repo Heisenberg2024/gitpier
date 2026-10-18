@@ -83,6 +83,19 @@ extension UIAcceptance {
     let batchCalls = await batch.count()
     try require(partialReport.submittedCount == 2 && partialReport.hasUnknown && batchCalls == 3, "Partial submission did not stop after the uncertain item")
 
+    // Invalidate the binding synchronously after confirmation, before its Task can send.
+    otherSession.begin(.comment); otherSession.composerBody = "Synthetic revoked binding"
+    otherSession.prepareComposer()
+    let revoked = try XCTHostingUnwrap(otherSession.confirmation)
+    otherSession.submit(revoked)
+    try hosting.unbind(otherBinding.id)
+    try await waitFor { !otherSession.submitting }
+    let revokedWrites = await transport.count()
+    try require(!otherSession.disconnected && otherSession.report == nil && revokedWrites == 0
+      && store.operations.records.contains { $0.id == revoked.id && $0.state == .needsAttention },
+      "A revoked binding without a verified report was incorrectly shown as successful")
+    try await hosting.bind(otherBinding, account: other)
+
     var windows: [NSWindow] = []
     func show<V: View>(_ view: V, size: NSSize = NSSize(width: 960, height: 640)) -> NSWindow {
       let host = NSHostingView(rootView: view); host.sizingOptions = []; host.autoresizingMask = [.width, .height]
@@ -116,6 +129,8 @@ extension UIAcceptance {
     let disconnectedUnknown = try XCTHostingUnwrap(store.reviewSessions.recoveredOperations.first(where: { $0.isUnresolved && $0.identity.requestID == "200" }))
     try require(disconnectedUnknown.receipt?.id == "7001" && !session.hasPrivateDraftContent && session.report == nil,
       "Late completed receipt was lost or repopulated a disconnected session")
+    try require(store.operations.records.contains { $0.id == snapshot.id && $0.state == .resultUnknown },
+      "Operation Center did not retain the authoritative unknown after disconnect")
     let retainedAttempt = await store.reviewSessions.coordinator.report(snapshot.id)
     let retainedPartial = await store.reviewSessions.coordinator.report(partial.id)
     try require(retainedAttempt == nil && retainedPartial == nil,
@@ -210,7 +225,8 @@ extension UIAcceptance {
       "late_receipt_retained": true, "late_private_state_rejected": true, "coordinator_private_reports_discarded": true,
       "reconnected_same_remote_user_blocked": true, "restart_unknowns": 2,
       "partial_states": rows.map { $0.state.rawValue }, "manual_ack_cancel_preserved": true, "manual_ack_did_not_retry": true,
-      "corrupt_original_preserved": true, "synthetic_transport_writes": await transport.count()]
+      "corrupt_original_preserved": true, "revoked_binding_not_success": true, "operation_center_retains_unknown": true,
+      "synthetic_transport_writes": await transport.count()]
     try JSONSerialization.data(withJSONObject: result, options: [.prettyPrinted, .sortedKeys]).write(to: output.appendingPathComponent("stability-results.json"))
   }
 }

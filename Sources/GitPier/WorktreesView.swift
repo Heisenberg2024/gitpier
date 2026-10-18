@@ -105,7 +105,7 @@ struct WorktreesView: View {
       let review = try await model.git().reviewWorktreeRemoval(record, ownership: owned)
       guard request.current(ticket), !model.busy, store.current === model, model.page == "worktrees" else { return }
       model.confirmation = PendingAction(title: store.text("Remove Worktree?", "移除工作树？"), detail: store.text("This deletes the clean linked directory and its Git registration. Existing branches are retained. Detached commits must have a retaining reference. Affected path: ", "将删除干净的关联工作目录及 Git 注册，已有分支会保留，分离 HEAD 提交必须有引用保留。受影响路径：") + "\n\n" + record.path) {
-        model.run { git in
+        model.run(kind: .removeWorktree) { git in
           try store.validateWorktreeSessions(record.path)
           try await git.removeWorktree(review)
           store.forgetWorktree(owned)
@@ -182,7 +182,7 @@ struct WorktreeCreationSheet: View {
         Button(store.text("Create", "创建")) {
           let path = destination, name = branch, new = newBranch, start = startAt
           dismiss()
-          model.run { git in
+          model.run(kind: .createWorktree) { git in
             let owned = try await git.createWorktree(destination: URL(fileURLWithPath: path), branch: name, newBranch: new, startAt: start)
             store.rememberWorktree(owned)
             await store.addRepository(URL(fileURLWithPath: owned.path), group: model.record.group)

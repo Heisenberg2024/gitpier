@@ -7,6 +7,7 @@ let package = Package(
   products: [
     .library(name: "GitPierCore", targets: ["GitPierCore"]),
     .executable(name: "GitPier", targets: ["GitPier"]),
+    .executable(name: "GitPierCommandLine", targets: ["GitPierCLI"]),
   ],
   dependencies: [
     .package(url: "https://github.com/migueldeicaza/SwiftTerm.git", exact: "1.20.0"),
@@ -15,6 +16,7 @@ let package = Package(
   targets: [
     .target(name: "GitPierCore", dependencies: ["PTYSupport"]),
     .target(name: "PTYSupport"),
+    .executableTarget(name: "GitPierCLI", dependencies: ["GitPierCore"]),
     .executableTarget(
       name: "GitPier",
       dependencies: [

@@ -22,6 +22,7 @@ extension HostingReviewSessionRegistry {
       guard recoveryLifecycle == lifecycle, recoveryTicket == ticket else { return }
       recoveryError = error.localizedDescription
     }
+    operationCenter?.reconcileJournal(recoveredOperations)
     for session in Array(sessions.values) { await session.refreshBlockState() }
   }
   var unresolvedOperations: [HostingReviewOperationRecord] { recoveredOperations.filter(\.isUnresolved) }

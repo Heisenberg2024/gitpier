@@ -114,7 +114,13 @@ import GitPierCore
           self.allFetchJobs = jobs
           self.fetchJobs = jobs.filter { !$0.automatic }
           self.store.objectWillChange.send()
-          for job in jobs { await self.observeFetch(job) }
+          for job in jobs {
+            let targetID = job.id, attemptID = job.attemptID
+            self.store.operations.observe(job) { [weak self] in
+              Task { await self?.fetch.cancel([targetID], expectedAttempts: [targetID: attemptID]) }
+            }
+            await self.observeFetch(job)
+          }
 
         }
       }
