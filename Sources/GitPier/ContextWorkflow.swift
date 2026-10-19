@@ -196,14 +196,17 @@ struct WorkflowComparisonRequest: Identifiable {
     let state = context.status
     let remote = workflowRemoteCheck()
     let destination = context.remotes.first { $0.name == context.upstreamRemote }
-    return store.text("Working tree", "工作树") + ": " + context.workingTree + "\n"
-      + store.text("Branch / HEAD", "分支 / HEAD") + ": " + state.branch + " · " + String((state.head ?? "unborn").prefix(12)) + "\n"
-      + store.text("Upstream", "上游") + ": " + (state.upstream ?? "—") + " · " + String((context.upstreamHash ?? "—").prefix(12)) + "\n"
-      + store.text("Remote / destination", "远程 / 目标") + ": " + (context.upstreamRemote ?? "—") + " / " + (context.upstreamDestination ?? "—") + "\n"
-      + store.text("Fetch / Push URL", "获取 / 推送地址") + ": " + GitService.redact(destination?.fetchURL ?? "—") + " / " + GitService.redact(destination?.pushURL ?? "—") + "\n"
-      + store.text("Ahead / behind", "领先 / 落后") + ": \(state.ahead) / \(state.behind)\n"
-      + store.text("Staged / unstaged files", "已暂存 / 未暂存文件") + ": \(state.staged.count) / \(state.files.filter(\.isUnstaged).count)\n"
-      + store.text("Last successful Fetch", "上次成功获取") + ": " + (remote.lastSuccess?.formatted(date: .abbreviated, time: .shortened) ?? store.text("Unknown", "未知")) + "\n"
-      + store.text("Tracking counts are a local Fetch snapshot, not a live server guarantee. Changes invalidate this review.", "跟踪计数来自本地 Fetch 快照，不保证服务器实时状态；上下文变化后此次审查失效。")
+    let details: [String] = [
+      store.text("Working tree", "工作树") + ": " + context.workingTree,
+      store.text("Branch / HEAD", "分支 / HEAD") + ": " + state.branch + " · " + String((state.head ?? "unborn").prefix(12)),
+      store.text("Upstream", "上游") + ": " + (state.upstream ?? "—") + " · " + String((context.upstreamHash ?? "—").prefix(12)),
+      store.text("Remote / destination", "远程 / 目标") + ": " + (context.upstreamRemote ?? "—") + " / " + (context.upstreamDestination ?? "—"),
+      store.text("Fetch / Push URL", "获取 / 推送地址") + ": " + GitService.redact(destination?.fetchURL ?? "—") + " / " + GitService.redact(destination?.pushURL ?? "—"),
+      store.text("Ahead / behind", "领先 / 落后") + ": \(state.ahead) / \(state.behind)",
+      store.text("Staged / unstaged files", "已暂存 / 未暂存文件") + ": \(state.staged.count) / \(state.files.filter(\.isUnstaged).count)",
+      store.text("Last successful Fetch", "上次成功获取") + ": " + (remote.lastSuccess?.formatted(date: .abbreviated, time: .shortened) ?? store.text("Unknown", "未知")),
+      store.text("Tracking counts are a local Fetch snapshot, not a live server guarantee. Changes invalidate this review.", "跟踪计数来自本地 Fetch 快照，不保证服务器实时状态；上下文变化后此次审查失效。"),
+    ]
+    return details.joined(separator: "\n")
   }
 }

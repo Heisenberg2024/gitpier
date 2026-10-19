@@ -1588,11 +1588,11 @@ struct DiffTab: Identifiable, Equatable {
       self?.run(kind: args.first == "rebase" ? .rebase : args.first == "merge" ? .merge : .git) { [weak self] git in
         guard let self else { return }
         if let context {
-          guard store.current === self, !store.showDashboard, store.settings.gitPath == context.gitExecutable,
-            URL(fileURLWithPath: record.path).resolvingSymlinksInPath().path == context.workingTree else { throw GitPierError.indexChanged }
+          guard self.store.current === self, !self.store.showDashboard, self.store.settings.gitPath == context.gitExecutable,
+            URL(fileURLWithPath: self.record.path).resolvingSymlinksInPath().path == context.workingTree else { throw GitPierError.indexChanged }
         }
-        output = try await git.perform(args, expected: review, context: context)
-        if args == ["merge", "--abort"] { conflictPush = nil }
+        self.output = try await git.perform(args, expected: review, context: context)
+        if args == ["merge", "--abort"] { self.conflictPush = nil }
       }
     }
     guard let detail else { action(nil); return }
