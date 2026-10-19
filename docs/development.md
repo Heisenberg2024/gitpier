@@ -1,8 +1,20 @@
 # Development
 
-## v1.7.0 workflow development (Unreleased)
+## v1.7.0 publication — 2026-10-19
 
-See the [acceptance matrix](v1.7.0-validation.md), [CLI guide](cli.md), [Operations Center guide](operations-center.md), [contextual workflow](context-workflow.md) and [Developer ID/notarization plan](developer-id-notarization.md). Internal CLI product name `GitPierCommandLine` avoids collisions with `GitPier` on case-insensitive filesystems; packaging renames it to the signed `Contents/Helpers/gitpier`. Production version/build still have one source in ReleaseConfiguration.json.
+[GitPier v1.7.0 (29)](https://github.com/Heisenberg2024/gitpier/releases/tag/v1.7.0) was published as **Latest** at **2026-10-19 22:41:45 Asia/Shanghai**, release `417398240`, from `dfcd0f65e1df889985a4e9a385db1d78d814032c`. The owner approved the exact bilingual notes. [Main CI 39266290595](https://github.com/Heisenberg2024/gitpier/actions/runs/39266290595) passed full macOS validation using Swift 6.1.2: **932 Core tests**, zero failures, **554.547 s**, all ten release gates, build, temporary DMG structure and signature/permission-preserving archive/upload. [Tag CI 39270296068](https://github.com/Heisenberg2024/gitpier/actions/runs/39270296068) explicitly reused that exact full run. The CI repair made nested closure captures explicit and split a type-check-heavy string expression without changing behavior.
+
+Independent read-only review passed on the final source after fixing a CLI cleanup race. The tool and receipt enter exclusive 0700 custody before deletion, are revalidated there, and restore without overwriting concurrent replacements. All **21 installer tests** and the complete local **932 tests** passed (241.238 s). The final Universal app and helper contain arm64/x86_64, pass deep signatures and bundle checks, and retain all 290 frozen tracked inputs. Final native assistant/workflow/workflow170 acceptance passed **87 / 37 / 41** records.
+
+The final DMG is **26,471,828 bytes**, SHA256 `c1535a9975bfadbdf7676cf13a328e2e13753e2f1124b27325b27f1b320655c3`; its 115 application files/links and modes match the built bundle. Finder inspection confirmed the application/Applications icons, arrow and bilingual instructions. The existing production Keychain Ed25519 key signed both DMG and appcast; CryptoKit and independent Node verification passed, including equal-length tamper rejection. Three Draft assets were downloaded by ID before publication; anonymous public downloads and the canonical Latest Feed then matched exact bytes, hashes, signatures, notes, version/build and minimum OS. All 16 historical releases, 44 remote assets, 16 tags and 32 local historical assets remained unchanged.
+
+An isolated actual **1.6.1 (28) → 1.7.0 (29)** Sparkle update replaced and automatically relaunched the app. The new process passed nine recovery checks, matched the prepared binary, and passed an independent workspace/credential-metadata/local-Vault/Review-journal/partial-Index probe. The test used a unique Bundle ID, loopback Feed and disposable key; the actual installed app, production credentials and URL handler were not replaced. Owned runtime, test preferences, private seed, mounts and server were cleaned. Local evidence: `.cache/releases/v1.7.0/prepare-20261019-221109/` and `.cache/v170-ci-release/`.
+
+Universal compilation and isolated update acceptance do not establish physical Intel/macOS 14 runtime acceptance, full VoiceOver, actual OS Keychain refusal, new real-provider Review coverage or a production-identity self-update. Developer ID/notarization remains a separate plan. Existing unverified service/hardware boundaries remain open.
+
+简体中文：v1.7.0（29）已从 `dfcd0f6` 正式发布为 Latest，发布说明经所有者确认。同源码 Swift 6.1.2 完整 CI 通过932项Core与10项发布门控，标签明确复用该运行；独立复核发现并完成CLI并发替换清理修复后通过审核。最终本地932测试、Universal、87/37/41原生断言、签名附件草稿/公开回读及隔离28→29实际Sparkle替换重启均通过。部分暂存、恢复身份和生产更新身份保持，真实安装未替换；Intel/macOS14真机、完整VoiceOver、真实Keychain拒绝、生产身份自升级等仍不宣称已验收。
+
+See the [CLI guide](cli.md), [Operations Center guide](operations-center.md), [contextual workflow](context-workflow.md) and [Developer ID/notarization plan](developer-id-notarization.md). Internal CLI product name `GitPierCommandLine` avoids collisions with `GitPier` on case-insensitive filesystems; packaging renames it to the signed `Contents/Helpers/gitpier`. Production version/build still have one source in ReleaseConfiguration.json.
 
 ```sh
 Scripts/test.sh --filter 'ContextWorkflow|testContextWorkflow'
@@ -17,9 +29,9 @@ Scripts/workspace-acceptance.sh full .cache/ui-acceptance/workflow170-full
 python3 Scripts/test-release-tools.py
 ```
 
-Native routing acceptance uses a disposable app with no `CFBundleURLTypes`, fixture-only workspace metadata and a unique runtime Bundle ID under the existing `workspace-test.workflow170` namespace. Use a private `/private/tmp/GitPier-workflow170-*` workspace to avoid changing Documents privacy permissions. The production URL handler must remain unchanged. Do not install into the real user bin directory during fixtures; use `CLIToolInstallation(directory:)` with an owned temporary directory. Exact-source Swift 6.1 CI and independent review remain release gates, not implied by a local build.
+Native routing acceptance uses a disposable app with no `CFBundleURLTypes`, fixture-only workspace metadata and a unique runtime Bundle ID under the existing `workspace-test.workflow170` namespace. Use a private `/private/tmp/GitPier-workflow170-*` workspace to avoid changing Documents privacy permissions. The production URL handler must remain unchanged. Do not install into the real user bin directory during fixtures; use `CLIToolInstallation(directory:)` with an owned temporary directory. Exact-source full Swift 6.1 CI and independent review remain required for releases; the v1.7.0 evidence above satisfies those gates.
 
-简体中文：v1.7.0为未发布开发版，专项/完整Core、原生UI、CLI与Universal/DMG分别记录证据。CLI内部产物须避免与主程序仅大小写不同，正式命令仍为gitpier。夹具使用私有临时目录/独立身份，不更改生产回调或实际安装。Swift6.1同源码CI与独立复核保持发布门槛。
+简体中文：v1.7.0已正式发布，专项/完整Core、原生UI、CLI与Universal/DMG分别记录证据。CLI内部产物须避免与主程序仅大小写不同，正式命令仍为gitpier。夹具使用私有临时目录/独立身份，不更改生产回调或实际安装。Swift6.1同源码CI与独立复核保持发布门槛。
 
 ## v1.6.1 publication — 2026-10-18
 

@@ -89,9 +89,9 @@ Git LFS 页面检测可选工具，展示规则 / 文件 / OID / Pointer，审�
 
 已发布的 [v1.6.1](https://github.com/Heisenberg2024/gitpier/releases/tag/v1.6.1)（构建号28）在确认后的审查写入前保存最小操作意图，重启后持续显示未知结果。正文与代码不落盘，重新打开不会重发请求。可只读回查已知结果，在平台核实后主动确认，再重新预览新的提交；断开会确认所有窗口中的草稿丢弃。详见[恢复与平台限制](docs/code-review.md)及[验收状态](docs/v1.6.1-validation.md)。同提交Swift 6.1.2 CI通过855项Core与10项发布门控，已核验签名公开附件和Latest更新Feed。本轮已授权测试仓库完成17项真实审查操作；GitLab普通评论1项保持未知并跨重启保留。缺少合资格账号的审批/审查者请求仍未验收，具体范围见验收矩阵。
 
-## 工作流整合 — v1.7.0（Unreleased）
+## 工作流整合 — v1.7.0
 
-开发中的 v1.7.0 增加跨窗口[操作中心](docs/operations-center.md)、既有 **⌘⇧P 快速打开**中的命令，以及仅负责导航的 [GitPier CLI](docs/cli.md)。使用 `gitpier open . --page history` 可从终端返回选定应用；在设置 → 终端安装/卸载，保留已有文件和 Shell 配置。继续复用原有 Git 写入确认、凭证和 Review Journal 恢复。当前未发布，门槛和系统验收缺口见[验证矩阵](docs/v1.7.0-validation.md)。
+已发布的 [v1.7.0](https://github.com/Heisenberg2024/gitpier/releases/tag/v1.7.0)（构建号29）增加跨窗口[操作中心](docs/operations-center.md)、既有 **⌘⇧P 快速打开**中的命令，以及仅负责导航的 [GitPier CLI](docs/cli.md)。使用 `gitpier open . --page history` 可从终端返回选定应用；在设置 → 终端安装/卸载，保留已有文件和 Shell 配置。继续复用原有 Git 写入确认、凭证和 Review Journal 恢复。上下文助手包含五级真实状态、原生磨砂浮层和残留蓝框修复。同源码 Swift 6.1.2 CI 通过932项Core，独立审核、签名附件回读与公开下载核验均通过；[发布证据与系统验收边界](docs/development.md#v170-publication--2026-10-19)分别记录。
 
 [上下文工作流助手](docs/context-workflow.md)位于**仓库工具栏分支名称左侧的紧凑状态按钮**。正常、建议、注意、警告及冲突/阻塞采用不同图标，宽度固定；仅落后跟踪提交不会被判为冲突。浮层主体和箭头共用系统原生磨砂材质，移除关闭按钮，通过 Esc、外部点击或再次点击入口关闭。原生 Popover 根据当前 Worktree、分支、修改和 Fetch 快照解释建议及原因，风险优先；提交页内普通修改保持低调。比较页先打开再读取本地跟踪快照，同步审查在核对完成前禁用写入按钮。继续复用原确认与目标复核，不再常驻占用页面空间，不增加重复导航或自动 Git 操作。
 

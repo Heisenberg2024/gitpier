@@ -1,4 +1,4 @@
-# Contextual workflow — v1.7.0 (Unreleased)
+# Contextual workflow — v1.7.0
 
 Click the **lightbulb to the left of the branch name** in the repository toolbar. It opens a native macOS popover with one prioritized suggestion, its reason and relevant existing actions. The toolbar stays 43pt high; the former permanent advice region is removed and its space belongs to the file list, Diff and commit controls again. The popover never opens automatically.
 

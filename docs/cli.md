@@ -1,4 +1,4 @@
-# GitPier CLI — v1.7.0 (Unreleased)
+# GitPier CLI — v1.7.0
 
 The `gitpier` command opens a local repository or Worktree in your chosen GitPier application. It only navigates. Commit, Pull, Push, Merge, Rebase and other writes remain in their existing app workflows.
 

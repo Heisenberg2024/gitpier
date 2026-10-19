@@ -1,4 +1,4 @@
-# Operations Center — v1.7.0 (Unreleased)
+# Operations Center — v1.7.0
 
 Open **Operations Center** from the main toolbar's task-count button or **Quick Open → Commands**. It shows Active, Attention and Recent records shared by all workspace windows. Opening or closing this panel does not start, repeat or stop Git work.
 

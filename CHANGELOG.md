@@ -1,6 +1,8 @@
 # Changelog
 
-## Unreleased — 1.7.0 (29)
+## 1.7.0 — 2026-10-19
+
+### Workflow integration (29)
 
 - Preserve concurrently replaced CLI files during uninstall and failed-install cleanup; verify tool and receipt ownership inside a private removal directory before deleting either. 卸载与安装失败清理保留并发替换的 CLI 文件；工具及收据先移入私有目录并复核归属，再执行删除。
 
@@ -21,7 +23,8 @@
 - 新增跨窗口事件驱动操作中心、有界内存历史、取消请求状态及既有恢复/审查日志入口。
 - 新增仅负责导航的原生CLI、冷/热唤起及不覆盖已有文件的用户目录安装/卸载，保持OAuth和更新身份。
 - 增强既有快速打开的命令和最近选择，提供Developer ID/公证实施方案。
-- The initial v1.7 checkpoint passed local Core/native/CLI/Universal/DMG and isolated Sparkle acceptance; follow-up live-card/window/settings results are recorded separately in [validation](docs/v1.7.0-validation.md). Exact-source Swift 6.1 CI and independent review remain release gates. 初始检查点验收与后续修复验证分别记录，同源码Swift6.1 CI与独立审核仍待完成，当前未发布。
+- Published [v1.7.0](https://github.com/Heisenberg2024/gitpier/releases/tag/v1.7.0) from `dfcd0f6`: exact-source Swift 6.1.2 CI passed 932 Core tests and 10 release gates; Tag CI reused that full run. Independent review, Universal/native acceptance, signed Draft/public assets and isolated 1.6.1 → 1.7.0 Sparkle relaunch passed. See [evidence and limits](docs/development.md#v170-publication--2026-10-19).
+- 已从 `dfcd0f6` 正式发布；同源码 Swift 6.1.2 CI 通过932项Core与10项发布门控，Tag CI复用该完整运行；独立审核、Universal/原生验收、签名草稿/公开附件及隔离28→29实际Sparkle重启升级均通过，硬件与生产环境边界分别记录。
 
 ## 1.6.1 — 2026-10-18
 
