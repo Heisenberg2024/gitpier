@@ -48,6 +48,12 @@ public struct WorktreeRepairReview: Equatable, Sendable {
   public let previous: GitWorktree
 }
 public enum BranchComparisonMode: String, CaseIterable, Sendable { case tips, mergeBase }
+/// Explicit target kinds keep frozen commit IDs separate from branch selectors.
+public enum BranchComparisonTarget: Sendable {
+  case branch(String)
+  case commit(String)
+  case upstream(branch: String, head: String, name: String)
+}
 public struct BranchComparisonResult: Sendable {
   public let left: String
   public let right: String

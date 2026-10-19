@@ -8,6 +8,8 @@ struct BranchesView: View {
   @State private var creating = false
   @State private var name = ""
   @State private var startingAt = ""
+  @State private var workflowContext: ContextWorkflowReview?
+  @State private var retainingHead: String?
   @State private var renaming: String?
   @State private var renamed = ""
   @State private var upstreamFor: String?
@@ -19,34 +21,46 @@ struct BranchesView: View {
         Spacer()
         TextField(store.text("Search branches", "搜索分支"), text: $search).frame(width: 200)
         Button(store.text("Compare Branches", "比较分支")) { model.setPage("compare") }
-        Button(store.text("New Branch…", "新建分支…")) { creating = true }
+        Button(store.text("New Branch…", "新建分支…")) { workflowContext = nil; retainingHead = nil; creating = true }
       }.padding(18)
       Divider()
+      if let retainingHead {
+        HStack {
+          Text(store.text("Local branches retaining ", "保留此提交的本地分支：") + String(retainingHead.prefix(12))).font(.callout)
+          Spacer()
+          Button(store.text("Show all branches", "显示全部分支")) { self.retainingHead = nil }
+        }.padding(.horizontal, 18).padding(.bottom, 8)
+      }
       List {
         Section(store.text("Local", "本地")) {
           ForEach(
             model.branches.filter {
-              !$0.remote && (search.isEmpty || $0.name.localizedCaseInsensitiveContains(search))
+              !$0.remote && (retainingHead == nil || $0.hash == retainingHead) && (search.isEmpty || $0.name.localizedCaseInsensitiveContains(search))
             }
           ) { branch in row(branch) }
         }
         Section(store.text("Remote", "远程")) {
           ForEach(
             model.branches.filter {
-              $0.remote && !$0.name.hasSuffix("/HEAD")
+              retainingHead == nil && $0.remote && !$0.name.hasSuffix("/HEAD")
                 && (search.isEmpty || $0.name.localizedCaseInsensitiveContains(search))
             }
           ) { branch in row(branch) }
         }
       }.listStyle(.inset).disabled(model.busy)
     }
+    .onAppear { consumeWorkflowRequest() }
+    .onChange(of: model.workflowBranchRequest?.id) { _, _ in consumeWorkflowRequest() }
     .alert(store.text("Create Branch", "创建分支"), isPresented: $creating) {
       TextField(store.text("Branch name", "分支名称"), text: $name)
       TextField(store.text("Start at (empty = HEAD)", "起点（留空为 HEAD）"), text: $startingAt)
       Button(store.text("Create", "创建")) {
         let name = name
         let reference = startingAt
-        model.run { git in try await git.createBranch(name, at: reference.isEmpty ? nil : reference)
+        let context = workflowContext
+        model.run { git in
+          try model.validateWorkflowSelection(context)
+          try await git.createBranch(name, at: reference.isEmpty ? nil : reference, context: context)
         }
         self.name = ""
         startingAt = ""
@@ -60,10 +74,11 @@ struct BranchesView: View {
       TextField("origin/branch", text: $upstreamName)
       Button(store.text("Save", "保存")) {
         if let branch = upstreamFor {
-          let upstream = upstreamName
+          let upstream = upstreamName, context = workflowContext
           model.run { git in
+            try model.validateWorkflowSelection(context)
             try InputValidation.reference(upstream)
-            try await git.perform(["branch", "--set-upstream-to=" + upstream, branch])
+            try await git.perform(["branch", "--set-upstream-to=" + upstream, branch], context: context)
           }
         }
         upstreamFor = nil
@@ -87,6 +102,20 @@ struct BranchesView: View {
         renaming = nil
       }
       Button(store.text("Cancel", "取消"), role: .cancel) { renaming = nil }
+    }
+  }
+  private func consumeWorkflowRequest() {
+    guard let request = model.workflowBranchRequest else { return }
+    model.workflowBranchRequest = nil
+    workflowContext = request.context
+    search = ""; retainingHead = nil
+    switch request.intent {
+    case .create:
+      name = ""; startingAt = request.context.status.head ?? ""; creating = true
+    case .upstream:
+      upstreamFor = request.context.status.branch
+      upstreamName = request.context.status.upstream ?? ""
+    case .retainingCommit: retainingHead = request.context.status.head
     }
   }
   func row(_ branch: GitBranch) -> some View {
@@ -126,6 +155,7 @@ struct BranchesView: View {
             renamed = branch.name
           }
           Button(store.text("Set Upstream…", "设置 Upstream…")) {
+            workflowContext = nil
             upstreamFor = branch.name
             upstreamName = branch.upstream
           }
@@ -169,6 +199,7 @@ struct RemotesView: View {
   @ObservedObject var model: RepositoryModel
   @EnvironmentObject var store: AppStore
   @State private var editing = false
+  @State private var workflowContext: ContextWorkflowReview?
   @State private var original: GitRemote?
   @State private var name = ""
   @State private var fetchURL = ""
@@ -180,6 +211,7 @@ struct RemotesView: View {
         Spacer()
         Button(store.text("Fetch All", "获取全部")) { model.network("fetch") }
         Button(store.text("Add Remote…", "添加 Remote…")) {
+          workflowContext = nil
           original = nil
           name = ""
           fetchURL = ""
@@ -195,6 +227,7 @@ struct RemotesView: View {
             Spacer()
             Button(localizedUI("Fetch")) { model.network("fetch", remote: remote.name) }
             Button(localizedUI("Edit…")) {
+              workflowContext = nil
               original = remote
               name = remote.name
               fetchURL = remote.configuredFetchURLs.first ?? remote.fetchURL
@@ -223,7 +256,9 @@ struct RemotesView: View {
           }.controlSize(.small)
         }.padding(.vertical, 14)
       }.listStyle(.inset).disabled(model.busy)
-    }.sheet(isPresented: $editing) {
+    }.onAppear { consumeWorkflowRequest() }
+      .onChange(of: model.workflowRemoteRequest?.id) { _, _ in consumeWorkflowRequest() }
+      .sheet(isPresented: $editing) {
       VStack(alignment: .leading, spacing: 14) {
         Text(localizedUI(original == nil ? "Add Remote" : "Edit Remote")).font(.title2)
         TextField(localizedUI("Name"), text: $name).disabled(original != nil)
@@ -248,9 +283,10 @@ struct RemotesView: View {
             let name = name
             let fetch = fetchURL
             let push = pushURL
-            let original = original
+            let original = original, context = workflowContext
             model.run { git in
-              try await git.saveRemote(name: name, fetchURL: fetch, pushURL: push, expected: original)
+              try model.validateWorkflowSelection(context)
+              try await git.saveRemote(name: name, fetchURL: fetch, pushURL: push, expected: original, context: context)
             }
             editing = false
           }.buttonStyle(.borderedProminent).disabled(name.isEmpty || fetchURL.isEmpty || model.busy)
@@ -258,6 +294,13 @@ struct RemotesView: View {
       }.textFieldStyle(.roundedBorder).padding(24).frame(width: 550)
     }
   }
+  private func consumeWorkflowRequest() {
+    guard let request = model.workflowRemoteRequest else { return }
+    model.workflowRemoteRequest = nil
+    workflowContext = request.context
+    original = nil; name = ""; fetchURL = ""; pushURL = ""; editing = true
+  }
+
 }
 
 struct StashView: View {

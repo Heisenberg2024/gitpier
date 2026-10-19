@@ -10,6 +10,8 @@ Recent non-sensitive summaries are bounded to 100 in memory. Active/waiting task
 
 **Open Repository** returns to the existing repository workflow. Conflict/Rebase/upstream recovery snapshots revalidate repository root, Common Directory, HEAD/Index/operation identity and remotes before reuse. Changed contexts require a fresh repository review. Mutating buttons continue to perform their original confirmations and in-queue checks. Ahead/behind counts describe local tracking references from Fetch snapshots, not live server state.
 
+Repository-level [contextual advice](context-workflow.md) explains the next useful step and reuses existing reviews and confirmations.
+
 **⌘⇧P Quick Open** remains the single palette, with Repositories, Commands, Recent and Favorites. Commands reuse existing navigation and panels; unavailable commands show their reason. Up/Down, Return and Esc remain sheet-local. The global shortcut retains the terminal focus guard. Recent command choices stay in memory.
 
 ## History retention decision
@@ -28,7 +30,7 @@ Confirmed remote Review writes have a different recovery requirement: an interru
 
 内存保留最近100条普通摘要；活动/等待任务和未决审查日志按需要保留。重启不恢复普通运行中假象，审查继续复用v1.6.1唯一持久化日志，正文/命令/凭证不进入操作摘要。结果未知只能进入既有审查历史核查，不自动重发。
 
-恢复入口复核仓库、Common Directory、HEAD、Index、Git操作身份和Remote；变化后要求重新审查。原写入确认与队列检查保持。上下文操作仅导航至既有流程，远程跟踪计数明确来自Fetch快照。
+恢复入口复核仓库、Common Directory、HEAD、Index、Git操作身份和Remote；变化后要求重新审查。原写入确认与队列检查保持。[仓库上下文建议](context-workflow.md)解释当前状态、原因并复用既有审查与确认；远程跟踪计数明确来自 Fetch 快照。
 
 **⌘⇧P**继续使用原有快速打开，增加仓库/命令/最近/收藏。命令复用原页面和弹窗，禁用项展示原因；方向键、回车和Esc限定于当前面板窗口，终端焦点保护保持。最近命令仅保存在内存。
 

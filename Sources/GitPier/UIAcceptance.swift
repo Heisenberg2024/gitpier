@@ -80,6 +80,29 @@ import SwiftUI
         window.orderFront(nil)
         try await settle()
         try await waitFor { !model.refreshing && !model.diffLoading }
+        if ProcessInfo.processInfo.environment["GITPIER_UI_ACCEPTANCE_SCOPE"] == "context-repository" {
+          window.close(); store.shutdown()
+          guard let repository = ProcessInfo.processInfo.environment["GITPIER_CONTEXT_READONLY_REPOSITORY"] else { throw GitPierError.invalidInput("Set the read-only acceptance repository path") }
+          try await verifyContextReadOnlyRepository(URL(fileURLWithPath: repository), output: output)
+          print("Native read-only context acceptance passed.")
+          exit(0)
+        }
+        if ProcessInfo.processInfo.environment["GITPIER_UI_ACCEPTANCE_SCOPE"] == "context-assistant" {
+          window.close(); store.shutdown()
+          try await verifyContextAssistant(root: root, output: output)
+          if let repository = ProcessInfo.processInfo.environment["GITPIER_CONTEXT_READONLY_REPOSITORY"] {
+            try await verifyContextReadOnlyRepository(URL(fileURLWithPath: repository), output: output)
+          }
+          print("Native context assistant acceptance passed (temporary repositories).")
+          exit(0)
+        }
+        if ProcessInfo.processInfo.environment["GITPIER_UI_ACCEPTANCE_SCOPE"] == "context-workflow" {
+          window.close()
+          try await verifyContextWorkflow(root: root, output: output)
+          store.shutdown()
+          print("Native context workflow acceptance passed (temporary repositories).")
+          exit(0)
+        }
         if ProcessInfo.processInfo.environment["GITPIER_UI_ACCEPTANCE_SCOPE"] == "workflow170" {
           window.close()
           try await verifyWorkflow170(root: root, output: output)
@@ -1579,6 +1602,12 @@ import SwiftUI
         ("remotes", AnyView(RemotesView(model: model))),
         ("stashes", AnyView(StashView(model: model))),
         ("tags", AnyView(TagsView(model: model))),
+        ("reflog", AnyView(ReflogView(model: model))),
+        ("worktrees", AnyView(WorktreesView(model: model))),
+        ("submodules", AnyView(SubmodulesView(model: model))),
+        ("lfs", AnyView(LFSView(model: model))),
+        ("operations", AnyView(OperationsCenterView(center: store.operations))),
+        ("hosting-settings", AnyView(HostingSettingsView(hosting: store.hosting))),
         ("organizations", AnyView(OrganizationsView())),
         ("credentials", AnyView(CredentialsView())), ("help", AnyView(HelpView())),
       ] + (0...7).map { ("settings-\($0)", AnyView(SettingsView(initialTab: $0).id($0))) }
@@ -1593,22 +1622,48 @@ import SwiftUI
     }
     // New SwiftUI scroll views, including indicator-free tab strips, must be discovered after replacement.
     host.rootView = AnyView(VStack {
-      ScrollView { LazyVStack { ForEach(0..<200) { Text("Scrollable row \($0)").frame(height: 28) } } }
+      ScrollView {
+        VStack {
+          ScrollView(.horizontal) {
+            HStack { ForEach(0..<80) { Text("Nested tab \($0)").frame(width: 100) } }
+          }.frame(height: 44)
+          TextEditor(text: .constant((0..<80).map { "Nested editor line \($0)" }.joined(separator: "\n")))
+            .frame(height: 90)
+          LazyVStack { ForEach(0..<200) { Text("Scrollable row \($0)").frame(height: 28) } }
+        }
+      }
       ScrollView(.horizontal, showsIndicators: false) {
         HStack { ForEach(0..<80) { Text("Tab \($0)").frame(width: 100) } }
       }.frame(height: 44)
     }.background(UnifiedScrollbars()))
     try await settle()
     let overlays = try validate(host, context: "dynamic SwiftUI scroll views")
+    guard overlays.count >= 4,
+      overlays.filter({ !$0.verticalThumb.isHidden }).count >= 2,
+      overlays.filter({ !$0.horizontalThumb.isHidden }).count >= 2 else {
+      throw GitPierError.invalidInput("Nested scroll view or editor kept its native scrollbar")
+    }
     guard let vertical = overlays.first(where: { !$0.verticalThumb.isHidden }),
-      let horizontal = overlays.first(where: { !$0.horizontalThumb.isHidden }),
+      let nestedEditor = overlays.last(where: { !$0.verticalThumb.isHidden }),
+      let nestedHorizontal = overlays.first(where: { !$0.horizontalThumb.isHidden }),
       vertical.verticalThumb.knobRect.height == 150,
-      horizontal.horizontalThumb.knobRect.width == 56
+      nestedHorizontal.horizontalThumb.knobRect.width == 56
     else { throw GitPierError.invalidInput("SwiftUI scroll views lost fixed overlay thumbs") }
+    // Exercise inner regions while they are visible, before the outer list
+    // scrolls them out of its clipped viewport.
+    try dragThumb(nestedEditor.verticalThumb, in: window)
+    try dragThumb(nestedHorizontal.horizontalThumb, in: window)
+    guard nestedEditor.verticalThumb.fraction > 0.98,
+      nestedHorizontal.horizontalThumb.fraction > 0.98 else {
+      throw GitPierError.invalidInput("Nested editor/tab thumb did not reach its endpoint")
+    }
     try dragThumb(vertical.verticalThumb, in: window)
     guard vertical.verticalThumb.fraction > 0.98 else {
       throw GitPierError.invalidInput("Native list thumb drag did not reach the bottom")
     }
+    guard let horizontal = overlays.first(where: {
+      !$0.horizontalThumb.isHidden && !$0.horizontalThumb.visibleRect.isEmpty
+    }) else { throw GitPierError.invalidInput("No visible horizontal tab scrollbar") }
     try dragThumb(horizontal.horizontalThumb, in: window)
     guard horizontal.horizontalThumb.fraction > 0.98 else {
       throw GitPierError.invalidInput("Native tab thumb drag did not reach the right edge")
@@ -1718,7 +1773,7 @@ import SwiftUI
       }
       try capture(terminal, to: output.appendingPathComponent("scrollbars-terminal-\(dark ? "dark" : "light").png"))
     }
-    try "Application pages and all eight Settings tabs in both languages, dynamic SwiftUI lists/tab strips and sheets, native drag endpoints, idle fade, commit editor wheel scrolling, document/clip preservation, flipped/unflipped scrolling, content shrink/replacement, small viewports and terminal scrollback/alternate screen passed.\n"
+    try "Application pages and all eight Settings tabs in both languages, nested SwiftUI scroll regions/editors, dynamic lists/tab strips and sheets, native drag endpoints, idle fade, commit editor wheel scrolling, document/clip preservation, flipped/unflipped scrolling, content shrink/replacement, small viewports and terminal scrollback/alternate screen passed.\n"
       .write(to: output.appendingPathComponent("unified-scrollbars.txt"), atomically: true, encoding: .utf8)
   }
 

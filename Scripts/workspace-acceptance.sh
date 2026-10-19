@@ -2,7 +2,7 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 task_mode="${1:-version140}"
-case "$task_mode" in workflow170|review|review-stability|hosting|hosting-browser|version144|version142|version140|dashboard|full|workspace-performance) ;; *) echo 'Use workflow170, review, review-stability, hosting, hosting-browser, version144, version142, version140, dashboard, full or workspace-performance.' >&2; exit 1;; esac
+case "$task_mode" in context-repository|context-assistant|context-workflow|workflow170|review|review-stability|hosting|hosting-browser|version144|version142|version140|dashboard|full|workspace-performance) ;; *) echo 'Use context-repository, context-assistant, context-workflow, workflow170, review, review-stability, hosting, hosting-browser, version144, version142, version140, dashboard, full or workspace-performance.' >&2; exit 1;; esac
 task_output="${2:-$PWD/.cache/ui-acceptance/workspace}"
 [[ -x dist/GitPier.app/Contents/MacOS/GitPier ]] || { echo 'Build GitPier.app through Scripts/build-app.sh first.' >&2; exit 1; }
 mkdir -p .cache "$task_output"
@@ -32,6 +32,6 @@ codesign --force --sign - "$task_app"
 codesign --verify --deep --strict "$task_app"
 printf '%s\n' "$task_bundle_id" > "$task_output/bundle-id.txt"
 printf '%s\n' "$task_app" > "$task_output/application-path.txt"
-if [[ "$task_mode" == workspace-performance ]]; then export GITPIER_PERFORMANCE_TRACE=1; fi
+if [[ "$task_mode" == workspace-performance || "$task_mode" == context-assistant || "$task_mode" == context-repository ]]; then export GITPIER_PERFORMANCE_TRACE=1; fi
 if [[ "$task_mode" == full ]]; then export GITPIER_UI_ACCEPTANCE_SCOPE=""; else export GITPIER_UI_ACCEPTANCE_SCOPE="$task_mode"; fi
 GITPIER_UI_ACCEPTANCE_EXECUTABLE="$task_app/Contents/MacOS/GitPier" Scripts/ui-acceptance.sh "$task_output"

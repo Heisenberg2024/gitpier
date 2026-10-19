@@ -1,5 +1,6 @@
 import Foundation
 import CryptoKit
+import Darwin
 
 /// One shared actor per canonical working tree. A queue spans awaits, unlike actor isolation alone.
 public actor GitService {
@@ -1478,7 +1479,7 @@ public actor GitService {
     }
     return records
   }
-  public func commitFiles(_ hash: String, parent: String? = nil) async throws -> [FileChange] {
+  public func commitFiles(_ hash: String, parent: String? = nil, localOnly: Bool = false) async throws -> [FileChange] {
     try InputValidation.reference(hash)
     var args = [
       "diff-tree", "--root", "--no-commit-id", "--name-status", "-r", "-z", "--find-renames",
@@ -1489,7 +1490,7 @@ public actor GitService {
     } else {
       args.append(hash)
     }
-    let fields = try await read(args).stdout.split(separator: 0).map {
+    let fields = try await read(args, environment: localOnly ? ["GIT_NO_LAZY_FETCH": "1"] : [:]).stdout.split(separator: 0).map {
       String(decoding: $0, as: UTF8.self)
     }
     var files: [FileChange] = []
@@ -1512,20 +1513,21 @@ public actor GitService {
     }
     return files
   }
-  public func commitPatch(_ hash: String, path: String, parent: String? = nil) async throws -> Data
+  public func commitPatch(_ hash: String, path: String, parent: String? = nil, localOnly: Bool = false) async throws -> Data
   {
     try InputValidation.reference(hash)
     try InputValidation.repositoryPath(path)
+    if localOnly { try await requireLocalWorkspaceQueries() }
     if let parent {
       try InputValidation.reference(parent)
       return try await read([
         "--literal-pathspecs", "diff", "--no-ext-diff", "--no-textconv", parent, hash, "--", path,
-      ]).stdout
+      ], environment: localOnly ? ["GIT_NO_LAZY_FETCH": "1"] : [:]).stdout
     }
     return try await read([
       "--literal-pathspecs", "show", "--format=", "--no-ext-diff", "--no-textconv", hash, "--",
       path,
-    ]).stdout
+    ], environment: localOnly ? ["GIT_NO_LAZY_FETCH": "1"] : [:]).stdout
   }
   public func branches() async throws -> [GitBranch] {
     let result = try await read([
@@ -1978,9 +1980,10 @@ public actor GitService {
   }
   /// Edit the first fetch URL while retaining additional destinations. Multiple push URLs are
   /// intentionally read-only in this compact editor; Git's full configuration remains intact.
-  public func saveRemote(name: String, fetchURL: String, pushURL: String, expected: GitRemote?) async throws {
+  public func saveRemote(name: String, fetchURL: String, pushURL: String, expected: GitRemote?, context: ContextWorkflowReview? = nil) async throws {
     try InputValidation.reference(name)
     try await writing {
+      if let context { try await validateContextWorkflow(context) }
       if let expected {
         guard expected.name == name else { throw GitPierError.invalidInput("Refresh the remote before editing.") }
         let values = try await remoteConfiguration(name)
@@ -2032,11 +2035,94 @@ public actor GitService {
       _ = try await remotes()
     }
   }
+  /// Explicit review only; the recommendation view never calls Git to render itself.
+  public func reviewContextWorkflow() async throws -> ContextWorkflowReview {
+    try await lifecycleWrite { try await readContextWorkflow() }
+  }
+  private func validateContextWorkflow(_ expected: ContextWorkflowReview) async throws {
+    guard try await readContextWorkflow() == expected else { throw GitPierError.indexChanged }
+  }
+  private func readContextWorkflow() async throws -> ContextWorkflowReview {
+    try await validateWorkspaceRoot()
+    let directories = try await metadataDirectories()
+    let common = try await commonDirectory().path
+    func filesystem() throws -> [String] {
+      try ([root.path, common] + directories.map(\.path)).map { path in
+        var info = stat()
+        guard lstat(path, &info) == 0, info.st_mode & S_IFMT == S_IFDIR else { throw GitPierError.indexChanged }
+        return "\(info.st_dev):\(info.st_ino)"
+      }
+    }
+    let filesystemBefore = try filesystem()
+    let before = try await reviewOperation(localOnly: true)
+    let state = try await status(localOnly: true)
+    let remotes = try await remotes()
+    let configuration = try await contextWorkflowConfiguration()
+    let fields = try await contextWorkflowTracking(state.branch)
+    let upstream = fields.count == 6 && !fields[1].isEmpty ? fields[1] : nil
+    let upstreamHash: String?
+    if let upstream {
+      let value = try await read(["rev-parse", "--verify", "--end-of-options", upstream + "^{commit}"],
+        environment: ["GIT_NO_LAZY_FETCH": "1"], allowFailure: true)
+      upstreamHash = value.code == 0 ? value.text.trimmingCharacters(in: .whitespacesAndNewlines) : nil
+    } else { upstreamHash = nil }
+    let upstreamRemote = fields.count == 6 && !fields[2].isEmpty ? fields[2] : nil
+    let destination = fields.count == 6 && !fields[3].isEmpty ? fields[3] : nil
+    let configurationRows = configuration.split(separator: 0).map { String(decoding: $0, as: UTF8.self) }
+    func values(_ key: String) -> [String] {
+      configurationRows.compactMap { row in
+        if row == key { return "true" }
+        guard let split = row.firstIndex(of: "\n"), row[..<split] == key else { return nil }
+        return String(row[row.index(after: split)...])
+      }
+    }
+    let remote = remotes.first { $0.name == upstreamRemote }
+    let singlePush = fields.count == 6 && fields[4] == upstreamRemote && (fields[5].isEmpty || fields[5] == destination)
+      && destination == "refs/heads/" + state.branch
+      && remote != nil && remote!.configuredFetchURLs.count == 1 && remote!.configuredPushURLs.count <= 1
+      && values("remote.\(upstreamRemote ?? "").push").isEmpty
+      && values("remote.\(upstreamRemote ?? "").mirror").allSatisfy { ["false", "no", "off", "0", ""].contains($0.lowercased()) }
+      && ["simple", "upstream", "current"].contains(values("push.default").last ?? "simple")
+      && values("push.followtags").allSatisfy { ["false", "no", "off", "0", ""].contains($0.lowercased()) }
+      && ["no", "check"].contains(values("push.recursesubmodules").last ?? "no")
+    guard try filesystem() == filesystemBefore,
+      try await reviewOperation(localOnly: true) == before,
+      try await status(localOnly: true) == state,
+      try await contextWorkflowConfiguration() == configuration,
+      try await contextWorkflowTracking(state.branch) == fields else { throw GitPierError.indexChanged }
+    // Include the resolved tip: Fetch may update it without changing configuration or HEAD.
+    if let upstream, let upstreamHash {
+      guard try await read(["rev-parse", "--verify", "--end-of-options", upstream + "^{commit}"],
+        environment: ["GIT_NO_LAZY_FETCH": "1"]).text.trimmingCharacters(in: .whitespacesAndNewlines) == upstreamHash else { throw GitPierError.indexChanged }
+    }
+    let singlePull = values("branch.\(state.branch).remote") == [upstreamRemote ?? ""]
+      && values("branch.\(state.branch).merge") == [destination ?? ""]
+      && remote != nil && remote!.configuredFetchURLs.count == 1
+    return ContextWorkflowReview(gitExecutable: gitPath, workingTree: root.path, commonDirectory: common,
+      gitDirectory: directories[0].resolvingSymlinksInPath().path, filesystemIdentity: filesystemBefore, operation: before,
+      status: state, remotes: remotes, configurationFingerprint: Data(SHA256.hash(data: configuration)),
+      upstreamReference: upstream, upstreamHash: upstreamHash, upstreamRemote: upstreamRemote,
+      upstreamDestination: destination, singleBranchPush: singlePush, singleBranchPull: singlePull)
+  }
+  private func contextWorkflowConfiguration() async throws -> Data {
+    let result = try await read(["config", "--null", "--get-regexp", "^(branch\\.|remote\\.|push\\.|pull\\.|url\\.|core\\.worktree$|extensions\\.worktreeconfig$)"],
+      allowFailure: true, limit: 2 * 1024 * 1024)
+    guard result.code == 0 || result.code == 1 else { throw GitPierError.indexChanged }
+    return result.stdout
+  }
+  private func contextWorkflowTracking(_ branch: String) async throws -> [String] {
+    guard !branch.isEmpty, branch != "(detached)" else { return [] }
+    let ref = "refs/heads/" + branch
+    let result = try await read(["for-each-ref", "--format=%(refname)%00%(upstream)%00%(upstream:remotename)%00%(upstream:remoteref)%00%(push:remotename)%00%(push:remoteref)", ref],
+      environment: ["GIT_NO_LAZY_FETCH": "1"], limit: 256 * 1024)
+    return result.text.split(separator: "\n").map { $0.split(separator: "\0", omittingEmptySubsequences: false).map(String.init) }.first { $0.first == ref } ?? []
+  }
   public func network(
     _ operation: String, remote: String? = nil, branch: String? = nil,
     strategy: String = "configured", forceWithLease: Bool = false,
     forceReview: ForcePushReview? = nil,
-    progress: (@Sendable (GitTransferProgress) -> Void)? = nil
+    progress: (@Sendable (GitTransferProgress) -> Void)? = nil,
+    context: ContextWorkflowReview? = nil
   ) async throws -> String {
     guard ["fetch", "pull", "push"].contains(operation) else {
       throw GitPierError.invalidInput("Invalid network operation")
@@ -2044,6 +2130,15 @@ public actor GitService {
     if let remote { try InputValidation.reference(remote) }
     if let branch { try InputValidation.reference(branch) }
     return try await lifecycleWrite {
+      if let context {
+        try await validateContextWorkflow(context)
+        guard ["pull", "push"].contains(operation), remote == nil, branch == nil, !forceWithLease,
+          !context.status.branch.isEmpty, context.remotes.contains(where: { $0.name == context.upstreamRemote }),
+          context.status.files.isEmpty, context.status.operation == nil,
+          context.status.head != nil, context.status.branch != "(detached)",
+          context.upstreamRemote != nil, context.upstreamHash != nil,
+          (operation == "push" ? context.singleBranchPush : context.singleBranchPull) else { throw GitPierError.indexChanged }
+      }
       var args = [operation, "--progress"]
       if operation == "push" { args.append("--porcelain") }
       if operation == "fetch" && remote == nil { args.append("--all") }
@@ -2267,12 +2362,12 @@ public actor GitService {
     }
   }
   /// Arguments are constructed by typed UI actions, never from a shell command field.
-  public func reviewOperation(expectedIndex: IndexSnapshot? = nil) async throws -> GitOperationReview {
+  public func reviewOperation(expectedIndex: IndexSnapshot? = nil, localOnly: Bool = false) async throws -> GitOperationReview {
     if let expectedIndex, try await snapshot().identity != expectedIndex.identity { throw GitPierError.indexChanged }
-    let state = try await status()
+    let state = try await status(localOnly: localOnly)
     let entries = try await read(["ls-files", "--stage", "-z"]).stdout
     let operation = try await conflictOperationIdentity()
-    let after = try await status()
+    let after = try await status(localOnly: localOnly)
     guard state.head == after.head, state.branch == after.branch, state.operation == after.operation else {
       throw GitPierError.indexChanged
     }
@@ -2431,8 +2526,9 @@ public actor GitService {
       return Self.redact(result.text + result.errorText)
     }
   }
-  @discardableResult public func perform(_ arguments: [String], expected: GitOperationReview? = nil) async throws -> String {
+  @discardableResult public func perform(_ arguments: [String], expected: GitOperationReview? = nil, context: ContextWorkflowReview? = nil) async throws -> String {
     try await writing {
+      if let context { try await validateContextWorkflow(context) }
       if let expected, try await reviewOperation() != expected { throw GitPierError.indexChanged }
       if ["reset", "switch", "checkout", "merge", "rebase", "cherry-pick", "revert"].contains(arguments.first ?? "") {
         let nativeControl = arguments.count == 2 && arguments[0] == "rebase"
@@ -2445,10 +2541,11 @@ public actor GitService {
       return Self.redact(result.text + result.errorText)
     }
   }
-  public func createBranch(_ name: String, at reference: String? = nil) async throws {
+  public func createBranch(_ name: String, at reference: String? = nil, context: ContextWorkflowReview? = nil) async throws {
     try InputValidation.reference(name)
     if let reference { try InputValidation.reference(reference) }
     try await writing {
+      if let context { try await validateContextWorkflow(context) }
       try await read(["check-ref-format", "--branch", name])
       try await read(["branch", name] + (reference.map { [$0] } ?? []))
     }
@@ -2805,26 +2902,68 @@ extension GitService {
     }
   }
   public func compareBranches(left: String, right: String, mode: BranchComparisonMode = .tips, count: Int = 100) async throws -> BranchComparisonResult {
-    // Require actual full branch refs, preventing short-name tag ambiguity and revision injection.
-    for ref in [left, right] {
-      guard ref.hasPrefix("refs/heads/") || ref.hasPrefix("refs/remotes/") else { throw GitPierError.invalidInput("Select a local or remote-tracking branch.") }
-      try await read(["check-ref-format", ref])
-    }
-    let a = try await resolveCommit(left), b = try await resolveCommit(right)
-    let baseResult = try await read(["merge-base", "--all", a, b], allowFailure: true)
+    try await compareBranchTargets(left: .branch(left), right: .branch(right), mode: mode, count: count)
+  }
+  /// Read-only comparison never scans the Index/worktree or enters the write-review queue.
+  public func compareBranchTargets(left: BranchComparisonTarget, right: BranchComparisonTarget, mode: BranchComparisonMode = .tips, count: Int = 100) async throws -> BranchComparisonResult {
+    try await requireLocalWorkspaceQueries()
+    let (leftRef, a) = try await resolveComparisonTarget(left)
+    let (rightRef, b) = try await resolveComparisonTarget(right)
+    let environment = ["GIT_NO_LAZY_FETCH": "1"]
+    let baseResult = try await read(["merge-base", "--all", a, b], environment: environment, allowFailure: true)
     guard baseResult.code == 0 || baseResult.code == 1 else { throw GitPierError.command("merge-base", baseResult.code, baseResult.errorText) }
     let bases = baseResult.text.split(separator: "\n").map(String.init)
     if mode == .mergeBase, bases.count != 1 { throw GitPierError.invalidInput("Three-point comparison requires one merge base. These branches have no common ancestor or have multiple merge bases. Use direct tip comparison.") }
-    let counts = try await read(["rev-list", "--left-right", "--count", a + "..." + b]).text.split(whereSeparator: \.isWhitespace)
+    let counts = try await read(["rev-list", "--left-right", "--count", a + "..." + b], environment: environment).text.split(whereSeparator: \.isWhitespace)
     let old = mode == .tips ? a : bases[0]
-    return BranchComparisonResult(left: left, right: right, leftHash: a, rightHash: b, mergeBases: bases,
+    return BranchComparisonResult(left: leftRef, right: rightRef, leftHash: a, rightHash: b, mergeBases: bases,
       leftOnlyCount: counts.first.flatMap { Int($0) } ?? 0, rightOnlyCount: counts.last.flatMap { Int($0) } ?? 0,
-      leftOnly: try await comparisonCommits(base: b, tip: a, count: count), rightOnly: try await comparisonCommits(base: a, tip: b, count: count),
-      diffBase: old, mode: mode, files: try await commitFiles(b, parent: old))
+      leftOnly: try await readComparisonCommits(base: b, tip: a, count: count, environment: environment),
+      rightOnly: try await readComparisonCommits(base: a, tip: b, count: count, environment: environment),
+      diffBase: old, mode: mode, files: try await commitFiles(b, parent: old, localOnly: true))
   }
-  public func comparisonCommits(base: String, tip: String, skip: Int = 0, count: Int = 100) async throws -> [CommitRecord] {
-    let a = try await resolveCommit(base), b = try await resolveCommit(tip)
-    return Self.parseHistory(try await read(["log", "--skip=\(max(0, skip))", "-n", "\(max(1, min(count, 500)))", "--format=%H%x00%P%x00%an%x00%ae%x00%at%x00%s%x00%b%x00%D%x00", "-z", a + ".." + b]).stdout)
+  private func resolveComparisonTarget(_ target: BranchComparisonTarget) async throws -> (String, String) {
+    let reference: String
+    switch target {
+    case .branch(let value): reference = value
+    case .commit(let hash):
+      guard [40, 64].contains(hash.utf8.count), hash.utf8.allSatisfy({ (48...57).contains($0) || (65...70).contains($0) || (97...102).contains($0) }) else {
+        throw GitPierError.invalidInput("Select a full comparison commit ID.")
+      }
+      let resolved = try await localComparisonCommit(hash)
+      guard resolved.lowercased() == hash.lowercased() else { throw GitPierError.indexChanged }
+      return (hash, resolved)
+    case .upstream(let branch, let head, let name):
+      let local = "refs/heads/" + branch
+      try await read(["check-ref-format", local])
+      let rows = try await read(["for-each-ref", "--format=%(refname)%00%(objectname)%00%(upstream)%00%(upstream:short)", local],
+        environment: ["GIT_NO_LAZY_FETCH": "1"], limit: 256 * 1024).text.split(separator: "\n")
+      guard let fields = rows.map({ $0.split(separator: "\0", omittingEmptySubsequences: false).map(String.init) }).first(where: { $0.first == local }),
+        fields.count == 4, fields[1] == head, !fields[2].isEmpty else { throw GitPierError.indexChanged }
+      let prefix = fields[2].hasPrefix("refs/remotes/") ? "refs/remotes/" : "refs/heads/"
+      guard String(fields[2].dropFirst(prefix.count)) == name || fields[3] == name else { throw GitPierError.indexChanged }
+      reference = fields[2]
+    }
+    // Branch callers still require full refs; arbitrary revision expressions stay rejected.
+    guard reference.hasPrefix("refs/heads/") || reference.hasPrefix("refs/remotes/") else {
+      throw GitPierError.invalidInput("Select a local or remote-tracking branch.")
+    }
+    try await read(["check-ref-format", reference])
+    return (reference, try await localComparisonCommit(reference))
+  }
+  private func localComparisonCommit(_ reference: String) async throws -> String {
+    try InputValidation.reference(reference)
+    let result = try await read(["rev-parse", "--verify", "--end-of-options", reference + "^{commit}"], environment: ["GIT_NO_LAZY_FETCH": "1"])
+    return result.text.trimmingCharacters(in: .whitespacesAndNewlines)
+  }
+  public func comparisonCommits(base: String, tip: String, skip: Int = 0, count: Int = 100, localOnly: Bool = false) async throws -> [CommitRecord] {
+    if localOnly { try await requireLocalWorkspaceQueries() }
+    let a = try await localOnly ? localComparisonCommit(base) : resolveCommit(base)
+    let b = try await localOnly ? localComparisonCommit(tip) : resolveCommit(tip)
+    return try await readComparisonCommits(base: a, tip: b, skip: skip, count: count, environment: localOnly ? ["GIT_NO_LAZY_FETCH": "1"] : [:])
+  }
+  private func readComparisonCommits(base: String, tip: String, skip: Int = 0, count: Int = 100, environment: [String: String] = [:]) async throws -> [CommitRecord] {
+    return Self.parseHistory(try await read(["log", "--skip=\(max(0, skip))", "-n", "\(max(1, min(count, 500)))", "--format=%H%x00%P%x00%an%x00%ae%x00%at%x00%s%x00%b%x00%D%x00", "-z", base + ".." + tip], environment: environment).stdout)
   }
   public func blame(path: String, revision: String? = nil, start: Int = 1, count: Int = 400) async throws -> BlamePage {
     try Task.checkCancellation()

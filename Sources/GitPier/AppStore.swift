@@ -516,6 +516,12 @@ struct DiffTab: Identifiable, Equatable {
   lazy var conflictEditor = ConflictEditorModel(repository: self)
   @Published private(set) var networkFetching = false
   @Published var showRebaseRecovery = false
+  @Published var workflowFilesystem: WorkflowFilesystem?
+  @Published var workflowPreparing = false
+  @Published var workflowMessage: String?
+  @Published var workflowBranchRequest: WorkflowBranchRequest?
+  @Published var workflowRemoteRequest: WorkflowRemoteRequest?
+  @Published var workflowComparison: WorkflowComparisonRequest?
   @Published var needsUpstream = false
   @Published var lastCommit: String?
   @Published var amend = false
@@ -744,8 +750,10 @@ struct DiffTab: Identifiable, Equatable {
         stagedAdditions = statistics.0
         stagedDeletions = statistics.1
       }
+      workflowFilesystem = await WorkflowFilesystem.read(record.path)
       available = true
       hasExternalChanges = false
+      if !workflowPreparing { workflowMessage = nil }
       let allPaths = Set(new.files.map(\.path))
       var included = includedPaths.intersection(allPaths)
       // Preserve deliberate exclusions. Newly discovered external staging is selected once.
@@ -1224,7 +1232,8 @@ struct DiffTab: Identifiable, Equatable {
     }
   }
   func network(
-    _ operation: String, remote: String? = nil, branch: String? = nil, force: Bool = false, forceReview: ForcePushReview? = nil
+    _ operation: String, remote: String? = nil, branch: String? = nil, force: Bool = false, forceReview: ForcePushReview? = nil,
+    context: ContextWorkflowReview? = nil, reviewedStrategy: String? = nil
   ) {
     let title =
       operation == "push"
@@ -1238,6 +1247,11 @@ struct DiffTab: Identifiable, Equatable {
         : store.text("Fetch completed.", "获取已完成。")
     run(label: title, completion: completed, notify: true, kind: operation == "push" ? .push : operation == "pull" ? .pull : .fetch) { [weak self] git in
       guard let self else { return }
+      if let context {
+        guard store.current === self, !store.showDashboard,
+          URL(fileURLWithPath: record.path).resolvingSymlinksInPath().path == context.workingTree,
+          store.settings.gitPath == context.gitExecutable else { throw GitPierError.indexChanged }
+      }
       networkFetching = operation == "fetch"
       defer { networkFetching = false }
       let progress = activity.receiver()
@@ -1252,8 +1266,8 @@ struct DiffTab: Identifiable, Equatable {
       }
       do {
         output = try await git.network(
-          operation, remote: remote, branch: branch, strategy: store.settings.pullStrategy,
-          forceWithLease: force, forceReview: forceReview, progress: progress)
+          operation, remote: remote, branch: branch, strategy: reviewedStrategy ?? store.settings.pullStrategy,
+          forceWithLease: force, forceReview: forceReview, progress: progress, context: context)
         if operation == "fetch" {
           let confirmed = await git.confirmedManualFetchTargets(targets, all: remote == nil)
           var updated: Set<String> = []
@@ -1566,14 +1580,19 @@ struct DiffTab: Identifiable, Equatable {
       }
     }
   }
-  func perform(_ args: [String], confirmation detail: String? = nil) {
+  func perform(_ args: [String], confirmation detail: String? = nil, context: ContextWorkflowReview? = nil) {
     guard !busy else { return }
     confirmationReviewID = UUID()
     confirmationReviewTask?.cancel()
     let action: (GitOperationReview?) -> Void = { [weak self] review in
       self?.run(kind: args.first == "rebase" ? .rebase : args.first == "merge" ? .merge : .git) { [weak self] git in
-        self?.output = try await git.perform(args, expected: review)
-        if args == ["merge", "--abort"] { self?.conflictPush = nil }
+        guard let self else { return }
+        if let context {
+          guard store.current === self, !store.showDashboard, store.settings.gitPath == context.gitExecutable,
+            URL(fileURLWithPath: record.path).resolvingSymlinksInPath().path == context.workingTree else { throw GitPierError.indexChanged }
+        }
+        output = try await git.perform(args, expected: review, context: context)
+        if args == ["merge", "--abort"] { conflictPush = nil }
       }
     }
     guard let detail else { action(nil); return }
@@ -1730,11 +1749,13 @@ struct DiffTab: Identifiable, Equatable {
 }
 
 struct PendingAction: Identifiable {
-  let id = UUID()
+  var id = UUID()
   let title: String
   let detail: String
   var confirmTitle: String? = nil
   var destructive = true
+  var canConfirm = true
+  var asynchronousReview = false
   var action: () -> Void
 }
 

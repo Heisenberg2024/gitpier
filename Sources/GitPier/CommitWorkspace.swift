@@ -16,35 +16,6 @@ struct RepositoryWorkspace: View {
     VStack(spacing: 0) {
       toolbar
       Divider()
-      if let operation = model.status.operation {
-        HStack(spacing: 10) {
-          Image(systemName: "exclamationmark.triangle").foregroundStyle(.orange)
-          Text(operation.rawValue.capitalized + store.text(" in progress", " 进行中"))
-          Spacer()
-          if model.status.files.contains(where: \.isConflicted) {
-            Button(store.text("Resolve Conflicts…", "解决冲突…")) { model.openConflicts() }.disabled(
-              model.busy)
-          }
-          if operation == .rebase {
-            Button(store.text("Review Rebase…", "审查变基…")) { model.showRebaseRecovery = true }.disabled(model.busy)
-          } else {
-          Button(store.text("Continue", "继续")) {
-            if operation == .merge {
-              model.reviewMergeContinuation()
-            } else {
-              model.perform([command(operation), "--continue"])
-            }
-          }.disabled(model.busy || model.status.files.contains(where: \.isConflicted))
-          Button(store.text("Abort…", "中止…")) {
-            model.perform(
-              [command(operation), "--abort"],
-              confirmation: store.text(
-                "Abort the operation and restore its starting state?", "中止操作并恢复起始状态？"))
-          }
-          }
-        }.font(uiFont(size: 12)).padding(10).background(Color.orange.opacity(0.09))
-        Divider()
-      }
       if let output = model.output {
         HStack(alignment: .center, spacing: 10) {
           Image(
@@ -114,10 +85,12 @@ struct RepositoryWorkspace: View {
     }
     .sheet(isPresented: $model.showRebaseRecovery) { RebaseRecoveryView(model: model).environmentObject(store) }
     .sheet(item: $importedPatch) { PatchImportView(model: model, input: $0).environmentObject(store) }
+    .sheet(isPresented: Binding(get: { model.confirmation?.asynchronousReview == true }, set: { if !$0, model.confirmation?.asynchronousReview == true { model.confirmation = nil } })) { workflowReview }
     .alert(
       model.confirmation?.title ?? "",
       isPresented: Binding(
-        get: { model.confirmation != nil }, set: { if !$0 { model.confirmation = nil } })
+        get: { model.confirmation != nil && model.confirmation?.asynchronousReview != true },
+        set: { if !$0, model.confirmation?.asynchronousReview != true { model.confirmation = nil } })
     ) {
       Button(
         model.confirmation?.confirmTitle ?? store.text("Confirm", "确认"),
@@ -171,8 +144,34 @@ struct RepositoryWorkspace: View {
       }
     }
   }
+  /// Same PendingAction and guarded execution as other confirmations. A sheet
+  /// can update preparation/details in place; NSAlert caches them when shown.
+  private var workflowReview: some View {
+    VStack(alignment: .leading, spacing: 16) {
+      Text(model.confirmation?.title ?? "").font(.headline)
+      if model.confirmation?.canConfirm == false { ProgressView().controlSize(.small) }
+      ScrollView {
+        Text(model.confirmation?.detail ?? "").font(.callout).textSelection(.enabled)
+          .frame(maxWidth: .infinity, alignment: .leading)
+      }.frame(maxHeight: 280)
+      HStack {
+        Spacer()
+        Button(store.text("Cancel", "取消"), role: .cancel) { model.confirmation = nil }
+          .keyboardShortcut(.cancelAction).accessibilityIdentifier("gitpier.workflow.review.cancel")
+        Button(model.confirmation?.confirmTitle ?? store.text("Confirm", "确认")) {
+          guard model.confirmation?.canConfirm == true else { return }
+          let action = model.confirmation?.action
+          model.confirmation = nil
+          action?()
+        }.buttonStyle(.borderedProminent).keyboardShortcut(.defaultAction)
+          .disabled(model.confirmation?.canConfirm != true).accessibilityIdentifier("gitpier.workflow.review.confirm")
+      }
+    }.padding(24).frame(width: 560).frame(maxHeight: 420)
+      .onExitCommand { model.confirmation = nil }
+  }
   var toolbar: some View {
     HStack(spacing: 14) {
+      ContextWorkflowButton(model: model, workspace: store.workspace)
       Menu {
         ForEach(model.branches.filter { !$0.remote }) { branch in
           Button((branch.current ? "✓ " : "") + branch.name) {
@@ -186,7 +185,7 @@ struct RepositoryWorkspace: View {
           model.status.branch.isEmpty ? store.text("Repository", "仓库") : model.status.branch,
           systemImage: "arrow.triangle.branch"
         ).font(uiFont(size: 12, weight: .medium))
-      }.menuStyle(.borderlessButton).frame(maxWidth: 190)
+      }.menuStyle(.borderlessButton).frame(maxWidth: 190).accessibilityIdentifier("gitpier.repository.branch")
       Divider().frame(height: 18)
       ForEach(
         [("commit", "Commit", "提交"), ("history", "History", "历史"), ("branches", "Branches", "分支")],
@@ -242,6 +241,7 @@ struct RepositoryWorkspace: View {
         }
       }
     }.padding(.horizontal, 14).frame(height: 43).background(Theme.panel(scheme))
+      .accessibilityElement(children: .contain).accessibilityIdentifier("gitpier.repository.toolbar")
   }
   var statusBar: some View {
     HStack(spacing: 10) {

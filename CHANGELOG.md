@@ -2,6 +2,15 @@
 
 ## Unreleased — 1.7.0 (29)
 
+- Restore the system popover material across its body and arrow, remove the close button, and share five factual risk levels between the stable toolbar entry and heading. 恢复主体与箭头一体的系统浮层材质，移除关闭按钮；固定宽度入口与标题共用五级真实状态，落后提交不误报冲突。
+
+- Fix contextual comparison accepting frozen commit targets, open comparison and synchronization review immediately, and blur both popover themes without whole-window transparency. 修复上下文比较的固定提交目标，比较页和同步审查即时打开；浅深浮层统一背景模糊，不再整体降低窗口透明度。
+
+- Remove the contextual assistant’s lingering focus ring, unify light/dark popover material, and extend Diff scrollbar coverage to independent popovers and nested scroll regions/editors. 修复上下文助手关闭后残留焦点边框，统一浅/深浮层材质，并补齐独立浮层及嵌套滚动区域/编辑器的 Diff 滚动条。
+
+- Move contextual advice into a quiet native toolbar popover before the branch selector; reclaim content height, prioritize risk and downrank redundant Commit-page navigation. 上下文建议移入分支左侧的原生工具栏浮层，归还主体高度，优先提示风险并降低提交页重复导航的优先级。
+
+- Add state-driven repository/Worktree advice with concrete reasons, fixed-tip comparison and revalidated existing write confirmations; replace duplicate navigation with relevant next steps. 新增仓库/工作树状态建议及原因、固定提交比较与原队列内目标复核，复用既有确认流程，替代重复导航。
 - Add a shared, event-driven Operations Center with bounded memory history, accurate cancellation requests and links to existing recovery workflows and Review Journal history.
 - Add a strict navigation-only CLI with native cold/hot app routing and a no-overwrite user-directory installer/uninstaller. Preserve OAuth callback and production update identities.
 - Enhance the existing Quick Open with commands and recent command choices; document Developer ID/notarization planning.

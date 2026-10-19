@@ -2,13 +2,16 @@
 
 ## v1.7.0 workflow development (Unreleased)
 
-See the [acceptance matrix](v1.7.0-validation.md), [CLI guide](cli.md), [Operations Center guide](operations-center.md) and [Developer ID/notarization plan](developer-id-notarization.md). Internal CLI product name `GitPierCommandLine` avoids collisions with `GitPier` on case-insensitive filesystems; packaging renames it to the signed `Contents/Helpers/gitpier`. Production version/build still have one source in ReleaseConfiguration.json.
+See the [acceptance matrix](v1.7.0-validation.md), [CLI guide](cli.md), [Operations Center guide](operations-center.md), [contextual workflow](context-workflow.md) and [Developer ID/notarization plan](developer-id-notarization.md). Internal CLI product name `GitPierCommandLine` avoids collisions with `GitPier` on case-insensitive filesystems; packaging renames it to the signed `Contents/Helpers/gitpier`. Production version/build still have one source in ReleaseConfiguration.json.
 
 ```sh
+Scripts/test.sh --filter 'ContextWorkflow|testContextWorkflow'
 Scripts/test.sh --filter 'OperationCenterTests|NavigationRequestTests|CLIToolInstallationTests'
 Scripts/test.sh
 Scripts/build-app.sh
 UNIVERSAL=1 Scripts/build-app.sh
+Scripts/workspace-acceptance.sh context-assistant .cache/ui-acceptance/context-assistant
+Scripts/workspace-acceptance.sh context-workflow .cache/ui-acceptance/context-workflow
 Scripts/workspace-acceptance.sh workflow170 .cache/ui-acceptance/workflow170
 Scripts/workspace-acceptance.sh full .cache/ui-acceptance/workflow170-full
 python3 Scripts/test-release-tools.py
@@ -128,7 +131,7 @@ Use `GITPIER_UI_ACCEPTANCE_SCOPE=conflicts Scripts/ui-acceptance.sh` for the bui
 
 App-modal `NSAlert.runModal()` is separate from SwiftUI's attached sheets. Default conflict acceptance checks its alert configuration without displaying a blocking quit dialog. Set `GITPIER_UI_ACCEPTANCE_INTERACTIVE_QUIT=1` only for an interactive run and press Cancel on the actual quit alert; do not infer a successful click from a proxy button or an empty `attachedSheet`.
 
-For scrollbar coverage only, run `GITPIER_UI_ACCEPTANCE_SCOPE=scrollbars Scripts/ui-acceptance.sh`. It checks application pages and all eight Settings tabs in both languages, native thumb dragging and fading, dynamically replaced SwiftUI scroll views, document resizing/replacement, compact viewports, Diff header clipping and terminal scrollback/alternate screens. The full UI/PT​Y acceptance also includes these checks.
+For scrollbar coverage only, run `GITPIER_UI_ACCEPTANCE_SCOPE=scrollbars Scripts/ui-acceptance.sh`. It checks application pages and all eight Settings tabs in both languages, native thumb dragging and fading, dynamically replaced and nested SwiftUI scroll views/editors, document resizing/replacement, compact viewports, Diff header clipping and terminal scrollback/alternate screens. The full UI/PT​Y acceptance also includes these checks. The `context-assistant` scope additionally checks independent popover-window themes, shared scrollbar installation and native thumb dragging; optional `GITPIER_ASSISTANT_VISUAL_HOLD=1` pauses for compositor inspection of the closed anchor and light/dark materials (`themes` pauses only on the two themes). Set `GITPIER_CONTEXT_READONLY_REPOSITORY=/absolute/repository` on that scope (or the focused `context-repository` scope) to verify comparison/confirmation against an existing repository without Fetch or writes; the disposable workspace uses explicitly simulated freshness metadata, not the real app’s check history.
 
 Captures and execution records default to `.cache/ui-acceptance`. `Scripts/performance.sh` generates a marked disposable workload and writes measurements to `.cache/performance/latest`. These results are local artifacts, not public compatibility guarantees.
 

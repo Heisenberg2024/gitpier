@@ -53,9 +53,14 @@ struct UnifiedScrollbars: NSViewRepresentable {
   }
   private func install(in window: NSWindow) {
     func visit(_ view: NSView) {
+      guard !view.isHidden else { return }
       if let scroll = view as? NSScrollView {
         OverlayScrollbars.install(on: scroll).refresh()
-        // Do not traverse virtualized table cells or long text documents on every UI event cycle.
+        // SwiftUI scroll documents can contain other scroll views or editors.
+        // Inspect their materialized native views, but skip Diff cells and text
+        // document leaves; neither contains another scrolling container.
+        if !(scroll is DiffScrollView), let document = scroll.documentView,
+          !(document is NSTextView) { visit(document) }
         return
       }
       if view is SafeTerminalView { return }

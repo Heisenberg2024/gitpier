@@ -241,6 +241,40 @@ final class ProfessionalWorkflowTests: XCTestCase {
     XCTAssertTrue(result.mergeBases.isEmpty); XCTAssertEqual(result.leftOnlyCount, 1); XCTAssertEqual(result.rightOnlyCount, 1)
     await rejected({ _ = try await git.compareBranches(left: "refs/heads/main", right: "refs/heads/unrelated", mode: .mergeBase) }, contains: "merge base")
   }
+  func testFrozenComparisonCommitsAndMixedBranchTargetsProduceRealDiff() async throws {
+    let base = try await git.resolveCommit("HEAD")
+    let tip = try await commit(message: "snapshot comparison")
+    _ = try await commit("let later = 99\n", message: "later branch tip")
+    let frozen = try await git.compareBranchTargets(left: .commit(base), right: .commit(tip))
+    XCTAssertEqual(frozen.leftHash, base); XCTAssertEqual(frozen.rightHash, tip)
+    XCTAssertEqual(frozen.rightOnly.map(\.hash), [tip]); XCTAssertEqual(frozen.files.map(\.path), ["file.swift"])
+    let patch = try await git.commitPatch(frozen.rightHash, path: "file.swift", parent: frozen.diffBase, localOnly: true)
+    XCTAssertTrue(String(decoding: patch, as: UTF8.self).contains("+let first = 3"))
+    let mixed = try await git.compareBranchTargets(left: .commit(tip), right: .branch("refs/heads/main"))
+    XCTAssertEqual(mixed.rightOnlyCount, 1)
+    await rejected({ _ = try await git.compareBranches(left: base, right: tip) }, contains: "local or remote-tracking")
+    for bad in ["HEAD", String(base.prefix(8)), base + "~1", "--all", String(repeating: "z", count: 40)] {
+      await rejected({ _ = try await git.compareBranchTargets(left: .commit(bad), right: .commit(tip)) }, contains: "full comparison commit")
+    }
+  }
+  func testComparisonResolvesExactConfiguredUpstreamWithoutIndexReviewOrTagAmbiguity() async throws {
+    let bare = fixture.appendingPathComponent("remote.git")
+    try await raw(["init", "--bare", bare.path]); try await raw(["remote", "add", "origin", bare.path]); try await raw(["push", "-u", "origin", "main"])
+    let upstream = try await git.resolveCommit("refs/remotes/origin/main")
+    let head = try await commit()
+    try await raw(["tag", "origin/main", head])
+    try write("file.swift", "external partial\n"); try await raw(["add", "file.swift"]); try write("file.swift", "external unstaged\n")
+    let index = try Data(contentsOf: root.appendingPathComponent(".git/index"))
+    let result = try await git.compareBranchTargets(left: .commit(head), right: .upstream(branch: "main", head: head, name: "origin/main"))
+    XCTAssertEqual(result.rightHash, upstream); XCTAssertEqual(result.right, "refs/remotes/origin/main")
+    XCTAssertEqual(result.leftOnlyCount, 1); XCTAssertEqual(result.rightOnlyCount, 0)
+    XCTAssertEqual(try Data(contentsOf: root.appendingPathComponent(".git/index")), index)
+    await rejected({ _ = try await git.compareBranchTargets(left: .commit(head), right: .upstream(branch: "main", head: upstream, name: "origin/main")) })
+    await rejected({ _ = try await git.compareBranchTargets(left: .commit(head), right: .upstream(branch: "main", head: head, name: "origin/wrong")) })
+    try await raw(["config", "branch.main.remote", "."]); try await raw(["config", "branch.main.merge", "refs/heads/main"])
+    let local = try await git.compareBranchTargets(left: .commit(head), right: .upstream(branch: "main", head: head, name: "main"))
+    XCTAssertEqual(local.rightHash, head)
+  }
   func testBlameTrackedWorkingChangesAndReadOnly() async throws {
     let seed = try await git.status().head!
     try write("file.swift", "let first = 99\nlet second = 2\n")

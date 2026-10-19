@@ -11,6 +11,9 @@ struct BranchComparisonView: View {
   @StateObject private var moreRequest = WorkflowRequest()
   @State private var left = ""
   @State private var right = ""
+  @State private var reviewedTitles: [String: String] = [:]
+  @State private var reviewedTargets: [String: BranchComparisonTarget] = [:]
+  @State private var reviewedRequestID: UUID?
   @State private var mode = BranchComparisonMode.tips
   @State private var result: BranchComparisonResult?
   @State private var leftCommits: [CommitRecord] = []
@@ -19,8 +22,18 @@ struct BranchComparisonView: View {
   @State private var document = DiffDocument.empty
   @State private var large = false
   @State private var commit: CommitRecord?
-  private var queryID: String { left + "\0" + right + "\0" + mode.rawValue }
+  private var queryID: String { left + "\0" + right + "\0" + mode.rawValue + "\0" + (reviewedRequestID?.uuidString ?? "") }
   var body: some View {
+    comparisonContent.onAppear(perform: prepareAppearance)
+      .onChange(of: model.workflowComparison?.id) { _, _ in consumeWorkflowRequest() }
+      .task(id: queryID) { load() }
+      .task(id: patchID) { loadPatch() }
+      .onDisappear { cancelRequests() }
+      .sheet(item: $commit) { WorkflowCommitSheet(model: model, commit: $0).environmentObject(store) }
+  }
+  private var patchID: String { (result?.diffBase ?? "") + "\0" + (result?.rightHash ?? "") + "\0" + (selected ?? "") }
+  private func cancelRequests() { request.cancel(); patchRequest.cancel(); commitRequest.cancel(); moreRequest.cancel() }
+  private var comparisonContent: some View {
     GeometryReader { area in
       VStack(spacing: 0) {
         HostingLocalComparisonExplanation().padding(.horizontal, 12).padding(.top, 10)
@@ -42,6 +55,7 @@ struct BranchComparisonView: View {
         if let result {
           VStack(alignment: .leading, spacing: 4) {
             Text(store.text("Left ahead / behind: ", "左侧领先 / 落后：") + "\(result.leftOnlyCount) / \(result.rightOnlyCount)   ·   " + String(result.leftHash.prefix(8)) + " → " + String(result.rightHash.prefix(8)))
+              .accessibilityIdentifier("gitpier.comparison.counts")
             Text(store.text("Merge base: ", "共同祖先：") + (result.mergeBases.isEmpty ? store.text("None (unrelated histories)", "无（不相关历史）") : result.mergeBases.joined(separator: ", "))).textSelection(.enabled).lineLimit(2)
           }.font(uiFont(size: 11)).frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 12).padding(.bottom, 10)
         }
@@ -76,17 +90,29 @@ struct BranchComparisonView: View {
           EmptyState(symbol: "arrow.left.arrow.right", title: store.text("Select two branches", "选择两个分支"), detail: "")
         }
       }
-    }.onAppear {
-      if left.isEmpty { left = model.branches.first { $0.current && !$0.remote }?.reference ?? model.branches.first?.reference ?? "" }
-      if right.isEmpty { right = model.comparisonRight ?? model.branches.first { $0.reference != left && !$0.name.hasSuffix("/HEAD") }?.reference ?? left }
-      model.comparisonRight = nil
-    }.task(id: queryID) { load() }.task(id: (result?.diffBase ?? "") + "\0" + (result?.rightHash ?? "") + "\0" + (selected ?? "")) { loadPatch() }
-      .onDisappear { request.cancel(); patchRequest.cancel(); commitRequest.cancel(); moreRequest.cancel() }
-      .sheet(item: $commit) { WorkflowCommitSheet(model: model, commit: $0).environmentObject(store) }
+    }
+  }
+  private func prepareAppearance() {
+    consumeWorkflowRequest()
+    if left.isEmpty { left = model.branches.first { $0.current && !$0.remote }?.reference ?? model.branches.first?.reference ?? "" }
+    if right.isEmpty { right = model.comparisonRight ?? model.branches.first { $0.reference != left && !$0.name.hasSuffix("/HEAD") }?.reference ?? left }
+    model.comparisonRight = nil
+  }
+  private func consumeWorkflowRequest() {
+    guard let value = model.workflowComparison else { return }
+    model.workflowComparison = nil
+    reviewedTitles = [value.left: value.leftTitle]
+    reviewedTitles[value.right] = value.rightTitle
+    reviewedTargets = value.targets
+    reviewedRequestID = value.id
+    left = value.left; right = value.right; mode = value.mode
   }
   private func branchPicker(_ title: String, selection: Binding<String>) -> some View {
     Picker(title, selection: selection) {
       Text(store.text("Select", "选择")).tag("")
+      ForEach(reviewedTitles.keys.sorted(), id: \.self) { hash in
+        Text((reviewedTitles[hash] ?? "") + (hash.hasPrefix("upstream:") ? store.text(" · tracking snapshot", " · 跟踪快照") : " · " + String(hash.prefix(8)))).tag(hash)
+      }
       ForEach(model.branches.filter { !$0.name.hasSuffix("/HEAD") }) { Text(($0.remote ? store.text("Remote: ", "远程：") : store.text("Local: ", "本地：")) + $0.name).tag($0.reference) }
     }.frame(width: 220)
   }
@@ -107,9 +133,11 @@ struct BranchComparisonView: View {
     request.cancel(); patchRequest.cancel(); moreRequest.cancel(); document = .empty; selected = nil; result = nil; leftCommits = []; rightCommits = []
     guard !left.isEmpty, !right.isEmpty else { return }
     let a = left, b = right, requestedMode = mode
+    let generation = reviewedRequestID
+    let leftTarget = reviewedTargets[a] ?? .branch(a), rightTarget = reviewedTargets[b] ?? .branch(b)
     request.start { ticket in
-      let comparison = try await model.git().compareBranches(left: a, right: b, mode: requestedMode)
-      guard request.current(ticket), left == a, right == b, mode == requestedMode else { return }
+      let comparison = try await model.git().compareBranchTargets(left: leftTarget, right: rightTarget, mode: requestedMode)
+      guard request.current(ticket), reviewedRequestID == generation, left == a, right == b, mode == requestedMode else { return }
       result = comparison; leftCommits = comparison.leftOnly; rightCommits = comparison.rightOnly; selected = comparison.files.first?.path
     }
   }
@@ -117,7 +145,7 @@ struct BranchComparisonView: View {
     document = .empty; large = false
     guard let result, let path = selected else { patchRequest.cancel(); return }
     patchRequest.start { ticket in
-      let data = try await model.git().commitPatch(result.rightHash, path: path, parent: result.diffBase)
+      let data = try await model.git().commitPatch(result.rightHash, path: path, parent: result.diffBase, localOnly: true)
       let oversized = data.count > 2 * 1024 * 1024 || data.reduce(into: 0) { if $1 == 10 { $0 += 1 } } > 40000
       let parsed = await Task.detached { oversized ? DiffDocument.empty : DiffParser.parse(data) }.value
       guard patchRequest.current(ticket), selected == path, self.result?.diffBase == result.diffBase, self.result?.rightHash == result.rightHash else { return }
@@ -128,7 +156,7 @@ struct BranchComparisonView: View {
     guard let result else { return }
     let skip = isLeft ? leftCommits.count : rightCommits.count
     moreRequest.start { ticket in
-      let records = try await model.git().comparisonCommits(base: isLeft ? result.rightHash : result.leftHash, tip: isLeft ? result.leftHash : result.rightHash, skip: skip)
+      let records = try await model.git().comparisonCommits(base: isLeft ? result.rightHash : result.leftHash, tip: isLeft ? result.leftHash : result.rightHash, skip: skip, localOnly: true)
       guard moreRequest.current(ticket), self.result?.leftHash == result.leftHash, self.result?.rightHash == result.rightHash else { return }
       if isLeft { leftCommits += records } else { rightCommits += records }
     }

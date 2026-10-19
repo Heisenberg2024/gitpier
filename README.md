@@ -19,7 +19,7 @@ GitPier brings repository management, change review, commits, and an integrated 
 - **Recover rejected pushes.** When the remote branch has new commits, confirm Merge & Push to fetch, merge, and retry the push. Local commits remain saved; conflicts stop the push for you to resolve. Commit or stash remaining tracked changes before merging.
 - **Resolve conflicts in GitPier.** Compare Current and Incoming versions, preview the base, choose either side or both for each conflict, and edit the result. Save and mark files resolved, then review and continue the merge; a pending merge-and-push keeps its original destination. Binary and large files support whole-file choices, including deletion.
 - **Side-by-side Diff.** Compare changes with line numbers, syntax colors, synchronized vertical scrolling, and subtle scrollbars. An empty Index side gives the working tree the full width. Stage, unstage, or discard supported hunks, and keep files open in Diff tabs.
-- **Consistent scrolling.** Lists, settings, help, commit messages, tabs, and terminal scrollback share the Diff's compact overlay scrollbars, which brighten while scrolling and fade when idle.
+- **Consistent scrolling.** Lists, settings, help, commit messages, tabs, sheets, popovers, nested editors, and terminal scrollback share the Diff's compact overlay scrollbars, which brighten while scrolling and fade when idle.
 - **Integrated terminal.** Run your installed shell in a real PTY, with multiple tabs, splits, and search. Each repository keeps its own sessions and working directory.
 - **History and branches.** Browse the commit graph and manage branches, remotes, stashes, and tags. Fetch, pull, push, merge, and rebase using Git.
 - **Full history and stash previews.** Native paged full-history queries add message, hash, author, date and branch filters. Stash previews reuse the file list and side-by-side Diff.
@@ -92,6 +92,8 @@ Released [v1.6.1](https://github.com/Heisenberg2024/gitpier/releases/tag/v1.6.1)
 ## Workflow integration — v1.7.0 (Unreleased)
 
 The upcoming v1.7.0 adds a shared [Operations Center](docs/operations-center.md), commands in the existing **⌘⇧P Quick Open**, and the navigation-only [GitPier CLI](docs/cli.md). Run `gitpier open . --page history` to return from a terminal to the selected app. Install/uninstall in Settings → Terminal; existing files and shell configuration are preserved. These additions retain existing Git write confirmations, credentials and Review Journal recovery. This version is in development; release gates and remaining system checks are tracked in [validation](docs/v1.7.0-validation.md).
+
+The [contextual workflow assistant](docs/context-workflow.md) lives in a compact status button **before the repository branch name**. Neutral, suggestion, attention, warning and conflict/blocked states use distinct symbols with a stable width; incoming tracking commits alone never imply a conflict. Its native frosted popover shares one system surface across the body and arrow, dismisses with Escape/outside click/the entry, and explains the next useful step using the selected Worktree, branch, edits and Fetch snapshot. Risks take priority; ordinary review already available on the Commit page stays quiet. Comparisons open immediately and read local tracking snapshots in the background; synchronization review keeps its write button disabled until checking completes. Existing confirmations and target revalidation remain in place, with no permanent banner, duplicate navigation menu or automatic Git work.
 
 ## Screenshots
 

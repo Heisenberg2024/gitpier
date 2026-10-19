@@ -51,6 +51,7 @@ struct DashboardRepositoryRow: View {
                   showFailure = false; Task { await store.workspace.refresh([entry.record.id]) }
                 }
               }.padding(18).frame(width: 360)
+                .modifier(AppPopoverAppearance(store: store))
             }
         } else { Color.clear.frame(width: 18).allowsHitTesting(false) }
       }
