@@ -2,6 +2,8 @@
 
 ## Unreleased — 1.7.0 (29)
 
+- Preserve concurrently replaced CLI files during uninstall and failed-install cleanup; verify tool and receipt ownership inside a private removal directory before deleting either. 卸载与安装失败清理保留并发替换的 CLI 文件；工具及收据先移入私有目录并复核归属，再执行删除。
+
 - Restore the system popover material across its body and arrow, remove the close button, and share five factual risk levels between the stable toolbar entry and heading. 恢复主体与箭头一体的系统浮层材质，移除关闭按钮；固定宽度入口与标题共用五级真实状态，落后提交不误报冲突。
 
 - Fix contextual comparison accepting frozen commit targets, open comparison and synchronization review immediately, and blur both popover themes without whole-window transparency. 修复上下文比较的固定提交目标，比较页和同步审查即时打开；浅深浮层统一背景模糊，不再整体降低窗口透明度。

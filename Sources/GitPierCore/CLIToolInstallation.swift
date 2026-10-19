@@ -36,10 +36,17 @@ public struct CLIToolReceipt: Codable, Sendable {
   static func hash(_ bytes: Data) -> String { SHA256.hash(data: bytes).map { String(format: "%02x", $0) }.joined() }
 }
 
+enum CLIToolFileBoundary: Sendable {
+  case filesReserved
+  case takingCustody(String)
+  case deletingOwnedFile(String)
+}
+
 /// Descriptor-relative, no-follow installation. Never overwrites an existing tool or receipt.
 /// No sudo, shell configuration writes, symlink launcher, or executable app-version path.
 public struct CLIToolInstallation: Sendable {
   public let directory: URL
+  var fileBoundary: (@Sendable (CLIToolFileBoundary) throws -> Void)?
   public var executable: URL { directory.appendingPathComponent("gitpier") }
   public static let receiptName = ".gitpier-install.json"
   public init(directory: URL = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".local/bin")) { self.directory = directory.absoluteURL }
@@ -114,15 +121,67 @@ public struct CLIToolInstallation: Sendable {
     }
     toolFD = openat(fd, "gitpier", O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0o600)
     guard toolFD >= 0 else { throw failure }
+    try fileBoundary?(.filesReserved)
     try write(bytes, to: toolFD); try write(encoded, to: receiptFD)
     guard fsync(toolFD) == 0, fsync(receiptFD) == 0, fchmod(toolFD, 0o700) == 0, fsync(toolFD) == 0, fsync(fd) == 0 else { throw failure }
     complete = true
   }
   private func unlinkIfSame(_ name: String, in directory: Int32, opened: Int32) {
-    var original = stat(), current = stat()
-    if fstat(opened, &original) == 0, fstatat(directory, name, &current, AT_SYMLINK_NOFOLLOW) == 0,
-      original.st_dev == current.st_dev, original.st_ino == current.st_ino,
-      current.st_mode & S_IFMT == S_IFREG, current.st_uid == getuid() { unlinkat(directory, name, 0) }
+    var original = stat()
+    guard fstat(opened, &original) == 0 else { return }
+    try? withRemovalDirectory(in: directory) { custody in
+      try takeForRemoval(name, from: directory, into: custody, expected: original)
+      do {
+        try fileBoundary?(.deletingOwnedFile(name))
+        guard unlinkat(custody, name, 0) == 0 else { throw failure }
+      } catch {
+        restore(name, from: custody, into: directory)
+        throw error
+      }
+    }
+  }
+  private func withRemovalDirectory(in directory: Int32, operation: (Int32) throws -> Void) throws {
+    let name = ".gitpier-removing-" + UUID().uuidString
+    guard mkdirat(directory, name, 0o700) == 0 else { throw failure }
+    defer {
+      // A failed non-overwriting restoration retains its files for manual repair.
+      _ = unlinkat(directory, name, AT_REMOVEDIR)
+    }
+    let fd = openat(directory, name, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
+    guard fd >= 0 else { throw failure }
+    defer { close(fd) }
+    var state = stat()
+    guard fstat(fd, &state) == 0, state.st_mode & S_IFMT == S_IFDIR,
+      state.st_uid == getuid(), state.st_mode & 0o077 == 0 else { throw failure }
+    try operation(fd)
+    guard fsync(fd) == 0 else { throw failure }
+  }
+  private func sameOwnedFile(_ current: stat, _ expected: stat) -> Bool {
+    current.st_dev == expected.st_dev && current.st_ino == expected.st_ino
+      && current.st_mode & S_IFMT == S_IFREG && current.st_uid == getuid()
+      && current.st_nlink == 1 && current.st_mode & 0o022 == 0
+  }
+  private func restore(_ name: String, from custody: Int32, into directory: Int32) {
+    _ = renameatx_np(custody, name, directory, name, UInt32(RENAME_EXCL))
+  }
+  private func takeForRemoval(_ name: String, from directory: Int32, into custody: Int32,
+                             expected: stat, bytes: Data? = nil) throws {
+    var current = stat()
+    guard fstatat(directory, name, &current, AT_SYMLINK_NOFOLLOW) == 0,
+      sameOwnedFile(current, expected) else { throw failure }
+    try fileBoundary?(.takingCustody(name))
+    guard renameatx_np(directory, name, custody, name, UInt32(RENAME_EXCL)) == 0 else { throw failure }
+    do {
+      guard fstatat(custody, name, &current, AT_SYMLINK_NOFOLLOW) == 0,
+        sameOwnedFile(current, expected) else { throw failure }
+      if let bytes {
+        let taken = try read(name, in: custody, maximum: bytes.count)
+        guard sameOwnedFile(taken.1, expected), taken.0 == bytes else { throw failure }
+      }
+    } catch {
+      restore(name, from: custody, into: directory)
+      throw error
+    }
   }
   private func write(_ bytes: Data, to fd: Int32) throws {
     try bytes.withUnsafeBytes { buffer in
@@ -141,23 +200,22 @@ public struct CLIToolInstallation: Sendable {
     let receipt = try JSONDecoder().decode(CLIToolReceipt.self, from: encoded.0)
     let tool = try read("gitpier", in: fd, maximum: 100 * 1024 * 1024)
     guard receipt.version == 1, CLIToolReceipt.hash(tool.0) == receipt.digest else { throw failure }
-    // Take custody without following the target. Verify the inode again before deleting it.
-    let quarantine = ".gitpier-removing-" + UUID().uuidString
-    guard renameatx_np(fd, "gitpier", fd, quarantine, UInt32(RENAME_EXCL)) == 0 else { throw failure }
-    var actual = stat()
-    guard fstatat(fd, quarantine, &actual, AT_SYMLINK_NOFOLLOW) == 0, actual.st_ino == tool.1.st_ino,
-      actual.st_dev == tool.1.st_dev, actual.st_mode & S_IFMT == S_IFREG else {
-      _ = renameatx_np(fd, quarantine, fd, "gitpier", UInt32(RENAME_EXCL)); throw failure
+    // Capture and revalidate both names before deleting either. Public names may
+    // then be reused by another installer without becoming our deletion targets.
+    try withRemovalDirectory(in: fd) { custody in
+      do {
+        try takeForRemoval("gitpier", from: fd, into: custody, expected: tool.1, bytes: tool.0)
+        try takeForRemoval(Self.receiptName, from: fd, into: custody, expected: encoded.1, bytes: encoded.0)
+        try fileBoundary?(.deletingOwnedFile("gitpier"))
+        guard unlinkat(custody, "gitpier", 0) == 0 else { throw failure }
+        try fileBoundary?(.deletingOwnedFile(Self.receiptName))
+        guard unlinkat(custody, Self.receiptName, 0) == 0 else { throw failure }
+      } catch {
+        restore(Self.receiptName, from: custody, into: fd)
+        restore("gitpier", from: custody, into: fd)
+        throw error
+      }
     }
-    do {
-      let taken = try read(quarantine, in: fd, maximum: 100 * 1024 * 1024)
-      guard CLIToolReceipt.hash(taken.0) == receipt.digest else { throw failure }
-    } catch {
-      _ = renameatx_np(fd, quarantine, fd, "gitpier", UInt32(RENAME_EXCL)); throw error
-    }
-    guard unlinkat(fd, quarantine, 0) == 0 else { throw failure }
-    var current = stat()
-    guard fstatat(fd, Self.receiptName, &current, AT_SYMLINK_NOFOLLOW) == 0, current.st_ino == encoded.1.st_ino else { throw failure }
-    guard unlinkat(fd, Self.receiptName, 0) == 0, fsync(fd) == 0 else { throw failure }
+    guard fsync(fd) == 0 else { throw failure }
   }
 }

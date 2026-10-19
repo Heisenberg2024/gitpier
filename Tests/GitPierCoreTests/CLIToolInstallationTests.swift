@@ -107,4 +107,87 @@ final class CLIToolInstallationTests: XCTestCase {
     XCTAssertThrowsError(try installation.install(source: source, application: app, bundleIdentifier: "com.another.app"))
     XCTAssertFalse(FileManager.default.fileExists(atPath: installation.executable.path))
   }
+  func testReceiptReplacementAfterIdentityCheckPreservesReplacementAndRestoresTool() throws {
+    try install()
+    let receipt = installation.directory.appendingPathComponent(CLIToolInstallation.receiptName)
+    let replacement = Data("another installer's receipt".utf8)
+    let originalTool = try Data(contentsOf: installation.executable)
+    installation.fileBoundary = { event in
+      if case .takingCustody(let name) = event, name == CLIToolInstallation.receiptName {
+        try replacement.write(to: receipt, options: .atomic)
+      }
+    }
+    XCTAssertThrowsError(try installation.uninstall())
+    XCTAssertEqual(try Data(contentsOf: receipt), replacement)
+    XCTAssertEqual(try Data(contentsOf: installation.executable), originalTool)
+    XCTAssertFalse(try FileManager.default.contentsOfDirectory(atPath: installation.directory.path).contains { $0.hasPrefix(".gitpier-removing-") })
+  }
+  func testNewInstallationAtPublicNamesDuringDeletionIsPreserved() throws {
+    try install()
+    let receipt = installation.directory.appendingPathComponent(CLIToolInstallation.receiptName)
+    let tool = installation.executable
+    let newReceipt = Data("new receipt after custody".utf8), newTool = Data("new launcher after custody".utf8)
+    installation.fileBoundary = { event in
+      if case .deletingOwnedFile(let name) = event, name == CLIToolInstallation.receiptName {
+        try newReceipt.write(to: receipt, options: .withoutOverwriting)
+        try newTool.write(to: tool, options: .withoutOverwriting)
+      }
+    }
+    try installation.uninstall()
+    XCTAssertEqual(try Data(contentsOf: receipt), newReceipt)
+    XCTAssertEqual(try Data(contentsOf: tool), newTool)
+  }
+  func testFailedInstallCleanupPreservesFilesCreatedBeforeOwnedDeletion() throws {
+    let receipt = installation.directory.appendingPathComponent(CLIToolInstallation.receiptName)
+    let tool = installation.executable
+    let newReceipt = Data("replacement receipt".utf8), newTool = Data("replacement launcher".utf8)
+    installation.fileBoundary = { event in
+      switch event {
+      case .filesReserved: throw CocoaError(.fileWriteUnknown)
+      case .deletingOwnedFile(let name):
+        if name == CLIToolInstallation.receiptName { try newReceipt.write(to: receipt, options: .withoutOverwriting) }
+        if name == "gitpier" { try newTool.write(to: tool, options: .withoutOverwriting) }
+      default: break
+      }
+    }
+    XCTAssertThrowsError(try install())
+    XCTAssertEqual(try Data(contentsOf: receipt), newReceipt)
+    XCTAssertEqual(try Data(contentsOf: tool), newTool)
+  }
+  func testReceiptSymlinkReplacementAtCustodyBoundaryPreservesLinkAndTarget() throws {
+    try install()
+    let receipt = installation.directory.appendingPathComponent(CLIToolInstallation.receiptName)
+    let target = root.appendingPathComponent("other-receipt")
+    let original = Data("foreign target".utf8)
+    try original.write(to: target)
+    installation.fileBoundary = { event in
+      if case .takingCustody(let name) = event, name == CLIToolInstallation.receiptName {
+        try FileManager.default.removeItem(at: receipt)
+        try FileManager.default.createSymbolicLink(at: receipt, withDestinationURL: target)
+      }
+    }
+    XCTAssertThrowsError(try installation.uninstall())
+    XCTAssertEqual(try FileManager.default.destinationOfSymbolicLink(atPath: receipt.path), target.path)
+    XCTAssertEqual(try Data(contentsOf: target), original)
+    XCTAssertTrue(FileManager.default.fileExists(atPath: installation.executable.path))
+  }
+  func testRestorationNeverOverwritesAConcurrentLauncherAndRetainsOwnedFile() throws {
+    try install()
+    let directory = installation.directory
+    let receipt = directory.appendingPathComponent(CLIToolInstallation.receiptName)
+    let tool = installation.executable
+    let original = try Data(contentsOf: tool), replacement = Data("concurrent launcher".utf8)
+    installation.fileBoundary = { event in
+      if case .takingCustody(let name) = event, name == CLIToolInstallation.receiptName {
+        try Data("concurrent receipt".utf8).write(to: receipt, options: .atomic)
+        try replacement.write(to: tool, options: .withoutOverwriting)
+      }
+    }
+    XCTAssertThrowsError(try installation.uninstall())
+    XCTAssertEqual(try Data(contentsOf: tool), replacement)
+    let quarantine = try XCTUnwrap(FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil).first { $0.lastPathComponent.hasPrefix(".gitpier-removing-") })
+    XCTAssertEqual(try Data(contentsOf: quarantine.appendingPathComponent("gitpier")), original)
+    let mode = try FileManager.default.attributesOfItem(atPath: quarantine.path)[.posixPermissions] as? NSNumber
+    XCTAssertEqual(mode?.intValue, 0o700)
+  }
 }
