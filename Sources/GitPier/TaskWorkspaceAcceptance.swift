@@ -88,6 +88,24 @@ import PTYSupport
     let host = NSHostingView(rootView: AnyView(EmptyView())); host.sizingOptions = []
     window.contentView = host; window.makeKeyAndOrderFront(nil); NSApp.activate(ignoringOtherApps: true)
     defer { host.rootView = AnyView(EmptyView()); window.close() }
+    try stage("detail refresh after same-timestamp session transition")
+    var detailSettings = store.settings; detailSettings.language = .english; store.updateSettings(detailSettings)
+    host.rootView = AnyView(TaskWorkspaceDetail(taskID: task.id, manager: manager).environmentObject(store).modifier(AppAppearance(store: store)))
+    defer { try? workflowAccessibilityText(host).write(to: output.appendingPathComponent("task-detail-accessibility.txt"), atomically: true, encoding: .utf8) }
+    try await waitFor { workflowAccessibilityText(host).contains("2 untracked") }
+    try stage("detail initial loaded; waiting for same-timestamp transition")
+    let refreshFile = URL(fileURLWithPath: task.path).appendingPathComponent("same-timestamp.txt")
+    try Data("new task change\n".utf8).write(to: refreshFile)
+    let runningTask = manager.task(task.id)!
+    var waitingTask = runningTask; waitingTask.agent?.state = .waitingForInput
+    // Launching -> Running also preserves updatedAt; the detail must observe the full record.
+    try await manager.save(waitingTask, replacing: runningTask)
+    try await waitFor { workflowAccessibilityText(host).contains("3 untracked") }
+    try require(manager.task(task.id)?.updatedAt == runningTask.updatedAt,
+      "Task detail refreshes actual Git changes after a session transition with unchanged activity time")
+    try FileManager.default.removeItem(at: refreshFile)
+    try await manager.setWaitingForInput(task.id, waiting: false)
+    host.rootView = AnyView(EmptyView()); try await settle()
     for language in AppLanguage.allCases {
       for appearance in [AppearanceMode.light, .dark] {
         var settings = store.settings; settings.language = language; settings.appearance = appearance; store.updateSettings(settings)
@@ -107,12 +125,20 @@ import PTYSupport
     var annotationEntered = false
     var releaseAnnotation: CheckedContinuation<Void, Never>?
     let annotation = Task { @MainActor in
-      try await manager.setWaitingForInput(task.id, waiting: true, beforePersist: {
-        annotationEntered = true
-        await withCheckedContinuation { releaseAnnotation = $0 }
-      })
+      do {
+        try await manager.setWaitingForInput(task.id, waiting: true, beforePersist: {
+          annotationEntered = true
+          await withCheckedContinuation { releaseAnnotation = $0 }
+        })
+      } catch {
+        try? stage("overlap annotation failed: " + error.localizedDescription)
+        throw error
+      }
     }
+    defer { releaseAnnotation?.resume(); annotation.cancel() }
+    try stage("overlap waiting for annotation entry")
     try await waitFor { annotationEntered }
+    try stage("overlap waiting for PTY exit")
     session.view.send(txt: "exit\n")
     try await waitFor { session.exited }
     try require(manager.busy.contains(task.id) && manager.task(task.id)?.agent?.state.active == true, "A real PTY exit waits for an in-flight annotation before releasing task lifecycle ownership")

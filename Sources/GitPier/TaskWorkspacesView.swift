@@ -147,7 +147,9 @@ struct TaskWorkspaceDetail: View {
           }
         }.padding(16).frame(maxWidth: .infinity, alignment: .leading)
       }
-    }.task(id: task?.updatedAt) { refresh() }.onDisappear { request.cancel() }
+    // Launching and Running can share updatedAt. Refresh on every record transition,
+    // so a superseded snapshot is replaced without requiring a manual Refresh.
+    }.onChange(of: task, initial: true) { _, _ in refresh() }.onDisappear { request.cancel() }
       .sheet(isPresented: $launching) { CodexLaunchSheet(taskID: taskID, manager: manager).environmentObject(store).modifier(AppAppearance(store: store)) }
       .confirmationDialog(store.text("Archive task?", "归档任务？"), isPresented: $confirmArchive) {
         Button(store.text("Archive", "归档")) { perform { try await manager.archive(taskID, archived: true) } }

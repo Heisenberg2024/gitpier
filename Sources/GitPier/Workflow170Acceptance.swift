@@ -266,7 +266,7 @@ extension UIAcceptance {
     walk(host); return frames
   }
   /// SwiftUI static text exposes its content as AXValue, unlike button AXLabel.
-  private static func workflowAccessibilityText(_ host: NSView) -> String {
+  static func workflowAccessibilityText(_ host: NSView) -> String {
     var visited = Set<ObjectIdentifier>(), text: [String] = []
     func walk(_ item: Any, depth: Int = 0) {
       guard depth < 80, let object = item as? NSObject, visited.insert(ObjectIdentifier(object)).inserted else { return }
