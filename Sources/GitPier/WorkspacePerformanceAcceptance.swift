@@ -45,12 +45,21 @@ extension UIAcceptance {
     let missing = RepositoryRecord(path: fixture.appendingPathComponent("missing").path, name: "Missing Fixture")
     let invalidPath = fixture.appendingPathComponent("invalid"); try FileManager.default.createDirectory(at: invalidPath, withIntermediateDirectories: true)
     let invalid = RepositoryRecord(path: invalidPath.path, name: "Invalid Fixture")
+    let taskGit = await GitServiceRegistry.shared.service(for: URL(fileURLWithPath: records[2].path))
+    var workspaceTasks: [TaskWorkspace] = []
+    for index in 0..<10 {
+      workspaceTasks.append(try await taskGit.createTaskWorkspace(name: "Performance task \(index)", repositoryID: records[2].id,
+        destination: fixture.appendingPathComponent("task-\(index)"), branch: "task-\(index)"))
+    }
     var reports: [[String: Any]] = []
     for count in [10, 50, 100] {
       // Exactly 10/50/100 physical repositories, plus a linked worktree and two unavailable entries.
       let selected = Array(records.prefix(count)) + [linked, missing, invalid]
       var config = WorkspaceConfiguration(); config.repositories = selected; config.settings.launchPage = "dashboard"; config.settings.appearance = .light
       let persistence = ConfigurationStore(url: fixture.appendingPathComponent("workspace-\(count).json")); try persistence.save(config)
+      var taskStore: TaskWorkspaceStore? = TaskWorkspaceStore(root: persistence.url.deletingPathExtension().appendingPathExtension("tasks"))
+      for task in workspaceTasks { try await taskStore!.save(task) }
+      taskStore = nil
       GitProcessActivity.reset()
       let heartbeat = MainLoopProbe(); heartbeat.start()
       let start = ContinuousClock.now
@@ -93,6 +102,18 @@ extension UIAcceptance {
       let failedJobs = await queue.current(); guard failedJobs.allSatisfy({ $0.state == .failed }) else { throw GitPierError.invalidInput("Missing remote did not fail") }
       await queue.shutdown()
       try await mainGit.perform(["remote", "set-url", "origin", seed.path])
+      await store.taskWorkspaces.restore()
+      guard store.taskWorkspaces.tasks.count == 10 else { throw TaskWorkspaceError.corrupt }
+      let taskStart = ContinuousClock.now
+      GitProcessActivity.reset()
+      await withTaskGroup(of: Void.self) { group in
+        for task in workspaceTasks { group.addTask { await store.taskWorkspaces.observe(task.id) } }
+      }
+      let taskRefresh = PerformanceAcceptance.ms(taskStart), taskActivity = GitProcessActivity.snapshot()
+      guard taskActivity.peak <= 3, store.taskWorkspaces.summaries.count == 10,
+        store.taskWorkspaces.active.isEmpty, store.models.values.allSatisfy({ $0.refreshCount == 0 && $0.terminal.sessions.isEmpty }) else {
+        throw GitPierError.invalidInput("Task refresh exceeded its budget or activated repository/agent sessions")
+      }
       heartbeat.stop()
       var usage = rusage(); getrusage(RUSAGE_SELF, &usage)
       let sorted = heartbeat.samples.sorted()
@@ -102,6 +123,7 @@ extension UIAcceptance {
         "initialLocalScanMS": scan, "refreshMS": refreshMS, "organizationSwitchDuringRefreshMS": switchMS,
         "peakGitProcessLaunches": activity.peak, "initialGitLaunches": activity.launches,
         "failedFetchMS": failureMS, "failedFetchCount": failedJobs.count,
+        "taskCount": 10, "taskRefreshMS": taskRefresh, "taskGitLaunches": taskActivity.launches, "peakTaskGitProcesses": taskActivity.peak,
         "peakRSSMiB": Double(usage.ru_maxrss) / 1024 / 1024,
         "mainLoopP95ExcessMS": sorted.isEmpty ? 0 : sorted[min(sorted.count - 1, Int(Double(sorted.count) * 0.95))],
         "mainLoopMaxExcessMS": sorted.last ?? 0, "fullRepositoryRefreshes": store.models.values.reduce(0) { $0 + $1.refreshCount }])
@@ -112,7 +134,7 @@ extension UIAcceptance {
     let report: [String: Any] = ["version": AppResources.version, "build": AppResources.build, "configuration": "Release when invoked with the packaged Release executable; otherwise Debug",
       "os": ProcessInfo.processInfo.operatingSystemVersionString, "cpuCount": ProcessInfo.processInfo.processorCount,
       "startupMeasurement": "Each case constructs a new AppStore with empty snapshot/session caches in a warmed native test process; excludes fixture creation and process launch.",
-      "fixture": ["untrackedFiles": 10000, "commitsPerClone": 1000, "linkedWorktrees": 1],
+      "fixture": ["untrackedFiles": 10000, "commitsPerClone": 1000, "linkedWorktrees": 11, "taskWorkspaces": 10],
       "processMeasurement": "Opt-in ProcessRunner lifetime counters include Git launch setup, stop on termination, and contain no arguments or paths.",
       "memoryMeasurement": "ru_maxrss is cumulative process high-water RSS, not per-case live allocation.", "cases": reports]
     try JSONSerialization.data(withJSONObject: report, options: [.prettyPrinted, .sortedKeys]).write(to: output.appendingPathComponent("workspace-performance.json"), options: .atomic)

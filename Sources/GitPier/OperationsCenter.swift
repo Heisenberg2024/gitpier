@@ -6,6 +6,9 @@ import SwiftUI
   @Published private(set) var history = OperationCenterHistory()
   private var fetchAttempts: [String: UUID] = [:]
   private var cancellations: [UUID: () -> Void] = [:]
+  private var taskIDs: [UUID: UUID] = [:]
+  func linkTask(_ operationID: UUID, taskID: UUID) { taskIDs[operationID] = taskID; pruneCallbacks() }
+  func taskID(_ operationID: UUID) -> UUID? { taskIDs[operationID] }
   var records: [WorkflowOperationRecord] { history.records }
   var activeCount: Int { records.filter { $0.state.active }.count }
   func begin(id: UUID, kind: WorkflowOperationKind, repositoryID: UUID?,
@@ -50,6 +53,7 @@ import SwiftUI
   private func pruneCallbacks() {
     let active = Set(records.filter { $0.state.active }.map(\.id))
     cancellations = cancellations.filter { active.contains($0.key) }
+    let retained = Set(records.map(\.id)); taskIDs = taskIDs.filter { retained.contains($0.key) }
   }
   func observe(_ job: WorkspaceFetchJob, cancel: @escaping () -> Void) {
     if fetchAttempts[job.id] == job.attemptID && !records.contains(where: { $0.id == job.attemptID }) { return }
@@ -143,7 +147,20 @@ struct OperationsCenterView: View {
         HStack {
           Text(record.startedAt, style: .time).font(.caption).foregroundStyle(.secondary)
           Spacer()
-          if record.recovery == .reviewJournal {
+          if let taskID = center.taskID(record.id) {
+            Button(store.text("Open Task", "打开任务")) {
+              dismiss(); Task {
+                do { _ = try await store.taskWorkspaces.open(taskID, terminal: record.kind == .agentSession) }
+                catch { store.error = error.localizedDescription }
+              }
+            }
+            Button(store.text("Review Changes", "审查变更")) {
+              dismiss(); Task {
+                do { try await store.taskWorkspaces.review(taskID, baseline: true) }
+                catch { store.error = error.localizedDescription }
+              }
+            }
+          } else if record.recovery == .reviewJournal {
             Button(store.text("View Review History", "查看审查历史")) { dismiss(); store.showReviewRecovery = true }
           } else if record.repositoryID != nil {
             Button(store.text("Open Repository", "打开仓库")) {
@@ -174,6 +191,10 @@ struct OperationsCenterView: View {
   case .createWorktree: return store.text("Create Worktree", "创建工作树")
   case .removeWorktree: return store.text("Remove Worktree", "移除工作树")
   case .review: return store.text("Submit Review", "提交审查")
+  case .createTask: return store.text("Create Task Workspace", "创建任务工作空间")
+  case .archiveTask: return store.text("Archive / Reopen Task", "归档 / 重新打开任务")
+  case .reviewTask: return store.text("Review Task Changes", "审查任务变更")
+  case .agentSession: return store.text("Codex Session", "Codex 会话")
   }
 }
 @MainActor func operationStateTitle(_ record: WorkflowOperationRecord, store: AppStore) -> String {
@@ -187,6 +208,7 @@ struct OperationsCenterView: View {
   case .cancelled: return store.text("Cancelled · changes may remain", "已取消 · 可能保留部分修改")
   case .needsAttention: return store.text("Needs attention", "需要处理")
   case .resultUnknown: return store.text("Result unknown · verify in Review history", "结果未知 · 请在审查历史核实")
+  case .agentExited: return store.text("Agent exited · review changes and tests", "Agent 已退出 · 请审查变更及测试")
   }
 }
 

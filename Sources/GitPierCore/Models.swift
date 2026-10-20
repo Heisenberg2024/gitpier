@@ -205,6 +205,7 @@ public struct AppSettings: Codable, Equatable, Sendable {
   public var language: AppLanguage = .english
   public var gitPath = "/usr/bin/git"
   public var shellPath = "/bin/zsh"
+  public var codexExecutablePath = ""
   public var loginShell = true
   public var terminalFont = "Menlo"
   public var terminalFontSize: Double = 13
@@ -250,6 +251,7 @@ public struct AppSettings: Codable, Equatable, Sendable {
     language = try values.decodeIfPresent(AppLanguage.self, forKey: .language) ?? language
     gitPath = try values.decodeIfPresent(String.self, forKey: .gitPath) ?? gitPath
     shellPath = try values.decodeIfPresent(String.self, forKey: .shellPath) ?? shellPath
+    codexExecutablePath = try values.decodeIfPresent(String.self, forKey: .codexExecutablePath) ?? ""
     loginShell = try values.decodeIfPresent(Bool.self, forKey: .loginShell) ?? loginShell
     terminalFont = try values.decodeIfPresent(String.self, forKey: .terminalFont) ?? terminalFont
     terminalFontSize =

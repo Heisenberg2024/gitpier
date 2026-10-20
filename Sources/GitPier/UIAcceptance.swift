@@ -110,6 +110,13 @@ import SwiftUI
           print("Native Workflow 1.7 acceptance passed (temporary repositories).")
           exit(0)
         }
+        if ProcessInfo.processInfo.environment["GITPIER_UI_ACCEPTANCE_SCOPE"] == "task-workspaces" {
+          window.close()
+          try await verifyTaskWorkspaces(root: root, output: output)
+          store.shutdown()
+          print("Native task workspace acceptance passed (local agent fixture; no real Codex session).")
+          exit(0)
+        }
         if ProcessInfo.processInfo.environment["GITPIER_UI_ACCEPTANCE_SCOPE"] == "dashboard" {
           window.close()
           try await verifyDashboardRedesign(root: root, output: output)

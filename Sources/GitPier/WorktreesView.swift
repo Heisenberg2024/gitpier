@@ -6,12 +6,38 @@ struct WorktreesView: View {
   @ObservedObject var model: RepositoryModel
   @EnvironmentObject var store: AppStore
   @StateObject private var request = WorkflowRequest()
+  @StateObject private var removalNavigation = WorkflowRequest()
   @State private var records: [GitWorktree] = []
   @State private var common = ""
   @State private var creating = false
   @State private var lockTarget: GitWorktree?
   @State private var reason = ""
+  @State private var showingTasks = false
   var body: some View {
+    VStack(spacing: 0) {
+      Picker(store.text("Workspace", "工作空间"), selection: $showingTasks) {
+        Text(store.text("Worktrees", "工作树")).tag(false)
+        Text(store.text("Tasks", "任务")).tag(true)
+      }.pickerStyle(.segmented).frame(width: 250).padding(10)
+      Divider()
+      if showingTasks { TaskWorkspacesView(model: model, manager: store.taskWorkspaces) }
+      else { worktreesContent }
+    }.onAppear {
+      if let id = store.taskWorkspaces.selectedID, store.taskWorkspaces.task(id)?.path == model.record.path { showingTasks = true }
+    }.onChange(of: store.taskRemovalRequest, initial: true) { _, route in
+      guard let route, let task = store.taskWorkspaces.task(route.taskID), route.sourcePath == model.record.path else { return }
+      let id = route.taskID
+      store.taskRemovalRequest = nil; showingTasks = false
+      removalNavigation.start { ticket in
+        let trees = try await model.git().worktrees(includeStatus: false)
+        guard removalNavigation.current(ticket), store.taskWorkspaces.task(id) == task,
+          let tree = trees.first(where: { $0.path == task.path }) else { throw TaskWorkspaceError.changed }
+        common = task.commonDirectory
+        reviewRemoval(tree)
+      }
+    }.onDisappear { removalNavigation.cancel() }
+  }
+  private var worktreesContent: some View {
     VStack(spacing: 0) {
       HStack {
         Text(store.text("Worktrees", "工作树")).font(.headline)
@@ -102,12 +128,20 @@ struct WorktreesView: View {
     guard let owned = ownership(record) else { return }
     request.start { ticket in
       try store.validateWorktreeSessions(record.path)
+      try store.taskWorkspaces.validateRemoval(record.path)
+      let tasks = try store.taskWorkspaces.removalTasks(record.path)
       let review = try await model.git().reviewWorktreeRemoval(record, ownership: owned)
-      guard request.current(ticket), !model.busy, store.current === model, model.page == "worktrees" else { return }
+      guard request.current(ticket), !model.busy, store.current === model, model.page == "worktrees",
+        try store.taskWorkspaces.removalTasks(record.path) == tasks else { return }
       model.confirmation = PendingAction(title: store.text("Remove Worktree?", "移除工作树？"), detail: store.text("This deletes the clean linked directory and its Git registration. Existing branches are retained. Detached commits must have a retaining reference. Affected path: ", "将删除干净的关联工作目录及 Git 注册，已有分支会保留，分离 HEAD 提交必须有引用保留。受影响路径：") + "\n\n" + record.path) {
         model.run(kind: .removeWorktree) { git in
-          try store.validateWorktreeSessions(record.path)
+          let lease = try store.reserveWorktreeLifecycle(record.path)
+          defer { store.releaseWorktreeLifecycle(record.path, reservation: lease) }
+          try store.validateWorktreeSessions(record.path, reservation: lease)
+          try store.taskWorkspaces.validateRemoval(record.path)
+          guard try store.taskWorkspaces.removalTasks(record.path) == tasks else { throw TaskWorkspaceError.changed }
           try await git.removeWorktree(review)
+          await store.taskWorkspaces.worktreeRemoved(record.path)
           store.forgetWorktree(owned)
           await store.refreshWorktreeFamily(owned.commonDirectory)
         }
@@ -125,7 +159,11 @@ struct WorktreesView: View {
       guard request.current(ticket), !model.busy, store.current === model, model.page == "worktrees" else { return }
       model.confirmation = PendingAction(title: store.text("Repair Worktree Metadata?", "修复工作树元数据？"), detail: store.text("Update Git metadata for this moved linked worktree without moving or deleting files: ", "更新此已移动关联工作树的 Git 元数据，不移动或删除文件：") + "\n\n" + review.previous.path + " → " + target.path, destructive: false) {
         model.run { git in
-          try store.validateWorktreeSessions(review.previous.path)
+          let lease = try store.reserveWorktreeLifecycle(review.previous.path)
+          defer { store.releaseWorktreeLifecycle(review.previous.path, reservation: lease) }
+          let destinationLease = review.ownership.path == review.previous.path ? nil : try store.reserveWorktreeLifecycle(review.ownership.path)
+          defer { if let destinationLease { store.releaseWorktreeLifecycle(review.ownership.path, reservation: destinationLease) } }
+          try store.validateWorktreeSessions(review.previous.path, reservation: lease)
           try store.validateWorktreeRepairRecords(previous: review.previous.path, destination: review.ownership.path)
           let repaired = try await git.repairWorktree(review)
           await store.reconcileMovedWorktree(repaired, previousPath: review.previous.path)

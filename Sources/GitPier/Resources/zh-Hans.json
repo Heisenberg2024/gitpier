@@ -209,5 +209,17 @@
   "Missing .gitmodules URL; inspect this gitlink in the terminal.": "缺少 .gitmodules URL，请在终端审查此 gitlink。",
   "This declaration has no staged gitlink.": "此声明没有已暂存 gitlink。",
   "The file list shows the first 5,000 LFS files. Network operations use the complete current reference.": "文件列表显示前 5,000 个 LFS 文件，网络操作使用完整当前引用。",
-  "Inspect skip-worktree or assume-unchanged child entries in the terminal before updating the submodule.": "更新子模块前，请在终端审查 skip-worktree 或 assume-unchanged 子仓库条目。"
+  "Inspect skip-worktree or assume-unchanged child entries in the terminal before updating the submodule.": "更新子模块前，请在终端审查 skip-worktree 或 assume-unchanged 子仓库条目。",
+  "Task workspaces are open in another GitPier instance. Close that instance before using tasks or removing worktrees.": "任务工作空间已由另一个 GitPier 实例打开。使用任务或移除工作树前，请先关闭该实例。",
+  "Choose a valid task name, local baseline and linked worktree.": "请选择有效的任务名称、本地基准及关联工作树。",
+  "The task worktree is unavailable. Check its location and repair its registration before continuing.": "任务工作树不可用，请检查位置并修复其注册信息后继续。",
+  "The task or worktree changed. Refresh and review it again.": "任务或工作树已发生变化，请刷新后重新审查。",
+  "Task metadata could not be read safely. The original files have been preserved.": "无法安全读取任务元数据，原始文件已保留。",
+  "Task metadata belongs to an unsupported version. The original files have been preserved.": "任务元数据版本不受支持，原始文件已保留。",
+  "Task metadata has reached its size or record limit. Existing tasks have been preserved.": "任务元数据已达到大小或记录数量上限，已有任务已保留。",
+  "Stop the agent and close this worktree's terminal sessions before continuing.": "继续前，请停止 Agent 并关闭此工作树的终端会话。",
+  "Codex CLI Not Installed. Choose an installed executable or see the official installation guide.": "尚未安装 Codex CLI。请选择已安装的可执行文件，或查看官方安装指南。",
+  "The selected Codex CLI path is not an accessible executable file.": "所选 Codex CLI 路径不是可访问的可执行文件。",
+  "This executable did not report a supported Codex CLI identity and version.": "此可执行文件未报告受支持的 Codex CLI 身份和版本。",
+  "The Codex CLI executable changed. Detect it again before starting a session.": "Codex CLI 可执行文件已变化，请重新检测后再启动会话。"
 }

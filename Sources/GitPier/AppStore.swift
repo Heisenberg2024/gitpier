@@ -36,13 +36,16 @@ import UserNotifications
   var operationNavigation: [UUID: OperationNavigationSnapshot] = [:]
   @Published var showOperationsCenter = false
   @Published var showReviewRecovery = false
+  @Published var taskRemovalRequest: TaskWorktreeRemovalRoute?
+  var worktreeLifecycleReservations: [String: UUID] = [:]
   lazy var updates = UpdateManager(store: self)
   lazy var workspace = WorkspaceModel(store: self)
   lazy var hosting = HostingModel(store: self)
+  lazy var taskWorkspaces = TaskWorkspaceManager(store: self)
   let reviewSessions: HostingReviewSessionRegistry
   @Published var hostingReviewDestination: HostingReviewDashboardItem?
   var hasRunningGitOperations: Bool { hasBlockingGitOperations || workspace.automaticallyFetching }
-  var hasBlockingGitOperations: Bool { cloning || workspace.manuallyFetching || models.values.contains { $0.busy || $0.committing } }
+  var hasBlockingGitOperations: Bool { cloning || taskWorkspaces.creatingCount > 0 || !taskWorkspaces.busy.isEmpty || workspace.manuallyFetching || models.values.contains { $0.busy || $0.committing } }
   let cloneActivity = OperationProgress()
   @Published var cloning = false
   @Published var cloneTask: Task<Void, Never>?
@@ -116,6 +119,7 @@ import UserNotifications
     reviewSessions.operationCenter = operations
     workspace.start()
     Task { await reviewSessions.refreshRecovery() }
+    Task { await taskWorkspaces.restore() }
     if !showDashboard, let selectedID, let model = models[selectedID] { Task { await model.activate() } }
   }
   private func configureFrameworkLanguage() {
@@ -331,6 +335,10 @@ import UserNotifications
     } catch { self.error = error.localizedDescription }
   }
   func remove(_ id: UUID) {
+    if let model = models[id], taskWorkspaces.isActive(path: model.record.path) {
+      error = text("Stop the task's agent before removing this repository from GitPier.", "从 GitPier 移除此仓库前，请先停止任务 Agent。")
+      return
+    }
     models[id]?.shutdown()
     models[id] = nil
     configuration.repositories.removeAll { $0.id == id }
@@ -579,6 +587,7 @@ struct DiffTab: Identifiable, Equatable {
     self.store = store
     panels = WorkspacePanels(record.layout)
     terminal = TerminalManager(root: record.path)
+    terminal.canStart = { [weak store] in store?.admitWorktreeProcess(record.path) ?? false }
     activity.center = store.operations
     activity.repositoryID = record.id
     activity.repositoryIdentity = { [weak self] in
@@ -1053,6 +1062,8 @@ struct DiffTab: Identifiable, Equatable {
     _ action: @escaping (GitService) async throws -> Void
   ) {
     guard !busy else { return }
+    do { try store.requireWorktreeAvailable(record.path) }
+    catch { self.error = error.localizedDescription; return }
     confirmationReviewID = UUID()
     confirmationReviewTask?.cancel()
     confirmationReviewTask = nil
@@ -1081,6 +1092,7 @@ struct DiffTab: Identifiable, Equatable {
       var result = OperationResult.succeeded
       do {
         try Task.checkCancellation()
+        try store.requireWorktreeAvailable(record.path)
         activity.markRunning()
         try await action(await git())
         if error != nil {
@@ -1728,6 +1740,7 @@ struct DiffTab: Identifiable, Equatable {
     invalidateDiffCache()
     service = nil
     terminal.shutdown(); terminal = TerminalManager(root: path)
+    terminal.canStart = { [weak store] in store?.admitWorktreeProcess(path) ?? false }
     record.path = path; store.update(record)
     historyReadyKey = nil; selectedHistoryCommit = nil
     available = false; snapshot = nil; error = nil

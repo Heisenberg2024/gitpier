@@ -162,6 +162,7 @@ struct SettingsView: View {
         Text(localizedUI("⌘C Copy   ⌘V Paste   ⌃C Interrupt   ⌃D EOF   ⌃Z Suspend")).font(
           .system(size: 11, design: .monospaced))
         CLISettingsSections()
+        CodexSettingsSection()
       }.formStyle(.grouped).tabItem { Label(store.text("Terminal", "终端"), systemImage: "terminal") }
         .tag(3)
       Form {

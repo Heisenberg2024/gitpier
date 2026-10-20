@@ -33,6 +33,7 @@ struct WindowLifecycle: NSViewRepresentable {
 @MainActor final class WindowDelegateProxy: NSObject, NSWindowDelegate {
   nonisolated(unsafe) weak var original: (any NSWindowDelegate)?
   unowned let store: AppStore
+  private var agentsStoppedForClose = false
   init(original: (any NSWindowDelegate)?, store: AppStore) {
     self.original = original
     self.store = store
@@ -56,19 +57,30 @@ struct WindowLifecycle: NSViewRepresentable {
         alert.runModal()
         return false
       }
-      if !store.reviewSessions.confirmClose(store: store, quitting: false) { return false }
-      if !store.unsavedConflictDrafts.isEmpty {
-        if !store.confirmDiscardConflictDrafts(quitting: false) { return false }
-      } else if store.models.values.contains(where: { $0.terminal.sessions.contains { !$0.exited } }
-      ) {
-        let alert = NSAlert()
-        alert.messageText = store.text("Close the workspace?", "关闭工作空间？")
-        alert.informativeText = store.text(
-          "The last window is closing. Running terminal sessions and attached jobs will stop. Drafts are saved.",
-          "这是最后一个窗口，将停止终端会话和关联作业，提交草稿已保存。 ")
-        alert.addButton(withTitle: store.text("Close", "关闭"))
-        alert.addButton(withTitle: store.text("Cancel", "取消"))
-        if alert.runModal() != .alertFirstButtonReturn { return false }
+      if !agentsStoppedForClose {
+        if !store.reviewSessions.confirmClose(store: store, quitting: false) { return false }
+        if !store.taskWorkspaces.confirmQuit() { return false }
+        if !store.unsavedConflictDrafts.isEmpty {
+          if !store.confirmDiscardConflictDrafts(quitting: false) { return false }
+        } else if store.models.values.contains(where: { $0.terminal.sessions.contains { !$0.exited && $0.agentConfiguration == nil } }
+        ) {
+          let alert = NSAlert()
+          alert.messageText = store.text("Close the workspace?", "关闭工作空间？")
+          alert.informativeText = store.text(
+            "The last window is closing. Running terminal sessions and attached jobs will stop. Drafts are saved.",
+            "这是最后一个窗口，将停止终端会话和关联作业，提交草稿已保存。 ")
+          alert.addButton(withTitle: store.text("Close", "关闭"))
+          alert.addButton(withTitle: store.text("Cancel", "取消"))
+          if alert.runModal() != .alertFirstButtonReturn { return false }
+        }
+      }
+      if !store.taskWorkspaces.active.isEmpty {
+        Task {
+          if await store.taskWorkspaces.stopAllAndWait(), !store.hasBlockingGitOperations {
+            agentsStoppedForClose = true; sender.performClose(nil); agentsStoppedForClose = false
+          }
+        }
+        return false
       }
     }
     return original?.windowShouldClose?(sender) ?? true

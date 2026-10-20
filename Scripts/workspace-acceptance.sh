@@ -2,7 +2,7 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 task_mode="${1:-version140}"
-case "$task_mode" in context-repository|context-assistant|context-workflow|workflow170|review|review-stability|hosting|hosting-browser|version144|version142|version140|dashboard|full|workspace-performance) ;; *) echo 'Use context-repository, context-assistant, context-workflow, workflow170, review, review-stability, hosting, hosting-browser, version144, version142, version140, dashboard, full or workspace-performance.' >&2; exit 1;; esac
+case "$task_mode" in task-workspaces|context-repository|context-assistant|context-workflow|workflow170|review|review-stability|hosting|hosting-browser|version144|version142|version140|dashboard|full|workspace-performance) ;; *) echo 'Use task-workspaces, context-repository, context-assistant, context-workflow, workflow170, review, review-stability, hosting, hosting-browser, version144, version142, version140, dashboard, full or workspace-performance.' >&2; exit 1;; esac
 task_output="${2:-$PWD/.cache/ui-acceptance/workspace}"
 [[ -x dist/GitPier.app/Contents/MacOS/GitPier ]] || { echo 'Build GitPier.app through Scripts/build-app.sh first.' >&2; exit 1; }
 mkdir -p .cache "$task_output"
@@ -17,13 +17,14 @@ cleanup() {
 }
 trap cleanup EXIT
 ditto dist/GitPier.app "$task_app"
-python3 - "$task_app/Contents/Info.plist" "$task_bundle_id" <<'PY'
+python3 - "$task_app/Contents/Info.plist" "$task_bundle_id" "$task_mode" <<'PY'
 import plistlib,sys
-path,identifier=sys.argv[1:]
+path,identifier,mode=sys.argv[1:]
 with open(path,'rb') as stream: info=plistlib.load(stream)
 info['CFBundleIdentifier']=identifier
 info['CFBundleName']='GitPier Workspace Acceptance'
 info['CFBundleDisplayName']='GitPier Workspace Acceptance'
+if mode == 'task-workspaces': info.pop('CFBundleURLTypes', None)
 with open(path,'wb') as stream: plistlib.dump(info,stream)
 PY
 # Keep the original resource config, so the changed runtime identity cannot start production updating.

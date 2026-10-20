@@ -42,6 +42,9 @@ public struct WorktreeOwnership: Codable, Equatable, Sendable {
 public struct WorktreeRemovalReview: Sendable {
   public let worktree: GitWorktree
   public let ownership: WorktreeOwnership
+  public let directoryIdentity: TaskDirectoryIdentity
+  public let gitIdentity: TaskDirectoryIdentity
+  public let commonIdentity: TaskDirectoryIdentity
 }
 public struct WorktreeRepairReview: Equatable, Sendable {
   public let ownership: WorktreeOwnership

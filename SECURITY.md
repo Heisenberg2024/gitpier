@@ -91,7 +91,17 @@ The API client uses system HTTPS trust, ephemeral URLSession, no cookies/credent
 GitHub `repo` is broad private-repository read/write access, `public_repo` includes public writes, and GitLab `api` is broad API access. GitPier does not automatically elevate scopes. Gitea OAuth requires recognized v1.23+ granular scopes; older/unsupported instances can use PAT. Disconnect removes local credentials; revoke provider grants separately. GitHub.com/GitLab.com public registrations are configured. Real GitHub.com/GitLab.com read-only consent, restart/unlock and public PR/MR APIs passed on 2026-10-17. Self-hosted policies/certificates/forks, private/write access, actual expiry/refresh and post-upgrade Keychain authorization require separate acceptance. See [OAuth setup](docs/oauth-setup.md).
 
 
-## v1.7.0 navigation and operation observation (Unreleased)
+## Task workspaces and local agents (v1.8.0 development)
+
+Task creation and removal reuse the original Git worktree lifecycle and queues. External association does not grant deletion ownership. Private task records preserve identity/baseline/session/review metadata and an optional explicitly saved description, without prompts, transcripts, source contents, terminal output or credentials. Invalid records are preserved and block changes. Archive never deletes files. See [task workspace boundaries](docs/task-workspaces.md).
+
+Codex detection uses only version/help probes. Confirmed direct-argv PTY launches retain Codex's approval/sandbox mechanisms and existing local configuration; GitPier never installs Codex or reads/modifies its authentication. Independent worktrees are not OS sandboxes, and native GitPier confirmations do not constrain each internal Codex command. Quit/Stop verify current process identities and wait for attached-process cleanup; intentionally detached processes may require manual inspection. Restart marks unfinished sessions Interrupted without automatic replay. Exit zero is not task/test success.
+
+External navigation cannot authenticate the official CLI. Unknown repository registration requires explicit confirmation with Cancel default, followed by filesystem/root/common-directory revalidation. No external execution/agent endpoint exists; OAuth state/PKCE remains separate.
+
+简体中文：任务复用原 Worktree 所有权/写队列，外部关联不授予删除权；私有元数据不保存 Prompt、对话、源码、终端输出或凭证，坏记录保留并停止修改，归档不删文件。Codex 仅主动检测版本/帮助并在确认后以参数数组启动，保留自身审批/沙箱及原配置，不安装、不读改认证。Worktree 不是系统沙箱，GitPier 确认无法约束 Codex 内部命令。停止/退出核对进程身份并等待关联进程；脱离会话的进程可能需手动检查。重启不自动执行，退出码0不等于任务/测试成功。外部URL不能证明CLI来源，陌生仓库需默认取消的确认及身份复核，无外部执行入口，OAuth隔离保持。
+
+## v1.7.0 navigation and operation observation
 
 The CLI accepts only local open/page navigation. It never constructs shell commands, accepts credentials, invokes arbitrary Git commands or bypasses app write confirmations. `gitpier://navigate/open` rejects unknown/duplicate query fields and is separate from `gitpier://oauth/gitlab` state/PKCE handling. Both ends validate access and working-tree identity; Launch Services targets the user's selected app without changing the production default handler in tests.
 

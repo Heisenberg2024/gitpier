@@ -1,5 +1,13 @@
 # Architecture and security boundaries
 
+## Task Workspaces (v1.8.0 development)
+
+`TaskWorkspace` binds a repository UUID, immutable local baseline, branch and original worktree receipt to device/inode identities. `TaskWorkspaceStore` reuses private descriptor-relative IO for bounded versioned metadata; `TaskWorkspaceManager` owns task observations and live PTY links. All Git commands stay in `GitService.swift` and the original worktree/common queues. The Tasks subview reuses existing comparison, commit, editor and terminal workflows; no second Git engine or terminal renderer is introduced. Task review receipts contain only an opaque bounded snapshot fingerprint and timestamp, without test-success inference. See [storage, recovery and lifecycle](task-workspaces.md).
+
+`AgentExecutable` validates a bounded version/help probe and executable identity. Confirmed launches use direct SwiftTerm executable/argv with the task directory, without managed credential injection or shell-interpolated prompts. PTY termination checks PID start identity and awaits attached-session cleanup; quit can cancel. External URL repository registration requires user consent and identity revalidation, with no trusted-CLI assertion. OAuth routing is unchanged.
+
+简体中文：TaskWorkspace 以仓库 UUID/固定基准/分支/原 Worktree 回执及设备/inode 绑定身份，私有存储复用描述符 IO，Manager 仅管理任务观察与真实 PTY。Git 命令与写队列继续归原 GitService，Diff/提交/编辑器/终端均复用。审查仅保存有界快照摘要，不推断测试成功；启动须确认并使用参数数组，退出核对进程身份并等待关联会话回收。陌生仓库 URL 注册需确认，不声称来源可信，OAuth 独立保持。
+
 ## Workflow observation and navigation (v1.7.0 development)
 
 `OperationCenterHistory` is a pure in-memory event reducer. App-owned `OperationsCenter` bridges existing `OperationProgress` tickets, BatchFetchCoordinator updates and the existing Review journal's readback. Ordinary local refresh progress opts out. No Git execution queue, polling timer or duplicate journal is introduced; UI lifetime cannot own cancellation. UUID/revision checks reject stale/duplicate events; completed records cannot become active again. Normal recent summaries are capped at 100; automatic Fetch coalesces completed records per repository, while unresolved Review metadata remains governed by the existing journal. Recovery navigation captures and rechecks root/Common Directory, metadata directory filesystem identities, HEAD/Index/operation and remotes. Writes still run through their original confirmation and service checks.

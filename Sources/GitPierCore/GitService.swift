@@ -2805,16 +2805,37 @@ extension GitService {
   }
   public func createWorktree(destination: URL, branch: String, newBranch: Bool = false, startAt: String = "HEAD") async throws -> WorktreeOwnership {
     try InputValidation.reference(branch)
+    let source = try await validate(), sourceCommon = try await commonDirectory()
+    let sourceIdentity = try TaskDirectoryIdentity.read(source.path)
+    let sourceCommonIdentity = try TaskDirectoryIdentity.read(sourceCommon.path)
     return try await lifecycleWrite {
+      guard try await validate() == source, try await commonDirectory() == sourceCommon,
+        try TaskDirectoryIdentity.read(source.path) == sourceIdentity,
+        try TaskDirectoryIdentity.read(sourceCommon.path) == sourceCommonIdentity else { throw TaskWorkspaceError.changed }
       let target = destination.standardizedFileURL
-      guard target.path.hasPrefix("/"), !target.path.utf8.contains(0), target.resolvingSymlinksInPath() == target,
+      guard !destination.path.split(separator: "/").contains(".."), target.path.hasPrefix("/"), !target.path.utf8.contains(0), target.resolvingSymlinksInPath() == target,
         (try? FileManager.default.attributesOfItem(atPath: target.path)) == nil else {
         throw GitPierError.invalidInput("Choose a new directory. Existing folders and symbolic links are never overwritten.")
+      }
+      // Foundation may leave a nonexistent final path unresolved. Check each
+      // ancestor rather than trusting resolvingSymlinksInPath on that final path.
+      var ancestor = target.deletingLastPathComponent()
+      let parentIdentity = try TaskDirectoryIdentity.read(ancestor.path)
+      while ancestor.path != "/" {
+        _ = try TaskDirectoryIdentity.read(ancestor.path)
+        var state = stat()
+        guard lstat(ancestor.appendingPathComponent(".git").path, &state) != 0, errno == ENOENT else {
+          throw GitPierError.invalidInput("Choose a directory outside existing Git repositories.")
+        }
+        ancestor = ancestor.deletingLastPathComponent()
       }
       let canonicalTarget = ProfessionalWorkflowParser.canonicalPath(target.path)
       let records = try await worktrees(includeStatus: false)
       guard !records.contains(where: { canonicalTarget == $0.path || canonicalTarget.hasPrefix($0.path + "/") }) else {
         throw GitPierError.invalidInput("Choose a directory outside the existing working trees.")
+      }
+      guard try await status(localOnly: true).operation == nil else {
+        throw GitPierError.invalidInput("Finish this repository's Git operation before creating a worktree.")
       }
       try await read(["check-ref-format", "--branch", branch])
       let base: String
@@ -2825,7 +2846,10 @@ extension GitService {
         // Existence is verified above, and Git enforces checked-out-branch protection.
         base = branch
       }
-      try await read(["worktree", "add"] + (newBranch ? ["-b", branch] : []) + ["--", canonicalTarget, base])
+      guard try TaskDirectoryIdentity.read(target.deletingLastPathComponent().path) == parentIdentity else { throw TaskWorkspaceError.changed }
+      guard try TaskDirectoryIdentity.read(source.path) == sourceIdentity,
+        try TaskDirectoryIdentity.read(sourceCommon.path) == sourceCommonIdentity else { throw TaskWorkspaceError.changed }
+      try await read(["worktree", "add"] + (newBranch ? ["-b", branch] : []) + ["--", canonicalTarget, base], environment: ["GIT_NO_LAZY_FETCH": "1"])
       let identity = try await linkedOwnership(path: canonicalTarget)
       let creationID = UUID().uuidString
       let marker = URL(fileURLWithPath: identity.gitDirectory).appendingPathComponent("gitpier-creation-id")
@@ -2859,6 +2883,9 @@ extension GitService {
       URL(fileURLWithPath: current.path).resolvingSymlinksInPath().path == current.path else {
       throw GitPierError.invalidInput("Removal requires an available, unlocked worktree created by GitPier with unchanged Git metadata.")
     }
+    let directoryIdentity = try TaskDirectoryIdentity.read(current.path)
+    let gitIdentity = try TaskDirectoryIdentity.read(ownership.gitDirectory)
+    let commonIdentity = try TaskDirectoryIdentity.read(ownership.commonDirectory)
     if current.branch.isEmpty {
       let retaining = try await read(["for-each-ref", "--contains=" + current.head, "--format=%(refname)", "refs/heads", "refs/remotes", "refs/tags"])
       guard !retaining.stdout.isEmpty else {
@@ -2870,13 +2897,118 @@ extension GitService {
     guard state.stdout.isEmpty else { throw GitPierError.invalidInput("The worktree contains modified, untracked or ignored files. Preserve them before removal; force deletion is not available.") }
     let linked = GitService(root: URL(fileURLWithPath: current.path), gitPath: gitPath, runner: runner)
     guard try await linked.status().operation == nil else { throw GitPierError.invalidInput("Finish the worktree's Git operation before removal.") }
-    return WorktreeRemovalReview(worktree: current, ownership: ownership)
+    guard try TaskDirectoryIdentity.read(current.path) == directoryIdentity,
+      try TaskDirectoryIdentity.read(ownership.gitDirectory) == gitIdentity,
+      try TaskDirectoryIdentity.read(ownership.commonDirectory) == commonIdentity else { throw TaskWorkspaceError.changed }
+    return WorktreeRemovalReview(worktree: current, ownership: ownership, directoryIdentity: directoryIdentity,
+      gitIdentity: gitIdentity, commonIdentity: commonIdentity)
   }
   public func removeWorktree(_ review: WorktreeRemovalReview) async throws {
     try await lifecycleWrite {
-      _ = try await reviewWorktreeRemoval(review.worktree, ownership: review.ownership)
+      let current = try await reviewWorktreeRemoval(review.worktree, ownership: review.ownership)
+      guard current.directoryIdentity == review.directoryIdentity, current.gitIdentity == review.gitIdentity,
+        current.commonIdentity == review.commonIdentity else { throw TaskWorkspaceError.changed }
       try await read(["worktree", "remove", "--", review.worktree.path])
     }
+  }
+  /// Task creation reuses the normal worktree lifecycle and its ownership marker.
+  /// The immutable local baseline is resolved before creation; this never fetches.
+  public func createTaskWorkspace(name: String, savedDescription: String? = nil, repositoryID: UUID,
+    destination: URL, branch: String, startAt: String = "HEAD") async throws -> TaskWorkspace {
+    guard !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, name.utf8.count <= 240,
+      !name.utf8.contains(0), savedDescription.map({ $0.utf8.count <= 4096 && !$0.utf8.contains(0) }) ?? true
+    else { throw TaskWorkspaceError.invalid }
+    try await requireLocalWorkspaceQueries()
+    let repository = try await validate()
+    let base = try await localComparisonCommit(startAt)
+    let ownership = try await createWorktree(destination: destination, branch: branch, newBranch: true, startAt: base)
+    return try TaskWorkspace(name: name, savedDescription: savedDescription, repositoryID: repositoryID,
+      repositoryRoot: repository.path, binding: TaskWorkspaceBinding(ownership: ownership, managed: true),
+      branch: "refs/heads/" + branch, baseCommit: base)
+  }
+  /// A receipt must be supplied by the original application registry. A marker alone grants nothing.
+  public func associateTaskWorkspace(name: String, savedDescription: String? = nil, repositoryID: UUID,
+    worktree: GitWorktree, receipt: WorktreeOwnership? = nil) async throws -> TaskWorkspace {
+    try await requireLocalWorkspaceQueries()
+    let current = try await currentWorktree(worktree)
+    guard !current.missing, !current.prunable else { throw TaskWorkspaceError.unavailable }
+    let ownership = try await linkedOwnership(path: current.path)
+    if let receipt, receipt != ownership { throw TaskWorkspaceError.changed }
+    let repository = try await validate()
+    let linked = await GitServiceRegistry.shared.service(for: URL(fileURLWithPath: current.path), gitPath: gitPath)
+    let base = try await linked.localComparisonCommit(current.head)
+    return try TaskWorkspace(name: name, savedDescription: savedDescription, repositoryID: repositoryID,
+      repositoryRoot: repository.path, binding: TaskWorkspaceBinding(ownership: ownership, managed: receipt != nil),
+      branch: current.branch, baseCommit: base)
+  }
+  /// Run on the worktree's canonical GitService. No model activation or network access.
+  public func validateTaskWorkspace(_ task: TaskWorkspace) async throws -> GitWorktree {
+    try task.validate(); try task.binding.validateDirectories()
+    try await requireLocalWorkspaceQueries()
+    guard root.path == task.path, try await validate().path == task.path,
+      try await commonDirectory().path == task.commonDirectory,
+      try await linkedOwnership(path: task.path) == task.binding.ownership,
+      let tree = try await worktrees(includeStatus: false).first(where: { $0.path == task.path }),
+      !tree.main, !tree.bare, !tree.missing, !tree.prunable, tree.branch == task.branch else { throw TaskWorkspaceError.changed }
+    _ = try await localComparisonCommit(task.baseCommit)
+    try task.binding.validateDirectories()
+    return tree
+  }
+  public func taskWorkspaceSnapshot(_ task: TaskWorkspace) async throws -> TaskWorkspaceSnapshot {
+    let before = try await validateTaskWorkspace(task)
+    let state = try await status(localOnly: true)
+    guard state.head == before.head else { throw TaskWorkspaceError.changed }
+    let comparison = try await compareBranchTargets(left: .commit(task.baseCommit), right: .commit(before.head))
+    let after = try await validateTaskWorkspace(task)
+    guard after == before, try await status(localOnly: true) == state else { throw TaskWorkspaceError.changed }
+    return TaskWorkspaceSnapshot(taskID: task.id, head: before.head, status: state, comparison: comparison)
+  }
+  public func taskWorkspaceSummary(_ task: TaskWorkspace) async throws -> RepositoryStatus {
+    let before = try await validateTaskWorkspace(task)
+    let state = try await status(localOnly: true)
+    guard state.head == before.head, try await validateTaskWorkspace(task) == before else { throw TaskWorkspaceError.changed }
+    return state
+  }
+  /// Explicit user review receipt; stores an opaque digest, never file contents or test claims.
+  public func taskWorkspaceReview(_ task: TaskWorkspace) async throws -> TaskWorkspaceReview {
+    let state = try await taskWorkspaceSummary(task)
+    guard state.operation == nil, !state.files.contains(where: \.isConflicted), state.files.count <= 200,
+      let head = state.head else { throw TaskWorkspaceError.invalid }
+    let operation = try await reviewOperation()
+    var bytes = Data((task.id.uuidString + "\0" + task.baseCommit + "\0" + head + "\0").utf8)
+    bytes.append(operation.indexFingerprint); bytes.append(operation.operationIdentity)
+    var total: UInt64 = 0
+    for path in Set(state.files.flatMap(\.paths)).sorted() {
+      let url = try conflictURL(path)
+      let attributes = try? FileManager.default.attributesOfItem(atPath: url.path)
+      if attributes?[.type] as? FileAttributeType == .typeRegular {
+        let limit: UInt64 = 64 * 1024 * 1024
+        let size = (attributes?[.size] as? NSNumber)?.uint64Value ?? limit + 1
+        guard size <= limit, total <= limit - size else { throw TaskWorkspaceError.capacity }
+        total += size
+      }
+      let working = try conflictWorkingFile(path).0
+      // A gitlink/nested directory can change content without changing parent porcelain or HEAD.
+      // Until recursive review is supported, it cannot produce a current review receipt.
+      guard working.kind != .other else { throw TaskWorkspaceError.invalid }
+      bytes.append(Data((path + "\0" + String(describing: working) + "\0").utf8))
+    }
+    guard try await taskWorkspaceSummary(task) == state, try await reviewOperation() == operation else { throw TaskWorkspaceError.changed }
+    return TaskWorkspaceReview(head: head, fingerprint: SHA256.hash(data: bytes).map { String(format: "%02x", $0) }.joined())
+  }
+  /// Called only after the existing reviewed worktree-repair workflow succeeds.
+  public func relocateTaskWorkspace(_ task: TaskWorkspace, ownership: WorktreeOwnership) async throws -> TaskWorkspace {
+    let previous = task.binding.ownership
+    guard ownership.commonDirectory == previous.commonDirectory, ownership.gitDirectory == previous.gitDirectory,
+      ownership.creationID == previous.creationID,
+      try TaskDirectoryIdentity.read(ownership.path) == task.binding.directoryIdentity,
+      try TaskDirectoryIdentity.read(ownership.gitDirectory) == task.binding.gitIdentity,
+      try TaskDirectoryIdentity.read(ownership.commonDirectory) == task.binding.commonIdentity else { throw TaskWorkspaceError.changed }
+    var updated = task
+    updated.binding = try TaskWorkspaceBinding(ownership: ownership, managed: task.binding.managed)
+    updated.updatedAt = max(Date(), task.updatedAt)
+    _ = try await validateTaskWorkspace(updated)
+    return updated
   }
   public func reviewWorktreeRepair(at destination: URL) async throws -> WorktreeRepairReview {
     let target = destination.standardizedFileURL

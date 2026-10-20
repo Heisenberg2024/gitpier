@@ -95,6 +95,10 @@ Released [v1.7.0](https://github.com/Heisenberg2024/gitpier/releases/tag/v1.7.0)
 
 The [contextual workflow assistant](docs/context-workflow.md) lives in a compact status button **before the repository branch name**. Neutral, suggestion, attention, warning and conflict/blocked states use distinct symbols with a stable width; incoming tracking commits alone never imply a conflict. Its native frosted popover shares one system surface across the body and arrow, dismisses with Escape/outside click/the entry, and explains the next useful step using the selected Worktree, branch, edits and Fetch snapshot. Risks take priority; ordinary review already available on the Commit page stays quiet. Comparisons open immediately and read local tracking snapshots in the background; synchronization review keeps its write button disabled until checking completes. Existing confirmations and target revalidation remain in place, with no permanent banner, duplicate navigation menu or automatic Git work.
 
+## Task Workspaces — v1.8.0 development
+
+The [task workspace workflow](docs/task-workspaces.md) adds independent task worktrees, local baselines, explicit review and metadata-only archive. An optional installed Codex CLI starts only after confirmation in the selected worktree's existing PTY. Review includes both agent-created commits and Index/working changes. External URL requests now require confirmation before adding an unknown repository. This development version has not been published.
+
 ## Screenshots
 
 

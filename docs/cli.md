@@ -1,4 +1,4 @@
-# GitPier CLI — v1.7.0
+# GitPier CLI — v1.8.0 development
 
 The `gitpier` command opens a local repository or Worktree in your chosen GitPier application. It only navigates. Commit, Pull, Push, Merge, Rebase and other writes remain in their existing app workflows.
 
@@ -29,7 +29,11 @@ The SwiftPM product is deliberately named **GitPierCommandLine**. Default macOS 
 
 Requests use `gitpier://navigate/open` with an exact versioned vocabulary. OAuth remains `gitpier://oauth/gitlab` with its original state/PKCE checks. Unknown/duplicate fields, credential fields and mutation pages are rejected. Requests are serialized and deduplicated in memory across running windows. This is not an HTTP control service. No shell command is constructed from arguments. The CLI does not accept tokens, passwords or arbitrary Git commands.
 
+URL schemes cannot prove the sender is the official CLI. Registered repositories still navigate normally; adding an unknown repository from any external URL requires explicit consent with Cancel as the default. The app displays the canonical path, then rechecks root/common-directory identities after confirmation. The CLI cannot start Codex or execute commands. See [Task Workspaces](task-workspaces.md).
+
 ## 简体中文
+
+URL Scheme 无法证明请求来自官方 CLI。已登记仓库仍正常导航；任何外部 URL 添加陌生仓库前都需要明确确认，默认取消，展示规范路径并在确认后复核根目录/Common 身份。CLI 不提供启动 Codex 或执行命令的入口；[任务工作空间](task-workspaces.md)中的启动继续独立确认。
 
 `gitpier` 仅唤起选定的 GitPier 并定位仓库/工作树和页面。Commit、Pull、Push、Merge、Rebase 等写入继续使用应用中的既有工作流。`open` 将选定的 GitPier 及工作空间窗口切换到前台，必要时恢复最小化窗口；默认当前目录和提交页；支持相对/绝对路径、空格、中文和可访问目录的符号链接。启动器和接收端分别验证 Git 仓库，关联工作树不会被替换为 Common Directory。非 Git、裸仓库、无权限或不存在的目录被拒绝。
 

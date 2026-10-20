@@ -2,6 +2,12 @@ import AppKit
 import GitPierCore
 import SwiftTerm
 import SwiftUI
+import PTYSupport
+
+// Internal PTY child path precedes all AppStore, preferences and authentication initialization.
+if CommandLine.arguments.dropFirst().first == "--task-agent-launch" {
+  exit(gitpier_exec_task_agent(CommandLine.argc, CommandLine.unsafeArgv))
+}
 
 let backgroundCredentialInvocation = ProcessInfo.processInfo.environment["GITPIER_BACKGROUND"] == "1"
   || CommandLine.arguments.contains("--background-keychain-helper")
@@ -240,12 +246,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
       store.updates.terminationWasCancelled()
       return .terminateCancel
     }
+    if !store.taskWorkspaces.confirmQuit() {
+      store.updates.terminationWasCancelled()
+      return .terminateCancel
+    }
     if !store.unsavedConflictDrafts.isEmpty {
       if !store.confirmDiscardConflictDrafts(quitting: true) {
         store.updates.terminationWasCancelled()
         return .terminateCancel
       }
-    } else if store.models.values.contains(where: { $0.terminal.sessions.contains { !$0.exited } })
+    } else if store.models.values.contains(where: { $0.terminal.sessions.contains { !$0.exited && $0.agentConfiguration == nil } })
     {
       let alert = NSAlert()
       alert.messageText = store.text("Quit GitPier?", "退出 GitPier？")
@@ -259,23 +269,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return .terminateCancel
       }
     }
-    if store.workspace.automaticallyFetching {
-      Task {
-        await store.workspace.stopAutomaticChecks()
-        guard !store.hasBlockingGitOperations else {
-          store.updates.terminationWasCancelled()
-          sender.reply(toApplicationShouldTerminate: false)
-          return
-        }
-        await SSHAgentSession.shared.shutdown()
-        store.shutdown()
-        sender.reply(toApplicationShouldTerminate: true)
-      }
-      return .terminateLater
-    }
-    store.shutdown()
     Task {
+      guard await store.taskWorkspaces.stopAllAndWait() else {
+        store.updates.terminationWasCancelled(); sender.reply(toApplicationShouldTerminate: false); return
+      }
+      if store.workspace.automaticallyFetching { await store.workspace.stopAutomaticChecks() }
+      guard !store.hasBlockingGitOperations else {
+        store.updates.terminationWasCancelled(); sender.reply(toApplicationShouldTerminate: false); return
+      }
       await SSHAgentSession.shared.shutdown()
+      store.shutdown()
       sender.reply(toApplicationShouldTerminate: true)
     }
     return .terminateLater

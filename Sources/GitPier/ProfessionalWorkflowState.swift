@@ -17,7 +17,31 @@ extension GitBranch {
     configuration.ownedWorktrees.append(ownership)
     save()
   }
-  func validateWorktreeSessions(_ path: String) throws {
+  private func lifecycleKey(_ path: String) -> String {
+    let key = URL(fileURLWithPath: path).standardizedFileURL.path
+    return key == "/var" || key.hasPrefix("/var/") || key == "/tmp" || key.hasPrefix("/tmp/") ? "/private" + key : key
+  }
+  func requireWorktreeAvailable(_ path: String, reservation: UUID? = nil) throws {
+    if let owner = worktreeLifecycleReservations[lifecycleKey(path)], owner != reservation {
+      throw GitPierError.invalidInput(text("This worktree is being removed or repaired. Wait for the operation to finish.", "此工作树正在移除或修复，请等待操作完成。"))
+    }
+  }
+  func admitWorktreeProcess(_ path: String) -> Bool {
+    do { try requireWorktreeAvailable(path); return true }
+    catch { self.error = error.localizedDescription; return false }
+  }
+  func reserveWorktreeLifecycle(_ path: String) throws -> UUID {
+    try validateWorktreeSessions(path)
+    let token = UUID(); worktreeLifecycleReservations[lifecycleKey(path)] = token
+    return token
+  }
+  func releaseWorktreeLifecycle(_ path: String, reservation: UUID) {
+    let key = lifecycleKey(path)
+    if worktreeLifecycleReservations[key] == reservation { worktreeLifecycleReservations[key] = nil }
+  }
+  func validateWorktreeSessions(_ path: String, reservation: UUID? = nil) throws {
+    try requireWorktreeAvailable(path, reservation: reservation)
+    try taskWorkspaces.validateSessions(path)
     for model in models.values where model.record.path == path {
       guard !model.busy, !model.committing, model.record.draft.isEmpty,
         model.conflictEditor.unsavedPaths.isEmpty,
@@ -43,6 +67,8 @@ extension GitBranch {
   func reconcileMovedWorktree(_ ownership: WorktreeOwnership, previousPath: String? = nil) async {
     let owned = configuration.ownedWorktrees.first { $0.gitDirectory == ownership.gitDirectory && $0.creationID != nil && $0.creationID == ownership.creationID }
     guard let oldPath = previousPath ?? owned?.path else { return }
+    do { try await taskWorkspaces.relocate(previousPath: oldPath, ownership: ownership) }
+    catch { self.error = error.localizedDescription; return }
     for model in models.values where model.record.path == oldPath {
       await model.relocateWorktree(to: ownership.path)
     }

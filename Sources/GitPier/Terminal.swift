@@ -115,17 +115,30 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable,
   let view: SafeTerminalView
   let root: String
   let authentication: AuthenticationContext?
+  let agentConfiguration: AgentLaunchConfiguration?
+  var agentDidExit: ((Int32?, Bool) -> Void)?
+  private var stopRequested = false
+  private var exitReported = false
+  @Published private(set) var stopping = false
+  private var agentProcess = GitPierProcessIdentity()
+  private var cleanupTask: Task<Void, Never>?
+  private var agentStarted = false
+  private let canStart: (() -> Bool)?
   private var appliedFont = ""
   private(set) var fontApplyCount = 0
   private var appliedCursor = ""
   private var appliedScrollback: Int?
   init(
-    root: String, number: Int, settings: AppSettings, authentication: AuthenticationContext? = nil
+    root: String, number: Int, settings: AppSettings, authentication: AuthenticationContext? = nil,
+    agentConfiguration: AgentLaunchConfiguration? = nil, autoStart: Bool = true,
+    canStart: (() -> Bool)? = nil
   ) {
     self.root = root
     self.authentication = authentication
+    self.agentConfiguration = agentConfiguration
+    self.canStart = canStart
     directory = root
-    name = "Local \(number)"
+    name = agentConfiguration == nil ? "Local \(number)" : "Codex"
     var options = TerminalOptions.default
     options.scrollback = max(1000, min(settings.scrollback, 100000))
     view = SafeTerminalView(
@@ -135,9 +148,40 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable,
     super.init()
     view.processDelegate = self
     view.registerForDraggedTypes([.fileURL])
-    start(settings: settings)
+    if autoStart { start(settings: settings) }
   }
   func start(settings: AppSettings) {
+    guard canStart?() != false else { exited = true; reportAgentExit(126); return }
+    if let launch = agentConfiguration {
+      // Agent restarts always require a fresh task/HEAD/executable confirmation.
+      guard !agentStarted, !exitReported else { return }
+      do { try launch.executable.validate() } catch {
+        exited = true; reportAgentExit(nil); return
+      }
+      var env = ProcessInfo.processInfo.environment
+      for key in Array(env.keys) where key.hasPrefix("GITPIER_") || key.hasPrefix("GIT_CONFIG_")
+        || ["GIT_INDEX_FILE", "GIT_DIR", "GIT_WORK_TREE", "GIT_ASKPASS", "SSH_ASKPASS"].contains(key) { env[key] = nil }
+      env["TERM"] = "xterm-256color"; env["COLORTERM"] = "truecolor"; env["TERM_PROGRAM"] = "GitPier"
+      env["PATH"] = env["PATH"] ?? "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+      exited = false; exitCode = nil
+      var gate: [Int32] = [-1, -1]
+      guard pipe(&gate) == 0 else { exited = true; reportAgentExit(126); return }
+      defer { Darwin.close(gate[0]); Darwin.close(gate[1]) }
+      // Only the read end crosses exec into the internal launcher. No await can interleave a spawn.
+      guard fcntl(gate[1], F_SETFD, FD_CLOEXEC) == 0, fcntl(gate[1], F_SETNOSIGPIPE, 1) == 0,
+        let launcher = Bundle.main.executablePath else { exited = true; reportAgentExit(126); return }
+      agentStarted = true
+      view.startProcess(executable: launcher,
+        args: ["--task-agent-launch", String(gate[0]), String(launch.directoryIdentity.device), String(launch.directoryIdentity.inode), launch.directory, launch.executable.path] + launch.executable.launchIdentityArguments,
+        environment: env.map { "\($0.key)=\($0.value)" }, execName: launcher, currentDirectory: nil)
+      agentProcess = gitpier_process_identity(view.process.shellPid)
+      guard view.process.shellPid > 1 else { exited = true; reportAgentExit(126); return }
+      // The helper cannot execute Codex before a stable process identity has been captured.
+      guard agentProcess.pid > 1 else { finishAgent(code: 126); return }
+      var permission: UInt8 = 49
+      if Darwin.write(gate[1], &permission, 1) != 1 { finishAgent(code: 126) }
+      return
+    }
     guard FileManager.default.isExecutableFile(atPath: settings.shellPath) else {
       exited = true
       view.feed(text: "Shell is not executable: \(settings.shellPath)\r\n")
@@ -212,13 +256,48 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable,
     view.updateScrollThumb()
   }
   func close() {
+    if agentConfiguration != nil {
+      guard !exitReported else { return }
+      stopRequested = true; finishAgent(code: nil)
+      return
+    }
     guard !exited, view.process.running else {
       exited = true
       return
     }
     gitpier_hangup_session(view.process.shellPid)
     view.terminate()
+    stopRequested = true
     exited = true
+    reportAgentExit(nil)
+  }
+  private func reportAgentExit(_ code: Int32?) {
+    guard agentConfiguration != nil, !exitReported else { return }
+    exitReported = true; agentDidExit?(code, stopRequested)
+  }
+  private func finishAgent(code: Int32?) {
+    guard cleanupTask == nil, !exitReported else { return }
+    stopping = true
+    // Keep metadata/session active until verified process cleanup has finished.
+    let pid = agentProcess.pid, seconds = agentProcess.seconds, microseconds = agentProcess.microseconds
+    cleanupTask = Task { [weak self] in
+      let remaining = await Task.detached(priority: .userInitiated) {
+        pid > 1 ? gitpier_terminate_owned_session(GitPierProcessIdentity(pid: pid, seconds: seconds, microseconds: microseconds)) : -1
+      }.value
+      guard let self else { return }
+      self.cleanupTask = nil; self.stopping = false
+      guard remaining == 0 else {
+        self.view.feed(text: "\r\nProcess cleanup could not be verified. Inspect attached jobs before closing this task.\r\n")
+        return
+      }
+      self.exited = true; self.exitCode = code; self.reportAgentExit(code)
+    }
+  }
+  func stopAgentAndWait() async -> Bool {
+    guard agentConfiguration != nil else { return true }
+    close()
+    if let cleanupTask { await cleanupTask.value }
+    return exitReported
   }
   nonisolated func sizeChanged(source: LocalProcessTerminalView, newCols: Int, newRows: Int) {}
   nonisolated func setTerminalTitle(source: LocalProcessTerminalView, title: String) {
@@ -234,8 +313,11 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable,
   }
   nonisolated func processTerminated(source: TerminalView, exitCode: Int32?) {
     Task { @MainActor [weak self] in
-      self?.exited = true
-      self?.exitCode = exitCode.map { ($0 & 0x7f) == 0 ? (($0 >> 8) & 0xff) : 128 + ($0 & 0x7f) }
+      guard let self else { return }
+      let code = exitCode.map { ($0 & 0x7f) == 0 ? (($0 >> 8) & 0xff) : 128 + ($0 & 0x7f) }
+      if self.agentConfiguration != nil { self.finishAgent(code: code); return }
+      self.exited = true
+      self.exitCode = code
     }
   }
 }
@@ -246,22 +328,42 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable,
   @Published var splitID: UUID?
   let root: String
   var authentication: AuthenticationContext?
+  var canStart: (() -> Bool)?
   private var number = 0
   init(root: String) { self.root = root }
   func configure(authentication: AuthenticationContext) { self.authentication = authentication }
   var selected: TerminalSession? { sessions.first { $0.id == selectedID } }
   func add(settings: AppSettings) {
+    guard canStart?() != false else { return }
     number += 1
     let session = TerminalSession(
-      root: root, number: number, settings: settings, authentication: authentication)
+      root: root, number: number, settings: settings, authentication: authentication, canStart: canStart)
     sessions.append(session)
     selectedID = session.id
   }
   func close(_ id: UUID) {
-    sessions.first { $0.id == id }?.close()
+    guard let session = sessions.first(where: { $0.id == id }) else { return }
+    if session.agentConfiguration != nil, !session.exited {
+      Task { [weak self] in
+        guard await session.stopAgentAndWait() else { return }
+        self?.removeClosed(id)
+      }
+      return
+    }
+    session.close()
+    removeClosed(id)
+  }
+  private func removeClosed(_ id: UUID) {
     sessions.removeAll { $0.id == id }
     if selectedID == id { selectedID = sessions.last?.id }
     if splitID == id { splitID = nil }
+  }
+  func addAgent(_ launch: AgentLaunchConfiguration, settings: AppSettings, onExit: @escaping (Int32?, Bool) -> Void) -> TerminalSession {
+    let session = TerminalSession(root: root, number: 0, settings: settings, agentConfiguration: launch, autoStart: false, canStart: canStart)
+    session.agentDidExit = onExit
+    sessions.append(session); selectedID = session.id
+    session.start(settings: settings)
+    return session
   }
   func shutdown() {
     for session in sessions { session.close() }
@@ -337,7 +439,7 @@ struct TerminalPanel: View {
                   } else {
                     closing = session.id
                   }
-                }
+                }.disabled(session.agentConfiguration != nil)
                 Button(store.text("Split with this session", "与此会话分屏")) {
                   if manager.selectedID != session.id { manager.splitID = session.id }
                 }
@@ -464,7 +566,9 @@ struct TerminalPanel: View {
           Text(
             store.text("Shell exited", "Shell 已退出") + (session.exitCode.map { " (\($0))" } ?? ""))
           Spacer()
-          Button(store.text("Restart", "重新启动")) { session.start(settings: store.settings) }
+          if session.agentConfiguration == nil {
+            Button(store.text("Restart", "重新启动")) { session.start(settings: store.settings) }
+          } else { Text(store.text("Start a new session from Task Workspaces.", "请从任务工作空间确认启动新会话。")) }
         }.font(uiFont(size: 11)).padding(6).background(Theme.panel(scheme))
       }
       TerminalHost(session: session, settings: store.settings, dark: scheme == .dark).id(session.id)

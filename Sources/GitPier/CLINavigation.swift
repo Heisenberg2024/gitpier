@@ -24,7 +24,7 @@ import GitPierCore
       try request.validateAccess()
       let git = await GitServiceRegistry.shared.service(for: request.directory, gitPath: settings.gitPath)
       let root = try await git.validate()
-      _ = try await git.commonDirectory()
+      let common = try await git.commonDirectory()
       // No credential configuration, network check, automatic Fetch, write or confirmation bypass.
       if let existing = repositories.first(where: { URL(fileURLWithPath: $0.path).resolvingSymlinksInPath() == root }), let model = models[existing.id] {
         selectedID = existing.id; showDashboard = false
@@ -33,6 +33,20 @@ import GitPierCore
         presentNavigationWindow()
         await model.activate(refresh: true)
       } else {
+        // URL schemes cannot authenticate a CLI caller. Both CLI and ordinary
+        // external URLs require consent before registering an unknown repository.
+        let rootIdentity = try TaskDirectoryIdentity.read(root.path)
+        let commonIdentity = try TaskDirectoryIdentity.read(common.path)
+        presentNavigationWindow()
+        guard makeExternalNavigationAlert(root: root).runModal() == .alertFirstButtonReturn else { return }
+        try request.validateAccess()
+        guard try await git.validate() == root, try await git.commonDirectory() == common,
+          try TaskDirectoryIdentity.read(root.path) == rootIdentity,
+          try TaskDirectoryIdentity.read(common.path) == commonIdentity else { throw TaskWorkspaceError.changed }
+        // Another window may have registered it while native confirmation was open.
+        if repositories.contains(where: { URL(fileURLWithPath: $0.path).resolvingSymlinksInPath() == root }) {
+          await routeNavigation(request); return
+        }
         var record = RepositoryRecord(path: root.path)
         record.lastOpened = Date()
         configuration.repositories.append(record)
@@ -44,8 +58,17 @@ import GitPierCore
       }
       Workflow170NavigationProbe.record(request, store: self)
     } catch {
-      self.error = text("The CLI request could not open an accessible local Git repository. No Git operation was started.", "CLI 请求无法打开可访问的本地 Git 仓库，未启动 Git 操作。")
+      self.error = text("The external navigation request could not open an accessible local Git repository. No Git operation was started.", "外部导航请求无法打开可访问的本地 Git 仓库，未启动 Git 操作。")
     }
+  }
+  func makeExternalNavigationAlert(root: URL) -> NSAlert {
+    let alert = NSAlert()
+    alert.messageText = text("Add repository from external navigation?", "添加外部导航请求的仓库？")
+    alert.informativeText = text("An external application requested this local repository. The URL does not prove which application sent it. Add this repository to GitPier?", "外部应用请求打开此本地仓库。URL 无法证明发送方身份。是否将此仓库加入 GitPier？") + "\n\n" + root.path
+    alert.addButton(withTitle: text("Add Repository", "添加仓库")); alert.addButton(withTitle: text("Cancel", "取消"))
+    alert.buttons[0].keyEquivalent = ""; alert.buttons[1].keyEquivalent = "\r"
+    alert.window.appearance = settings.appearance == .system ? nil : NSAppearance(named: settings.appearance == .dark ? .darkAqua : .aqua)
+    return alert
   }
   func presentNavigationWindow() {
     navigationPresentationPending = true

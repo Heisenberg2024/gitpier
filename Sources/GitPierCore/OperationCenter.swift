@@ -4,9 +4,10 @@ import Foundation
 public enum WorkflowOperationKind: String, CaseIterable, Sendable {
   case git, clone, fetch, batchFetch, automaticFetch, pull, push, commit, commitAndPush, merge, mergeAndPush, rebase
   case createWorktree, removeWorktree, review
+  case createTask, archiveTask, reviewTask, agentSession
 }
 public enum WorkflowOperationState: String, CaseIterable, Sendable {
-  case queued, running, waitingForUser, succeeded, failed, cancelled, needsAttention, resultUnknown
+  case queued, running, waitingForUser, succeeded, failed, cancelled, needsAttention, resultUnknown, agentExited
   public var active: Bool { self == .queued || self == .running }
   public var attention: Bool { [.waitingForUser, .failed, .needsAttention, .resultUnknown].contains(self) }
   public var finished: Bool { !active && self != .waitingForUser }

@@ -1,5 +1,18 @@
 # Development
 
+## v1.8.0 development
+
+Task Workspaces and optional local Codex integration are under development in build 30. Use the [task guide](task-workspaces.md) for exact storage, ownership, process and review boundaries. Existing v1.7.0 evidence below is historical, not validation of this new source. Full Core/Universal/DMG/update validation and independent review must be recorded for the final inputs before release; no publication is authorized by a local build.
+
+```sh
+Scripts/test.sh --filter 'TaskWorkspaceTests|LocalAgentTests|OperationCenterTests'
+GITPIER_UI_ACCEPTANCE_SCOPE=task-workspaces Scripts/ui-acceptance.sh .cache/v180/native
+```
+
+The new native scope uses temporary repositories and a local executable fixture, not a real Codex conversation. It verifies PTY cwd/arguments, session/page lifetime, partial Index preservation, archive/recovery, process cleanup and language/theme compositor captures. Keep real CLI detection, unauthenticated CLI startup, authenticated model execution, UI interaction and fixture evidence separate.
+
+简体中文：v1.8.0（30）仍在开发，下方v1.7发布证据不代表新源码验收；最终输入需单独完成Core、Universal/DMG/升级及独立审核。专项原生验收使用临时仓库和可执行夹具，不是真实Codex对话；真实版本检测、未认证启动、认证模型执行、实际UI操作和夹具证据必须分别记录。
+
 ## v1.7.0 publication — 2026-10-19
 
 [GitPier v1.7.0 (29)](https://github.com/Heisenberg2024/gitpier/releases/tag/v1.7.0) was published as **Latest** at **2026-10-19 22:41:45 Asia/Shanghai**, release `417398240`, from `dfcd0f65e1df889985a4e9a385db1d78d814032c`. The owner approved the exact bilingual notes. [Main CI 39266290595](https://github.com/Heisenberg2024/gitpier/actions/runs/39266290595) passed full macOS validation using Swift 6.1.2: **932 Core tests**, zero failures, **554.547 s**, all ten release gates, build, temporary DMG structure and signature/permission-preserving archive/upload. [Tag CI 39270296068](https://github.com/Heisenberg2024/gitpier/actions/runs/39270296068) explicitly reused that exact full run. The CI repair made nested closure captures explicit and split a type-check-heavy string expression without changing behavior.
