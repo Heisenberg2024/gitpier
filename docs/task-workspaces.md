@@ -12,6 +12,10 @@ New tasks first reserve a private creation record, before Git changes the reposi
 
 Incomplete creations remain visible in Tasks after restart. **Resume Registration** verifies the saved original identities, repository family, branch and baseline before completing a missing marker or task record. Different markers and replaced directories are refused. Without a captured original identity, inspect Worktrees, explicitly forget only the private creation record, then associate the existing tree as external if appropriate. Repeated registration cannot create another task for the reserved path.
 
+After registration succeeds, **Open after creating** is a separate navigation step. Opening failure leaves **Task created** visible with its saved path, the specific error and **Open Task** retry. Tasks and Operations Center keep links to the same task; creation remains Succeeded while opening has its own result. Closing the sheet or changing repositories suppresses stale automatic navigation. Retry never repeats Git creation or registration.
+
+Detail refreshes use cancellable, selection-scoped reads. Confirmed actions use a per-task single-flight mutation retained across page changes; refresh cannot cancel them or clear their errors. The last-window/quit guard waits while a confirmed action is pending. A successful action triggers a fresh detail read; archived tasks can be found with **Archived** enabled.
+
 Tasks show branch/path, HEAD, staged/unstaged/conflict counts, timestamps and independent agent state. Only visible task summaries and the selected detail are queried, through the shared query budget. Opening Tasks or Dashboard never starts Codex. Missing/replaced worktrees are unavailable. Use the normal reviewed Worktree repair workflow after moving a directory; task rebinding additionally verifies its original filesystem and metadata identities.
 
 ## Optional Codex CLI
@@ -66,6 +70,8 @@ Metadata includes task/repository UUIDs, paths, common/Git directories, creation
 从**工作树 → 任务 → 新建任务**创建独立工作树，选择本地基准、新分支和父目录已存在的新绝对路径。默认使用仓库旁的 UUID 目录，不自动 Fetch 或启动 Codex。可关联已有工作树；外部关联始终保持外部归属，任务元数据不能授予删除权限。移动后复用原工作树安全修复，并核对原目录/Git/Common 的设备与 inode 身份。
 
 创建前先持久化私有待登记记录；Git 创建工作树后，在写入所有权标记前记录原目录/Git/Common 身份。任务与应用所有权均持久化后才报告登记成功，在此之前保留原待登记记录。部分失败明确展示保留路径，不自动删除工作树、分支或文件。重启后可继续登记，核对原身份、仓库族、分支和基准；被替换目录或不同标记会被拒绝。没有捕获原身份时，只能显式忘记私有记录后检查并以外部工作树关联，不能提升所有权。
+
+登记成功后，“创建后打开”属于独立导航：打开失败仍显示“任务已创建”、已保存路径、具体错误和“打开任务”重试。任务列表及操作中心指向同一任务，创建保持成功，打开独立记录结果；关闭表单或切换仓库会阻止过期自动导航，重试不会重新创建工作树、分支或登记。详情刷新使用可取消且按选择隔离的读取；确认操作按任务单次执行并在页面切换后保留，刷新不取消写入或清除其错误。操作未完成时保留末窗口关闭/退出保护，成功后重新读取真实状态；已归档任务可开启“已归档”筛选定位。
 
 Codex 完全可选。**设置 → 终端**可指定可执行文件，留空搜索绝对 PATH 与常用目录。主动检测执行有界版本/帮助及完整安全参数组合解析，核对身份及文件，不兼容时拒绝启动。主动“检查登录状态”通过同一可执行文件/环境运行 codex login status，限8秒及每输出流16KiB，可取消；0表示CLI凭证可用，只有退出1并明确返回Not logged in才提示登录，其余错误/超时保持无法确认。输出丢弃，不读认证文件/钥匙串，不调用logout，不后台轮询；登录可用不等于网络、权限或模型成功。登录由Codex官方流程负责。
 

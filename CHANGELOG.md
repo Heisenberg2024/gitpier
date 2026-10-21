@@ -2,6 +2,10 @@
 
 ## 1.8.0 — Unreleased (30)
 
+- Keep successful task creation distinct from automatic navigation failures, with retryable opening and separate Operations Center records. 创建成功与自动导航失败分别报告，提供重新打开入口与独立操作中心记录。
+- Separate cancellable task-detail reads from single-flight confirmed mutations; preserve writes and errors across refresh, selection and window changes. 将详情可取消读取与单次确认修改分离，刷新、切换或关闭窗口不会静默取消写入或清除错误。
+- Recheck descriptor identity immediately before restoring matching SwiftPM input timestamps; concurrent content or mode changes skip restoration. 恢复内容匹配的 SwiftPM 输入时间戳前再次核对描述符身份，并发内容或权限变化时跳过恢复。
+
 - Fix subprocess output-reader lifetime and macOS 15 pipe-close crashes during concurrent task reviews; wait for readers before delivering results and preserve bounded draining. 修复并发任务审查时的子进程输出读取生命周期及 macOS 15 管道关闭崩溃，返回结果前等待读取结束，保留有界排空。
 - Move blocking subprocess waits off Swift's cooperative executor to keep async tasks progressing on small-core systems. 将子进程阻塞等待移出 Swift 协作线程池，避免小核数环境中的异步任务饥饿。
 - Preserve partial Worktree creation through private registration intents, original filesystem identity checks and explicit recovery; never delete user files or branches on failure. 使用私有待登记记录、原文件系统身份核验及显式恢复保留部分创建结果，失败不删除用户文件或分支。

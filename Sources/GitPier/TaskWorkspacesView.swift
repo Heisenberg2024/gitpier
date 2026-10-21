@@ -95,9 +95,14 @@ struct TaskWorkspaceDetail: View {
   @ObservedObject var manager: TaskWorkspaceManager
   @EnvironmentObject var store: AppStore
   @StateObject private var request = WorkflowRequest()
+  @ObservedObject private var mutation: WorkflowMutationRequest
   @State private var snapshot: TaskWorkspaceSnapshot?
   @State private var launching = false
   @State private var confirmArchive = false
+  init(taskID: UUID, manager: TaskWorkspaceManager) {
+    self.taskID = taskID; self.manager = manager
+    mutation = manager.detailMutation(taskID)
+  }
   private var task: TaskWorkspace? { manager.task(taskID) }
   var body: some View {
     ScrollView {
@@ -120,6 +125,10 @@ struct TaskWorkspaceDetail: View {
             Text(store.text("Baseline → HEAD: \(snapshot.comparison.files.count) files · \(snapshot.comparison.rightOnlyCount) new commits", "基准 → HEAD：\(snapshot.comparison.files.count) 文件 · \(snapshot.comparison.rightOnlyCount) 新提交"))
           }
           WorkflowProblem(request: request)
+          if let problem = mutation.problem {
+            Text(problem).font(.caption).foregroundStyle(.orange).textSelection(.enabled)
+          }
+          if mutation.loading { ProgressView().controlSize(.small) }
           ViewThatFits(in: .horizontal) {
             HStack { openButtons(task) }
             VStack(alignment: .leading, spacing: 8) { openButtons(task) }
@@ -166,7 +175,9 @@ struct TaskWorkspaceDetail: View {
       }
     // Launching and Running can share updatedAt. Refresh on every record transition,
     // so a superseded snapshot is replaced without requiring a manual Refresh.
-    }.onChange(of: task, initial: true) { _, _ in refresh() }.onDisappear { request.cancel() }
+    }.onChange(of: task, initial: true) { _, _ in refresh() }
+      .onChange(of: mutation.revision) { _, _ in refresh() }
+      .onDisappear { request.cancel() }
       .sheet(isPresented: $launching) { CodexLaunchSheet(taskID: taskID, manager: manager).environmentObject(store).modifier(AppAppearance(store: store)) }
       .confirmationDialog(store.text("Archive task?", "归档任务？"), isPresented: $confirmArchive) {
         Button(store.text("Archive", "归档")) { perform { try await manager.archive(taskID, archived: true) } }
@@ -188,7 +199,7 @@ struct TaskWorkspaceDetail: View {
     }.disabled(task.archived)
     Button(store.text("Refresh", "刷新")) { refresh() }
   }
-  private func perform(_ action: @escaping () async throws -> Void) { request.start { _ in try await action() } }
+  private func perform(_ action: @escaping () async throws -> Void) { mutation.start(action) }
   private func refresh() {
     snapshot = nil
     request.start { ticket in let value = try await manager.snapshot(taskID); guard request.current(ticket) else { return }; snapshot = value }
@@ -207,7 +218,7 @@ struct TaskWorkspaceCreationSheet: View {
   @ObservedObject var manager: TaskWorkspaceManager
   @EnvironmentObject var store: AppStore
   @Environment(\.dismiss) private var dismiss
-  @StateObject private var request = WorkflowRequest()
+  @StateObject private var request: TaskWorkspaceCreationRequest
   @State private var name = ""
   @State private var description = ""
   @State private var saveDescription = false
@@ -218,55 +229,77 @@ struct TaskWorkspaceCreationSheet: View {
   @State private var trees: [GitWorktree] = []
   @State private var existing = ""
   @State private var openAfter = true
-  init(model: RepositoryModel, manager: TaskWorkspaceManager) {
+  init(model: RepositoryModel, manager: TaskWorkspaceManager, request: TaskWorkspaceCreationRequest = TaskWorkspaceCreationRequest()) {
     self.model = model; self.manager = manager
+    _request = StateObject(wrappedValue: request)
     _destination = State(initialValue: URL(fileURLWithPath: model.record.path).deletingLastPathComponent().appendingPathComponent("GitPier-task-" + UUID().uuidString.lowercased()).path)
   }
   var body: some View {
     VStack(alignment: .leading, spacing: 12) {
-      Text(store.text("New Task Workspace", "新建任务工作空间")).font(.title2.bold())
-      Text(model.record.name).foregroundStyle(.secondary)
-      TextField(store.text("Task name", "任务名称"), text: $name)
-      Toggle(store.text("Associate an existing linked worktree", "关联已有工作树"), isOn: $associate)
-      if associate {
-        Picker(store.text("Worktree", "工作树"), selection: $existing) {
-          Text(store.text("Select", "选择")).tag("")
-          ForEach(trees.filter { !$0.main && !$0.bare && !$0.missing && !$0.prunable }) { Text($0.path).tag($0.path) }
+      if let task = request.created {
+        Label(store.text("Task created", "任务已创建"), systemImage: "checkmark.circle").font(.title2.bold())
+        Text(task.name).font(.headline)
+        Text(task.path).font(.caption).textSelection(.enabled)
+        if let problem = request.navigationProblem {
+          Text(store.text("The task is saved, but could not be opened. You can retry here or use Tasks / Operations Center.", "任务已保存，但未能打开。可在此重试，或从任务列表／操作中心重新打开。"))
+          Text(problem).font(.caption).foregroundStyle(.orange).textSelection(.enabled)
         }
-        Text(store.text("Association never grants ownership of an external worktree.", "关联不会授予外部工作树的所有权。" )).font(.caption).foregroundStyle(.secondary)
-      } else {
-        TextField(store.text("Local base branch / commit", "本地基准分支 / 提交"), text: $base)
-        TextField(store.text("New task branch", "新任务分支"), text: $branch)
+        if request.opening { ProgressView().controlSize(.small) }
         HStack {
-          TextField(store.text("New absolute worktree location", "新的工作树绝对路径"), text: $destination)
-          Button(store.text("Choose…", "选择…")) {
-            let panel = NSSavePanel(); panel.canCreateDirectories = true; panel.nameFieldStringValue = URL(fileURLWithPath: destination).lastPathComponent
-            if panel.runModal() == .OK, let url = panel.url { destination = url.path }
-          }
+          Spacer()
+          Button(store.text("Done", "完成")) { request.cancel(); dismiss() }.keyboardShortcut(.cancelAction)
+          Button(store.text("Open Task", "打开任务")) {
+            request.retryOpen { task in _ = try await manager.open(task.id); dismiss() }
+          }.disabled(request.opening)
         }
-        Text(store.text("Uses existing local references. No automatic Fetch or agent launch.", "使用已有本地引用，不自动获取远程或启动 Agent。" )).font(.caption).foregroundStyle(.secondary)
-      }
-      Toggle(store.text("Save a private task description", "保存私有任务描述"), isOn: $saveDescription)
-      if saveDescription { TextField(store.text("Description (saved locally, never passed as a command)", "描述（仅本地保存，不作为命令执行）"), text: $description, axis: .vertical).lineLimit(3...5) }
-      Toggle(store.text("Open after creating", "创建后打开"), isOn: $openAfter)
-      WorkflowProblem(request: request)
-      HStack {
-        Spacer()
-        Button(store.text("Cancel", "取消")) { request.cancel(); dismiss() }.keyboardShortcut(.cancelAction).disabled(request.loading)
-        Button(store.text("Create Task", "创建任务")) { create() }
-          .disabled(request.loading || name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || (associate ? existing.isEmpty : branch.isEmpty || base.isEmpty || !destination.hasPrefix("/")))
+      } else {
+        Text(store.text("New Task Workspace", "新建任务工作空间")).font(.title2.bold())
+        Text(model.record.name).foregroundStyle(.secondary)
+        TextField(store.text("Task name", "任务名称"), text: $name)
+        Toggle(store.text("Associate an existing linked worktree", "关联已有工作树"), isOn: $associate)
+        if associate {
+          Picker(store.text("Worktree", "工作树"), selection: $existing) {
+            Text(store.text("Select", "选择")).tag("")
+            ForEach(trees.filter { !$0.main && !$0.bare && !$0.missing && !$0.prunable }) { Text($0.path).tag($0.path) }
+          }
+          Text(store.text("Association never grants ownership of an external worktree.", "关联不会授予外部工作树的所有权。" )).font(.caption).foregroundStyle(.secondary)
+        } else {
+          TextField(store.text("Local base branch / commit", "本地基准分支 / 提交"), text: $base)
+          TextField(store.text("New task branch", "新任务分支"), text: $branch)
+          HStack {
+            TextField(store.text("New absolute worktree location", "新的工作树绝对路径"), text: $destination)
+            Button(store.text("Choose…", "选择…")) {
+              let panel = NSSavePanel(); panel.canCreateDirectories = true; panel.nameFieldStringValue = URL(fileURLWithPath: destination).lastPathComponent
+              if panel.runModal() == .OK, let url = panel.url { destination = url.path }
+            }
+          }
+          Text(store.text("Uses existing local references. No automatic Fetch or agent launch.", "使用已有本地引用，不自动获取远程或启动 Agent。" )).font(.caption).foregroundStyle(.secondary)
+        }
+        Toggle(store.text("Save a private task description", "保存私有任务描述"), isOn: $saveDescription)
+        if saveDescription { TextField(store.text("Description (saved locally, never passed as a command)", "描述（仅本地保存，不作为命令执行）"), text: $description, axis: .vertical).lineLimit(3...5) }
+        Toggle(store.text("Open after creating", "创建后打开"), isOn: $openAfter)
+        if let problem = request.problem { Text(problem).font(.caption).foregroundStyle(.orange).textSelection(.enabled) }
+        if request.loading { ProgressView().controlSize(.small) }
+        HStack {
+          Spacer()
+          Button(store.text("Cancel", "取消")) { request.cancel(); dismiss() }.keyboardShortcut(.cancelAction).disabled(request.loading)
+          Button(store.text("Create Task", "创建任务")) { create() }
+            .disabled(request.loading || name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || (associate ? existing.isEmpty : branch.isEmpty || base.isEmpty || !destination.hasPrefix("/")))
+        }
       }
     }.padding(22).textFieldStyle(.roundedBorder).frame(width: 590)
       .task { do { trees = try await model.git().worktrees(includeStatus: false) } catch { store.error = error.localizedDescription } }
       .interactiveDismissDisabled(request.loading)
+      .onDisappear { request.cancel() }
   }
   private func create() {
     let name = name, note = saveDescription ? description : nil, existing = existing, associate = associate
     let location = destination, branch = branch, base = base, openAfter = openAfter
-    request.start { _ in
+    let sourceID = store.selectedID
+    request.start(create: {
       guard manager.ready, manager.problem == nil, !manager.tasks.contains(where: { $0.path == (associate ? existing : location) }) else { throw TaskWorkspaceError.changed }
       let git = await model.git()
-      let task = try await manager.create(repositoryID: model.record.id) {
+      return try await manager.create(repositoryID: model.record.id) {
         if associate {
           guard let tree = trees.first(where: { $0.path == existing }) else { throw TaskWorkspaceError.changed }
           let receipt = store.configuration.ownedWorktrees.first { $0.path == existing }
@@ -276,9 +309,10 @@ struct TaskWorkspaceCreationSheet: View {
             destination: URL(fileURLWithPath: location), branch: branch, startAt: base, registration: manager.persistence)
         }
       }
-      if openAfter { _ = try await manager.open(task.id) }
+    }, open: openAfter ? { task in
+      _ = try await manager.open(task.id, isCurrent: { store.selectedID == sourceID })
       dismiss()
-    }
+    } : nil)
   }
 }
 

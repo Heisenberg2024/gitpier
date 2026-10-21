@@ -45,7 +45,7 @@ import UserNotifications
   let reviewSessions: HostingReviewSessionRegistry
   @Published var hostingReviewDestination: HostingReviewDashboardItem?
   var hasRunningGitOperations: Bool { hasBlockingGitOperations || workspace.automaticallyFetching }
-  var hasBlockingGitOperations: Bool { cloning || taskWorkspaces.creatingCount > 0 || !taskWorkspaces.busy.isEmpty || workspace.manuallyFetching || models.values.contains { $0.busy || $0.committing } }
+  var hasBlockingGitOperations: Bool { cloning || taskWorkspaces.creatingCount > 0 || taskWorkspaces.hasDetailMutation || !taskWorkspaces.busy.isEmpty || workspace.manuallyFetching || models.values.contains { $0.busy || $0.committing } }
   let cloneActivity = OperationProgress()
   @Published var cloning = false
   @Published var cloneTask: Task<Void, Never>?
@@ -320,10 +320,11 @@ import UserNotifications
       Task { for url in urls { await addRepository(url, group: group) } }
     }
   }
-  func addRepository(_ url: URL, group: String? = nil, credential: UUID? = nil) async {
+  func addRepository(_ url: URL, group: String? = nil, credential: UUID? = nil, ifCurrent: () -> Bool = { true }) async {
     do {
       let initial = await GitServiceRegistry.shared.service(for: url, gitPath: settings.gitPath)
       let root = try await initial.validate()
+      guard ifCurrent() else { return }
       if let group, !group.isEmpty, !organizations.contains(where: { $0.name == group }) {
         throw GitPierError.invalidInput(text("Organization no longer exists.", "组织已不存在。"))
       }

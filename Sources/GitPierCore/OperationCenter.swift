@@ -4,7 +4,7 @@ import Foundation
 public enum WorkflowOperationKind: String, CaseIterable, Sendable {
   case git, clone, fetch, batchFetch, automaticFetch, pull, push, commit, commitAndPush, merge, mergeAndPush, rebase
   case createWorktree, removeWorktree, review
-  case createTask, archiveTask, reviewTask, agentSession
+  case createTask, openTask, archiveTask, reviewTask, agentSession
 }
 public enum WorkflowOperationState: String, CaseIterable, Sendable {
   case queued, running, waitingForUser, succeeded, failed, cancelled, needsAttention, resultUnknown, agentExited

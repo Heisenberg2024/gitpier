@@ -62,6 +62,7 @@ import PTYSupport
     try await manager.register(task)
     try require(manager.tasks.count == 3 && manager.ready, "Task created and registered without starting an agent")
     try require(manager.active.isEmpty && primary.terminal.sessions.isEmpty, "No terminal or Codex process starts automatically")
+    checks += try await verifyTaskInteractionBoundaries(store: store, primary: primary, task: task, output: output)
     let child = await manager.git(task)
     try Data("committed task change\n".utf8).write(to: URL(fileURLWithPath: task.path).appendingPathComponent("task-commit.txt"))
     try await child.perform(["add", "--", "task-commit.txt"])
@@ -381,7 +382,7 @@ import PTYSupport
   }
 }
 
-@MainActor private func taskAcceptancePressButton(_ title: String, host: NSView, window: NSWindow) throws -> Bool {
+@MainActor func taskAcceptancePressButton(_ title: String, host: NSView, window: NSWindow) throws -> Bool {
   var visited = Set<ObjectIdentifier>(), target: NSRect?
   func walk(_ item: Any) {
     guard target == nil, let object = item as? NSObject, visited.insert(ObjectIdentifier(object)).inserted else { return }

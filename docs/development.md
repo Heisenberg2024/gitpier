@@ -9,11 +9,19 @@ Scripts/test.sh --filter 'TaskWorkspaceTests|LocalAgentTests|OperationCenterTest
 GITPIER_UI_ACCEPTANCE_SCOPE=task-workspaces Scripts/ui-acceptance.sh .cache/v180/native
 ```
 
+The native task scope also runs deterministic continuation-gated creation/navigation and detail-mutation regressions. It checks persistence failures, duplicate clicks, retry without recreation, dismissal/selection guards, delayed reads and exact persisted review/archive state. These are AppKit application assertions, separate from the Core XCTest count. CI cache tests inject content and permission changes between hashing and timestamp restoration. Descriptor rechecks skip changed inputs; post-write content verification forces a fresh timestamp if a writer races the timestamp syscall.
+
 The new native scope uses temporary repositories and a local executable fixture, not a real Codex conversation. It verifies PTY cwd/arguments, session/page lifetime, partial Index preservation, archive/recovery, process cleanup and language/theme compositor captures. Keep real CLI detection, unauthenticated CLI startup, authenticated model execution, UI interaction and fixture evidence separate.
+
+For version/login and native PTY startup/Stop checks without sending a model prompt, set `GITPIER_RC_REAL_CODEX` to an explicitly selected installed executable with the task runner. This optional scope checks existing login only through the official status command, starts the real CLI in a new empty temporary Codex Home, verifies its executable and worktree cwd, then stops it and rechecks the original login. It does not copy credentials or change the existing Home. This Finder-like environment probe uses the explicit executable setting; it is not an actual Finder launch, authenticated coding or Git approval test.
 
 For an explicitly authorized existing-login test, the isolated `Scripts/workspace-acceptance.sh task-workspaces` runner additionally accepts `GITPIER_TASK_ACCEPTANCE_HOLD=1` and `GITPIER_TASK_ACCEPTANCE_REAL_CODEX` set to the real absolute executable path. It launches the normal SwiftTerm pipeline without copying credentials. Inspect the temporary window, then create `finish-gui` in the selected output directory. `GITPIER_TASK_ACCEPTANCE_FAIL_AFTER_REAL_START=1` injects a failure after spawn; expect a nonzero test exit and a verified cleanup record. Unknown cleanup retains the host for inspection and an explicit `retry-real-cleanup` marker. Never accept saved folder trust if the test scope forbids Codex configuration changes.
 
 简体中文：v1.8.0（30）仍在开发，下方v1.7发布证据不代表新源码验收；最终输入需单独完成Core、Universal/DMG/升级及独立审核。专项原生验收使用临时仓库和可执行夹具，不是真实Codex对话；真实版本检测、未认证启动、认证模型执行、实际UI操作和夹具证据必须分别记录。
+
+原生任务专项另用 continuation 闸门确定性验证创建/导航边界、持久化故障、重复点击、无重复创建的重试、关闭/切换、迟到读取和审查/归档的真实落盘状态。这些属于 AppKit 应用断言，不混入 Core XCTest 数量。CI 缓存回归在哈希与时间戳写入之间注入内容/权限变化；描述符变化时跳过恢复，写后内容复核发现时间戳系统调用期间的竞态则强制使用新时间戳重新编译。
+
+如需不发送模型 Prompt 的版本/登录及原生 PTY 启停检查，可为任务 runner 设置 GITPIER_RC_REAL_CODEX 为明确选定的已安装可执行文件。可选专项仅通过官方状态命令检查已有登录，在全新空临时 Codex Home 中启动真实 CLI，核对可执行文件和工作树 cwd，停止后再次检查原登录；不复制凭证或改原 Home。Finder 类环境使用显式路径，不等于真实 Finder 启动、认证编码或 Git 审批验收。
 
 明确授权复用登录后，隔离 runner 可设置上述 HOLD 与真实可执行路径变量，复用正常 SwiftTerm 管线且不复制凭证；验收后在输出目录创建 finish-gui。启动后故障注入应以非零退出并留下已核验清理记录；无法核验则保留宿主，等显式 retry-real-cleanup。禁止改 Codex 配置的测试不得接受保存目录信任。
 

@@ -26,6 +26,14 @@ struct TaskWorktreeRemovalRoute: Equatable {
   private var restoring: Task<Void, Never>?
   private var exitTasks: [UUID: Task<Void, Never>] = [:]
   private var mutationWaiters: [UUID: [CheckedContinuation<Void, Never>]] = [:]
+  private var detailMutations: [UUID: WorkflowMutationRequest] = [:]
+  var hasDetailMutation: Bool { detailMutations.values.contains { $0.loading } }
+  func detailMutation(_ id: UUID) -> WorkflowMutationRequest {
+    if let request = detailMutations[id] { return request }
+    let request = WorkflowMutationRequest { [weak self] in self?.store.objectWillChange.send() }
+    detailMutations[id] = request
+    return request
+  }
   private func finishMutation(_ id: UUID) {
     busy.remove(id)
     for waiter in mutationWaiters.removeValue(forKey: id) ?? [] { waiter.resume() }
@@ -101,11 +109,12 @@ struct TaskWorktreeRemovalRoute: Equatable {
     try await persistence.forgetCreation(creation)
     pendingCreations = try await persistence.pendingCreations()
   }
-  func archive(_ id: UUID, archived: Bool) async throws {
+  func archive(_ id: UUID, archived: Bool, beforePersist: (() async -> Void)? = nil) async throws {
     guard let old = task(id), !busy.contains(id), !isActive(path: old.path) else { throw TaskWorkspaceError.activeSession }
     try store.requireWorktreeAvailable(old.path)
     busy.insert(id); defer { finishMutation(id) }
     var updated = old; try updated.setArchived(archived)
+    if let beforePersist { await beforePersist() }
     try await save(updated, replacing: old)
     event(.archiveTask, task: updated)
   }
@@ -152,11 +161,12 @@ struct TaskWorktreeRemovalRoute: Equatable {
     }
     return task.status == .reviewed ? .ready : task.status
   }
-  func markReviewed(_ id: UUID) async throws {
+  func markReviewed(_ id: UUID, beforePersist: (() async -> Void)? = nil) async throws {
     guard let previous = task(id), !previous.archived, !isActive(path: previous.path), !busy.contains(id) else { throw TaskWorkspaceError.activeSession }
     try store.requireWorktreeAvailable(previous.path)
     busy.insert(id); defer { finishMutation(id) }
     let receipt = try await git(previous).taskWorkspaceReview(previous)
+    if let beforePersist { await beforePersist() }
     guard task(id) == previous else { throw TaskWorkspaceError.changed }
     var updated = previous; updated.review = receipt; updated.status = .reviewed; updated.updatedAt = max(Date(), previous.updatedAt)
     try await save(updated, replacing: previous); reviewCurrent.insert(id)
@@ -171,22 +181,38 @@ struct TaskWorktreeRemovalRoute: Equatable {
       summaries[previous.id] = nil; observationProblems[previous.id] = nil
     }
   }
-  func open(_ id: UUID, page: String = "worktrees", terminal: Bool = false) async throws -> RepositoryModel {
+  func open(_ id: UUID, page: String = "worktrees", terminal: Bool = false, isCurrent: () -> Bool = { true }) async throws -> RepositoryModel {
     guard let task = task(id), !task.archived else { throw TaskWorkspaceError.unavailable }
-    try store.requireWorktreeAvailable(task.path)
-    _ = try await git(task).validateTaskWorkspace(task)
-    guard self.task(id) == task else { throw TaskWorkspaceError.changed }
-    await store.addRepository(URL(fileURLWithPath: task.path))
-    guard let model = store.current, model.record.path == task.path else { throw TaskWorkspaceError.changed }
-    selectedID = id; model.setPage(page)
-    if terminal {
+    let operation = UUID()
+    store.operations.begin(id: operation, kind: .openTask, repositoryID: task.repositoryID, state: .running,
+      identity: OperationRepositoryIdentity(workingTree: task.path, commonDirectory: task.commonDirectory))
+    store.operations.linkTask(operation, taskID: id)
+    do {
+      try Task.checkCancellation()
+      guard isCurrent() else { throw TaskWorkspaceError.changed }
       try store.requireWorktreeAvailable(task.path)
-      var layout = model.panels.layout; layout.terminalVisible = true; model.editLayout(layout)
-      var settings = store.settings; settings.terminalDirectory = "repository"
-      if let session = sessions[id] { model.terminal.selectedID = session.id }
-      else { model.terminal.add(settings: settings) }
+      _ = try await git(task).validateTaskWorkspace(task)
+      guard self.task(id) == task else { throw TaskWorkspaceError.changed }
+      try Task.checkCancellation()
+      guard isCurrent() else { throw TaskWorkspaceError.changed }
+      await store.addRepository(URL(fileURLWithPath: task.path), ifCurrent: { !Task.isCancelled && isCurrent() })
+      // Selection can dismiss the originating view and cancel its query. It has
+      // already committed; cancellation is not evidence that navigation failed.
+      guard let model = store.current, model.record.path == task.path else { throw TaskWorkspaceError.changed }
+      selectedID = id; model.setPage(page)
+      if terminal {
+        try store.requireWorktreeAvailable(task.path)
+        var layout = model.panels.layout; layout.terminalVisible = true; model.editLayout(layout)
+        var settings = store.settings; settings.terminalDirectory = "repository"
+        if let session = sessions[id] { model.terminal.selectedID = session.id }
+        else { model.terminal.add(settings: settings) }
+      }
+      store.operations.update(operation, state: .succeeded)
+      return model
+    } catch {
+      store.operations.update(operation, state: error is CancellationError ? .cancelled : .failed)
+      throw error
     }
-    return model
   }
   func review(_ id: UUID, baseline: Bool) async throws {
     let snapshot = try await snapshot(id)

@@ -114,7 +114,7 @@ import SwiftUI
           window.close()
           try await verifyTaskWorkspaces(root: root, output: output)
           store.shutdown()
-          print("Native task workspace acceptance passed (local agent fixture; no real Codex session).")
+          print("Native task workspace acceptance passed. Fixture and optional real CLI results are recorded separately.")
           exit(0)
         }
         if ProcessInfo.processInfo.environment["GITPIER_UI_ACCEPTANCE_SCOPE"] == "dashboard" {

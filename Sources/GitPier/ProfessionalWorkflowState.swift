@@ -103,6 +103,60 @@ extension GitBranch {
   func cancel() { generation = UUID(); task?.cancel(); task = nil; loading = false }
 }
 
+/// Confirmed writes outlive a detail view. A refresh or second click must never cancel them.
+@MainActor final class WorkflowMutationRequest: ObservableObject {
+  @Published private(set) var loading = false
+  @Published private(set) var problem: String?
+  @Published private(set) var revision: UInt64 = 0
+  private let stateChanged: () -> Void
+  init(stateChanged: @escaping () -> Void = {}) { self.stateChanged = stateChanged }
+  func start(_ action: @escaping () async throws -> Void) {
+    guard !loading else { return }
+    loading = true; problem = nil
+    stateChanged()
+    Task {
+      defer { loading = false; revision &+= 1; stateChanged() }
+      do { try await action() }
+      catch { problem = localizedUI(GitService.redact(error.localizedDescription)) }
+    }
+  }
+}
+
+/// Registration commits the creation result. Opening is a separate, retryable read/navigation.
+@MainActor final class TaskWorkspaceCreationRequest: ObservableObject {
+  @Published private(set) var created: TaskWorkspace?
+  @Published private(set) var loading = false
+  @Published private(set) var opening = false
+  @Published private(set) var problem: String?
+  @Published private(set) var navigationProblem: String?
+  private var work: Task<Void, Never>?
+  func start(create: @escaping () async throws -> TaskWorkspace, open: ((TaskWorkspace) async throws -> Void)?) {
+    guard !loading, created == nil else { return }
+    loading = true; problem = nil
+    work = Task {
+      do {
+        let value = try await create()
+        created = value; loading = false
+        if let open, !Task.isCancelled { await navigate(value, open: open) }
+      } catch { problem = localizedUI(GitService.redact(error.localizedDescription)); loading = false }
+      work = nil
+    }
+  }
+  func retryOpen(_ open: @escaping (TaskWorkspace) async throws -> Void) {
+    guard let created, !loading, !opening else { return }
+    // Reserve synchronously, before the next click can start another navigation.
+    opening = true
+    work = Task { await navigate(created, open: open); work = nil }
+  }
+  private func navigate(_ value: TaskWorkspace, open: (TaskWorkspace) async throws -> Void) async {
+    opening = true; navigationProblem = nil
+    defer { opening = false }
+    do { try Task.checkCancellation(); try await open(value) }
+    catch { navigationProblem = localizedUI(GitService.redact(error.localizedDescription)) }
+  }
+  func cancel() { work?.cancel() }
+}
+
 struct WorkflowProblem: View {
   @ObservedObject var request: WorkflowRequest
   @EnvironmentObject var store: AppStore

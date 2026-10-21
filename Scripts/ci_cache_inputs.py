@@ -58,6 +58,11 @@ def input_descriptor(root_fd, path):
         os.close(parent)
 
 
+def file_identity(info):
+    return (info.st_dev, info.st_ino, info.st_nlink, info.st_mode,
+            info.st_size, info.st_mtime_ns, info.st_ctime_ns)
+
+
 def fingerprint(fd):
     before = os.fstat(fd)
     if not stat.S_ISREG(before.st_mode) or before.st_nlink != 1:
@@ -66,9 +71,7 @@ def fingerprint(fd):
     for chunk in iter(lambda: os.read(fd, 256 * 1024), b''):
         digest.update(chunk)
     after = os.fstat(fd)
-    identity = lambda value: (value.st_dev, value.st_ino, value.st_nlink, value.st_mode,
-                              value.st_size, value.st_mtime_ns, value.st_ctime_ns)
-    if identity(before) != identity(after):
+    if file_identity(before) != file_identity(after):
         raise ValueError('Input changed while hashing')
     return digest.hexdigest(), before
 
@@ -155,7 +158,23 @@ def restore(root, context):
                 try:
                     current, info = fingerprint(fd)
                     if current == digest and stat.S_IMODE(info.st_mode) == mode:
+                        # Hashing and applying are distinct boundaries. Do not stamp a
+                        # file modified (even with its mtime restored) after hashing.
+                        if file_identity(os.fstat(fd)) != file_identity(info):
+                            continue
                         os.utime(fd, ns=(info.st_atime_ns, timestamp))
+                        # Also cover a writer arriving at the timestamp syscall itself.
+                        # If verification fails, force a fresh build instead of leaving
+                        # changed bytes with the cache's old timestamp. Never restore bytes.
+                        try:
+                            os.lseek(fd, 0, os.SEEK_SET)
+                            verified, checked = fingerprint(fd)
+                            if (verified != digest or stat.S_IMODE(checked.st_mode) != mode
+                                    or checked.st_mtime_ns != timestamp):
+                                raise ValueError('Input changed while restoring timestamp')
+                        except (OSError, ValueError):
+                            os.utime(fd, None)
+                            continue
                         restored += 1
                 finally:
                     os.close(fd)

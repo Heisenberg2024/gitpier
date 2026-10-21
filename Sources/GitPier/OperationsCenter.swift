@@ -192,6 +192,7 @@ struct OperationsCenterView: View {
   case .removeWorktree: return store.text("Remove Worktree", "移除工作树")
   case .review: return store.text("Submit Review", "提交审查")
   case .createTask: return store.text("Create Task Workspace", "创建任务工作空间")
+  case .openTask: return store.text("Open Task", "打开任务")
   case .archiveTask: return store.text("Archive / Reopen Task", "归档 / 重新打开任务")
   case .reviewTask: return store.text("Review Task Changes", "审查任务变更")
   case .agentSession: return store.text("Codex Session", "Codex 会话")

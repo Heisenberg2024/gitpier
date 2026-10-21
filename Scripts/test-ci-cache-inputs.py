@@ -210,6 +210,46 @@ class InputTimestampTests(unittest.TestCase):
                     cache.restore(self.root, context)
         self.assertFalse(self.snapshot.exists())
 
+    def test_change_after_hash_before_restore_is_rejected(self):
+        self.saved()
+        original_fingerprint = cache.fingerprint
+        def changed_after_hash(fd):
+            result = original_fingerprint(fd)
+            self.source.write_text('modified')
+            os.utime(self.source, ns=(FRESH, FRESH))
+            return result
+        with mock.patch.object(cache, 'fingerprint', side_effect=changed_after_hash):
+            self.assertEqual(cache.restore(self.root, CONTEXT), 0)
+        self.assertEqual(self.source.read_text(), 'modified')
+        self.assertEqual(self.source.stat().st_mtime_ns, FRESH)
+
+    def test_mode_change_after_hash_before_restore_is_rejected(self):
+        self.saved()
+        original_fingerprint = cache.fingerprint
+        def changed_after_hash(fd):
+            result = original_fingerprint(fd)
+            self.source.chmod(0o755)
+            return result
+        with mock.patch.object(cache, 'fingerprint', side_effect=changed_after_hash):
+            self.assertEqual(cache.restore(self.root, CONTEXT), 0)
+        self.assertEqual(self.source.stat().st_mtime_ns, FRESH)
+
+    def test_change_at_timestamp_write_does_not_leave_a_stale_cache_timestamp(self):
+        self.saved()
+        original_utime = os.utime
+        injected = False
+        def changing_utime(fd, *args, **kwargs):
+            nonlocal injected
+            if isinstance(fd, int) and kwargs.get('ns') and not injected:
+                injected = True
+                self.source.write_text('modified')
+            return original_utime(fd, *args, **kwargs)
+        with mock.patch.object(cache.os, 'utime', side_effect=changing_utime):
+            self.assertEqual(cache.restore(self.root, CONTEXT), 0)
+        self.assertTrue(injected)
+        self.assertEqual(self.source.read_text(), 'modified')
+        self.assertNotEqual(self.source.stat().st_mtime_ns, ORIGINAL)
+
 
 if __name__ == '__main__':
     unittest.main()
