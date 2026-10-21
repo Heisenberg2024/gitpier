@@ -75,7 +75,10 @@ final class ProcessRunnerTests: XCTestCase {
     let bundle = Bundle(for: ProcessRunnerTests.self).bundleURL.path
     // The old implementation can raise an Objective-C exception. Capture the
     // disposable XCTest process to files, so a pipe crash cannot kill this suite.
-    let result = try await Task.detached { try Self.outputDrainProbe(bundle: bundle, key: probeKey) }.value
+    // Dynamic Self captures the non-Sendable test instance in Swift 6.1.
+    let result = try await Task.detached { @Sendable [bundle, probeKey] in
+      try ProcessRunnerTests.outputDrainProbe(bundle: bundle, key: probeKey)
+    }.value
     XCTAssertEqual(result.0, 0, result.1)
     XCTAssertTrue(result.1.contains("Output drain probe completed"))
   }
