@@ -11,6 +11,8 @@ GITPIER_UI_ACCEPTANCE_SCOPE=task-workspaces Scripts/ui-acceptance.sh .cache/v180
 
 The native task scope also runs deterministic continuation-gated creation/navigation and detail-mutation regressions. It checks persistence failures, duplicate clicks, retry without recreation, dismissal/selection guards, delayed reads and exact persisted review/archive state. These are AppKit application assertions, separate from the Core XCTest count. CI cache tests inject content and permission changes between hashing and timestamp restoration. Descriptor rechecks skip changed inputs; post-write content verification forces a fresh timestamp if a writer races the timestamp syscall.
 
+Navigation regression gates also cover task/repository switching and return, same-repository reselection, page/dashboard changes, baseline and working-tree review, cancellation before and after selection, actual SwiftUI detail disappearance, terminal reuse, opening failure/retry and the native Operations Center entry. Assertions inspect the real AppStore selection, destination, terminal sessions, operation records and unchanged task persistence. Cancelling navigation while a confirmed review awaits persistence must not cancel that write. A final local commit still requires its own full Swift 6.1 CI; an earlier SHA's successful run is baseline evidence only.
+
 The new native scope uses temporary repositories and a local executable fixture, not a real Codex conversation. It verifies PTY cwd/arguments, session/page lifetime, partial Index preservation, archive/recovery, process cleanup and language/theme compositor captures. Keep real CLI detection, unauthenticated CLI startup, authenticated model execution, UI interaction and fixture evidence separate.
 
 For version/login and native PTY startup/Stop checks without sending a model prompt, set `GITPIER_RC_REAL_CODEX` to an explicitly selected installed executable with the task runner. This optional scope checks existing login only through the official status command, starts the real CLI in a new empty temporary Codex Home, verifies its executable and worktree cwd, then stops it and rechecks the original login. It does not copy credentials or change the existing Home. This Finder-like environment probe uses the explicit executable setting; it is not an actual Finder launch, authenticated coding or Git approval test.
@@ -20,6 +22,8 @@ For an explicitly authorized existing-login test, the isolated `Scripts/workspac
 简体中文：v1.8.0（30）仍在开发，下方v1.7发布证据不代表新源码验收；最终输入需单独完成Core、Universal/DMG/升级及独立审核。专项原生验收使用临时仓库和可执行夹具，不是真实Codex对话；真实版本检测、未认证启动、认证模型执行、实际UI操作和夹具证据必须分别记录。
 
 原生任务专项另用 continuation 闸门确定性验证创建/导航边界、持久化故障、重复点击、无重复创建的重试、关闭/切换、迟到读取和审查/归档的真实落盘状态。这些属于 AppKit 应用断言，不混入 Core XCTest 数量。CI 缓存回归在哈希与时间戳写入之间注入内容/权限变化；描述符变化时跳过恢复，写后内容复核发现时间戳系统调用期间的竞态则强制使用新时间戳重新编译。
+
+导航回归还覆盖任务/仓库切换后返回、同仓库重选、页面/总览变化、两种审查、选择提交前后取消、真实 SwiftUI 详情销毁、终端复用、失败重试和原生操作中心入口，核对真实选择、目标页、会话、操作记录及任务持久化。确认审查等待落盘期间取消导航不得取消写入。最终本地提交仍须对应 SHA 的完整 Swift 6.1 CI，旧 SHA 成功仅属基线证据。
 
 如需不发送模型 Prompt 的版本/登录及原生 PTY 启停检查，可为任务 runner 设置 GITPIER_RC_REAL_CODEX 为明确选定的已安装可执行文件。可选专项仅通过官方状态命令检查已有登录，在全新空临时 Codex Home 中启动真实 CLI，核对可执行文件和工作树 cwd，停止后再次检查原登录；不复制凭证或改原 Home。Finder 类环境使用显式路径，不等于真实 Finder 启动、认证编码或 Git 审批验收。
 

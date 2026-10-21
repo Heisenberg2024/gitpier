@@ -86,10 +86,11 @@ import PTYSupport
     if [ "$1" = --help ] || [ "$6" = --help ]; then printf '%s\n' '--no-daemon --sandbox workspace-write --ask-for-approval on-request'; exit 0; fi
     if [ "$1" = login ] && [ "$2" = status ]; then printf 'Not logged in\n' >&2; exit 1; fi
     [ "$#" = 5 ] && [ "$1" = --no-daemon ] && [ "$2" = --sandbox ] && [ "$3" = workspace-write ] && [ "$4" = --ask-for-approval ] && [ "$5" = on-request ] || exit 23
+    trap 'exit 130' HUP INT TERM
     printf '%s\n' "$PWD" > agent-cwd.txt
     printf 'agent change\n' > agent-output.txt
     printf 'TASK_AGENT_READY\r\n'
-    trap 'exit 130' HUP INT TERM
+    printf '%s\n' "$$" > "$(dirname "$0")/agent-ready.txt"
     while IFS= read -r line; do
       [ "$line" = exit ] && exit 0
       printf 'INPUT:%s\r\n' "$line"
@@ -122,6 +123,24 @@ import PTYSupport
     do { try await manager.archive(task.id, archived: true); throw GitPierError.invalidInput("Active archive unexpectedly allowed") }
     catch TaskWorkspaceError.activeSession { checks.append("Active agent cannot be archived") }
     try await manager.launchDuplicateForAcceptance(task.id, configuration: launch, checks: &checks)
+    let agentTerminals = Set(model.terminal.sessions.map(\.id))
+    let agentNavigation = WorkflowRequest(), agentNavigationGate = TaskInteractionGate()
+    agentNavigation.startTaskNavigation(task.id, manager: manager) { isCurrent in
+      _ = try await manager.git(manager.task(task.id)!).validateTaskWorkspace(manager.task(task.id)!)
+      await agentNavigationGate.wait()
+      _ = try await manager.open(task.id, terminal: true, isCurrent: isCurrent)
+    }
+    await agentNavigationGate.waitUntilEntered()
+    store.select(primary.record.id); manager.selectedID = nil; agentNavigationGate.resume()
+    try await waitFor { !agentNavigation.loading }
+    try require(store.current === primary && !session.exited && manager.active.count == 1
+      && Set(model.terminal.sessions.map(\.id)) == agentTerminals
+      && store.operations.records.first { $0.kind == .openTask }?.state == .failed,
+      "Task switching rejects stale navigation without stopping or duplicating a running Agent PTY")
+    _ = try await manager.open(task.id, terminal: true)
+    _ = try await manager.open(task.id, terminal: true)
+    try require(model.terminal.selectedID == session.id && Set(model.terminal.sessions.map(\.id)) == agentTerminals && !session.exited,
+      "Repeated Open Terminal retains the running Agent session without creating shells")
     model.setPage("history"); try await settle()
     try require(!session.exited && manager.active.count == 1, "Closing the task page keeps the agent alive")
     model.setPage("worktrees")
@@ -229,15 +248,44 @@ import PTYSupport
     let fresh = try AgentLaunchConfiguration(executable: executable, task: manager.task(task.id)!, snapshot: finalSnapshot)
     try await manager.launch(task.id, configuration: fresh)
     try await waitFor { manager.active.count == 1 }
+    let stopNavigation = WorkflowRequest(), stopNavigationGate = TaskInteractionGate()
+    stopNavigation.startTaskNavigation(task.id, manager: manager) { isCurrent in
+      await stopNavigationGate.wait()
+      _ = try await manager.open(task.id, terminal: true, isCurrent: isCurrent)
+    }
+    await stopNavigationGate.waitUntilEntered()
+    store.select(primary.record.id); manager.selectedID = nil
+    let beforeStopTerminals = Set(model.terminal.sessions.map(\.id))
     let stopped = await manager.stopAllAndWait()
+    stopNavigationGate.resume(); try await waitFor { !stopNavigation.loading }
+    try require(store.current === primary && Set(model.terminal.sessions.map(\.id)) == beforeStopTerminals
+      && store.operations.records.first { $0.kind == .openTask }?.state == .failed,
+      "Agent stop interleaved with task switching rejects late navigation and creates no replacement PTY")
     try require(stopped && manager.active.isEmpty && manager.task(task.id)?.agent?.state == .interrupted, "Explicit stop waits for verified PTY cleanup and marks Interrupted")
     try stage("Ctrl+C")
     try FileManager.default.removeItem(atPath: task.path + "/agent-cwd.txt")
+    let readyPath = directory.appendingPathComponent("agent-ready.txt").path
+    if FileManager.default.fileExists(atPath: readyPath) { try FileManager.default.removeItem(atPath: readyPath) }
     let interruptLaunch = try AgentLaunchConfiguration(executable: executable, task: manager.task(task.id)!, snapshot: try await manager.snapshot(task.id))
     try await manager.launch(task.id, configuration: interruptLaunch)
-    try await waitFor { FileManager.default.fileExists(atPath: task.path + "/agent-cwd.txt") }
-    model.terminal.selected?.view.send(txt: "\u{03}")
-    try await waitFor { manager.active.isEmpty && !manager.busy.contains(task.id) }
+    guard let interruptSession = model.terminal.selected else { throw TaskWorkspaceError.unavailable }
+    // cwd is published before the shell starts reading. Wait for this process's
+    // explicit signal-ready publication rather than racing its trap setup.
+    try await waitFor {
+      (try? String(contentsOfFile: readyPath, encoding: .utf8).trimmingCharacters(in: .whitespacesAndNewlines))
+        == String(interruptSession.view.process.shellPid)
+    }
+    interruptSession.view.send(txt: "\u{03}")
+    do { try await waitFor { manager.active.isEmpty && !manager.busy.contains(task.id) } }
+    catch {
+      let diagnostic: [String: Any] = ["pid": interruptSession.view.process.shellPid,
+        "selectedSessionMatches": model.terminal.selectedID == interruptSession.id,
+        "sessionExited": interruptSession.exited, "activeCount": manager.active.count,
+        "taskBusy": manager.busy.contains(task.id), "state": manager.task(task.id)?.agent?.state.rawValue ?? "missing"]
+      try JSONSerialization.data(withJSONObject: diagnostic, options: [.prettyPrinted, .sortedKeys])
+        .write(to: output.appendingPathComponent("ctrl-c-diagnostic.json"))
+      throw error
+    }
     try require(manager.task(task.id)?.agent?.exitCode == 130 && manager.task(task.id)?.agent?.state == .failed,
       "Ctrl+C reaches the real PTY and records exit 130 without claiming task success")
     try stage("lifecycle reservation")

@@ -20,7 +20,8 @@ struct TaskWorktreeRemovalRoute: Equatable {
   @Published private(set) var summaries: [UUID: RepositoryStatus] = [:]
   @Published private(set) var observationProblems: [UUID: String] = [:]
   @Published private(set) var reviewCurrent: Set<UUID> = []
-  @Published var selectedID: UUID?
+  @Published var selectedID: UUID? { didSet { selectionIdentity = UUID() } }
+  private(set) var selectionIdentity = UUID()
   private var sessions: [UUID: TerminalSession] = [:]
   private var operations: [UUID: UUID] = [:]
   private var restoring: Task<Void, Never>?
@@ -195,7 +196,9 @@ struct TaskWorktreeRemovalRoute: Equatable {
       guard self.task(id) == task else { throw TaskWorkspaceError.changed }
       try Task.checkCancellation()
       guard isCurrent() else { throw TaskWorkspaceError.changed }
-      let selected = await store.addRepository(URL(fileURLWithPath: task.path), ifCurrent: { !Task.isCancelled && isCurrent() })
+      let selected = await store.addRepository(URL(fileURLWithPath: task.path), ifCurrent: {
+        !Task.isCancelled && isCurrent() && self.task(id) == task
+      })
       guard selected else {
         try Task.checkCancellation()
         throw TaskWorkspaceError.changed
@@ -209,6 +212,8 @@ struct TaskWorktreeRemovalRoute: Equatable {
         var layout = model.panels.layout; layout.terminalVisible = true; model.editLayout(layout)
         var settings = store.settings; settings.terminalDirectory = "repository"
         if let session = sessions[id] { model.terminal.selectedID = session.id }
+        else if let session = model.terminal.selected.flatMap({ $0.exited ? nil : $0 })
+          ?? model.terminal.sessions.first(where: { !$0.exited }) { model.terminal.selectedID = session.id }
         else { model.terminal.add(settings: settings) }
       }
       store.operations.update(operation, state: .succeeded)
@@ -218,10 +223,12 @@ struct TaskWorktreeRemovalRoute: Equatable {
       throw error
     }
   }
-  func review(_ id: UUID, baseline: Bool) async throws {
-    let snapshot = try await snapshot(id)
+  func review(_ id: UUID, baseline: Bool, isCurrent: () -> Bool = { true }) async throws {
     guard let task = task(id) else { throw TaskWorkspaceError.changed }
-    let model = try await open(id, page: baseline ? "compare" : "commit")
+    let snapshot = try await snapshot(id)
+    try Task.checkCancellation()
+    guard isCurrent(), self.task(id) == task else { throw TaskWorkspaceError.changed }
+    let model = try await open(id, page: baseline ? "compare" : "commit", isCurrent: isCurrent)
     if baseline {
       var targets: [String: BranchComparisonTarget] = [task.baseCommit: .commit(task.baseCommit)]
       targets[snapshot.head] = .commit(snapshot.head)
@@ -360,16 +367,24 @@ struct TaskWorktreeRemovalRoute: Equatable {
     try validateRemoval(path)
     return tasks.filter { $0.path == path }.sorted { $0.id.uuidString < $1.id.uuidString }
   }
-  func requestRemoval(_ id: UUID) async throws {
+  func requestRemoval(_ id: UUID, isCurrent: () -> Bool = { true }) async throws {
     guard let task = task(id), task.binding.managed,
       store.configuration.ownedWorktrees.contains(task.binding.ownership) else { throw TaskWorkspaceError.changed }
     try validateRemoval(task.path)
     let family = try await git(task).worktrees(includeStatus: false)
     let candidates = family.filter { $0.path != task.path && !$0.bare && !$0.missing }
     guard let source = candidates.first(where: { $0.path == task.repositoryRoot }) ?? candidates.first(where: \.main) ?? candidates.first else { throw TaskWorkspaceError.unavailable }
-    await store.addRepository(URL(fileURLWithPath: source.path))
+    try Task.checkCancellation()
+    guard isCurrent(), self.task(id) == task else { throw TaskWorkspaceError.changed }
+    let sourceGit = await GitServiceRegistry.shared.service(for: URL(fileURLWithPath: source.path), gitPath: store.settings.gitPath)
+    guard try await sourceGit.commonDirectory().path == task.commonDirectory else { throw TaskWorkspaceError.changed }
+    try validateRemoval(task.path)
+    let selected = await store.addRepository(URL(fileURLWithPath: source.path), ifCurrent: {
+      !Task.isCancelled && isCurrent() && self.task(id) == task
+    })
+    guard selected else { try Task.checkCancellation(); throw TaskWorkspaceError.changed }
     guard let model = store.current, model.record.path == source.path, self.task(id) == task,
-      try await model.git().commonDirectory().path == task.commonDirectory, store.current === model else { throw TaskWorkspaceError.changed }
+      store.current === model else { throw TaskWorkspaceError.changed }
     try validateRemoval(task.path)
     selectedID = nil; store.taskRemovalRequest = TaskWorktreeRemovalRoute(taskID: id, sourcePath: source.path); model.setPage("worktrees")
   }

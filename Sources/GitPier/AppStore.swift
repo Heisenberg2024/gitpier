@@ -25,8 +25,9 @@ import UserNotifications
       url: ProcessInfo.processInfo.environment["GITPIER_WORKSPACE_FILE"].map { URL(fileURLWithPath: $0) }))
   }()
   @Published var configuration: WorkspaceConfiguration
-  @Published var selectedID: UUID?
-  @Published var showDashboard = true
+  @Published var selectedID: UUID? { didSet { selectionIdentity = UUID() } }
+  @Published var showDashboard = true { didSet { selectionIdentity = UUID() } }
+  private(set) var selectionIdentity = UUID()
   @Published var error: String?
   @Published var notice: String?
   let operations = OperationsCenter()
@@ -347,7 +348,7 @@ import UserNotifications
       save()
       select(record.id)
       return true
-    } catch { self.error = error.localizedDescription; return false }
+    } catch { if !Task.isCancelled && ifCurrent() { self.error = error.localizedDescription }; return false }
   }
   func remove(_ id: UUID) {
     if let model = models[id], taskWorkspaces.isActive(path: model.record.path) {
@@ -493,7 +494,8 @@ struct DiffTab: Identifiable, Equatable {
 
 @MainActor final class RepositoryModel: ObservableObject {
   @Published var record: RepositoryRecord
-  @Published private(set) var page = "commit"
+  @Published private(set) var page = "commit" { didSet { pageIdentity = UUID() } }
+  private(set) var pageIdentity = UUID()
   @Published private(set) var status = RepositoryStatus()
   private var fileIndex = RepositoryFileIndex([])
   private var filteredKey = ""

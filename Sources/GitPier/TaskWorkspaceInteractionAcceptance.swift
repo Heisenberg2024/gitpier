@@ -3,7 +3,7 @@ import GitPierCore
 import SwiftUI
 
 /// Continuations, rather than delays, decide when the operation crosses each boundary.
-@MainActor private final class TaskInteractionGate {
+@MainActor final class TaskInteractionGate {
   private var entered = false
   private var arrival: CheckedContinuation<Void, Never>?
   private var release: CheckedContinuation<Void, Never>?
@@ -192,6 +192,8 @@ import SwiftUI
     try FileManager.default.removeItem(at: blocked)
     try await manager.resumeCreation(pending)
 
+    checks += try await verifyTaskNavigationBoundaries(store: store, primary: primary, task: task, other: created, output: output)
+
     let mutation = manager.detailMutation(task.id), read = WorkflowRequest(), mutationGate = TaskInteractionGate()
     var writes = 0, mutationWasCancelled = false
     mutation.start {
@@ -205,7 +207,16 @@ import SwiftUI
     read.start { _ in _ = try await manager.snapshot(task.id) }
     try await waitFor { !read.loading }
     try require(read.problem == nil && mutation.loading, "A real detail snapshot completes while the reviewed fingerprint awaits persistence")
-    read.cancel() // disappearance / switch cancels only the query
+    let cancelledNavigation = WorkflowRequest(), cancelNavigationGate = TaskInteractionGate()
+    var navigationFinished = false
+    cancelledNavigation.startTaskNavigation(task.id, manager: manager) { isCurrent in
+      defer { navigationFinished = true }
+      await cancelNavigationGate.wait()
+      _ = try await manager.open(task.id, isCurrent: isCurrent)
+    }
+    await cancelNavigationGate.waitUntilEntered(); cancelledNavigation.cancel(); cancelNavigationGate.resume()
+    try await waitFor { navigationFinished }
+    read.cancel() // disappearance / switch cancels reads and navigation, never the write
     manager.selectedID = created.id
     mutation.start { writes += 100 }
     mutationGate.resume()

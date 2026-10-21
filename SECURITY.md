@@ -97,11 +97,15 @@ Task creation and removal reuse the original Git worktree lifecycle and queues. 
 
 A navigation failure after registration never rolls back task/worktree creation. Confirmed detail writes retain their per-task lifetime and single-flight protection across UI refresh; cancellation of a query is not evidence that a persisted mutation rolled back.
 
+Task-detail navigation revalidates its request and task/repository/page selection identities before committing selection. Superseded requests cannot open terminals or replace newer selections. Selection commit is the boundary: source-view cancellation afterwards preserves the completed result. This does not cancel confirmed writes or running agents; Operations Center opens retain an independent lifetime.
+
 Codex detection uses bounded version/help and complete-argument parser probes. Explicit login status checks use the same environment as the confirmed PTY, discard output, and never inspect credentials. An optional validated Codex Home applies only to these children. Pending creation records capture original identities before the ownership marker; recovery cannot grant external worktrees removal rights from a path or marker alone. Confirmed direct-argv PTY launches retain Codex's approval/sandbox mechanisms and existing local configuration; GitPier never installs Codex or reads/modifies its authentication. Independent worktrees are not OS sandboxes, and native GitPier confirmations do not constrain each internal Codex command. Quit/Stop verify current process identities and wait for attached-process cleanup; intentionally detached processes may require manual inspection. Restart marks unfinished sessions Interrupted without automatic replay. Exit zero is not task/test success.
 
 External navigation cannot authenticate the official CLI. Unknown repository registration requires explicit confirmation with Cancel default, followed by filesystem/root/common-directory revalidation. No external execution/agent endpoint exists; OAuth state/PKCE remains separate.
 
 登记后的导航失败不会回滚任务或工作树创建。详情确认写入按任务保留生命周期并防重复，刷新查询的取消不代表持久化修改已回滚。
+
+详情导航在提交选择前复核请求及任务/仓库/页面选择身份，过期请求不能创建终端或覆盖新选择；选择提交后，来源视图取消保留已完成结果。导航取消不停止确认写入或运行中的 Agent，操作中心打开保持独立生命周期。
 
 简体中文：任务复用原 Worktree 所有权/写队列，外部关联不授予删除权；私有元数据不保存 Prompt、对话、源码、终端输出或凭证，坏记录保留并停止修改，归档不删文件。Codex 主动检测版本/帮助及完整参数组合，登录检查与PTY共用有效环境并丢弃输出；可选Codex Home仅影响本应用子进程，不读凭证。创建前保留私有预留、标记前捕获原身份，恢复不单凭路径/标记授予外部工作树移除权。确认后以参数数组启动，保留自身审批/沙箱及原配置，不安装、不读改认证。Worktree 不是系统沙箱，GitPier 确认无法约束 Codex 内部命令。停止/退出核对进程身份并等待关联进程；脱离会话的进程可能需手动检查。重启不自动执行，退出码0不等于任务/测试成功。外部URL不能证明CLI来源，陌生仓库需默认取消的确认及身份复核，无外部执行入口，OAuth隔离保持。
 

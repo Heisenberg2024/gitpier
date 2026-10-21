@@ -101,6 +101,22 @@ extension GitBranch {
   }
   func current(_ ticket: UUID) -> Bool { ticket == generation && !Task.isCancelled }
   func cancel() { generation = UUID(); task?.cancel(); task = nil; loading = false }
+  /// Detail navigation belongs to its initiating selection, unlike a confirmed write.
+  /// Identity tokens also reject switching away and back to the same repository/task.
+  func startTaskNavigation(_ id: UUID, manager: TaskWorkspaceManager,
+    action: @escaping @MainActor (@escaping () -> Bool) async throws -> Void) {
+    let store = manager.store, repositorySelection = manager.store.selectionIdentity
+    let taskSelection = manager.selectionIdentity, source = store.current, page = source?.pageIdentity
+    start { ticket in
+      let isCurrent = {
+        self.current(ticket) && store.selectionIdentity == repositorySelection
+          && manager.selectionIdentity == taskSelection && source?.pageIdentity == page
+          && manager.task(id) != nil
+      }
+      do { try await action(isCurrent) }
+      catch { if isCurrent() { throw error } }
+    }
+  }
 }
 
 /// Confirmed writes outlive a detail view. A refresh or second click must never cancel them.

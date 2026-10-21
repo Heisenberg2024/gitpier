@@ -95,12 +95,14 @@ struct TaskWorkspaceDetail: View {
   @ObservedObject var manager: TaskWorkspaceManager
   @EnvironmentObject var store: AppStore
   @StateObject private var request = WorkflowRequest()
+  @StateObject private var navigation: WorkflowRequest
   @ObservedObject private var mutation: WorkflowMutationRequest
   @State private var snapshot: TaskWorkspaceSnapshot?
   @State private var launching = false
   @State private var confirmArchive = false
-  init(taskID: UUID, manager: TaskWorkspaceManager) {
+  init(taskID: UUID, manager: TaskWorkspaceManager, navigation: WorkflowRequest = WorkflowRequest()) {
     self.taskID = taskID; self.manager = manager
+    _navigation = StateObject(wrappedValue: navigation)
     mutation = manager.detailMutation(taskID)
   }
   private var task: TaskWorkspace? { manager.task(taskID) }
@@ -125,6 +127,7 @@ struct TaskWorkspaceDetail: View {
             Text(store.text("Baseline → HEAD: \(snapshot.comparison.files.count) files · \(snapshot.comparison.rightOnlyCount) new commits", "基准 → HEAD：\(snapshot.comparison.files.count) 文件 · \(snapshot.comparison.rightOnlyCount) 新提交"))
           }
           WorkflowProblem(request: request)
+          WorkflowProblem(request: navigation)
           if let problem = mutation.problem {
             Text(problem).font(.caption).foregroundStyle(.orange).textSelection(.enabled)
           }
@@ -137,8 +140,8 @@ struct TaskWorkspaceDetail: View {
           Text(store.text("Review", "审查")).font(.headline)
           Text(store.text("Inspect both comparisons. New local commits can contain task changes even when the worktree is clean.", "请检查两种比较。即使工作树干净，新建的本地提交仍可能包含任务变更。"))
             .font(.callout).foregroundStyle(.secondary)
-          Button(store.text("Baseline → Current HEAD / Commits", "基准 → 当前 HEAD / 提交")) { perform { try await manager.review(taskID, baseline: true) } }.disabled(task.archived)
-          Button(store.text("Current HEAD → Index / Working Tree", "当前 HEAD → Index / 工作树")) { perform { try await manager.review(taskID, baseline: false) } }.disabled(task.archived)
+          Button(store.text("Baseline → Current HEAD / Commits", "基准 → 当前 HEAD / 提交")) { navigate { try await manager.review(taskID, baseline: true, isCurrent: $0) } }.disabled(task.archived)
+          Button(store.text("Current HEAD → Index / Working Tree", "当前 HEAD → Index / 工作树")) { navigate { try await manager.review(taskID, baseline: false, isCurrent: $0) } }.disabled(task.archived)
           Button(store.text("Mark Current Snapshot Reviewed", "将当前快照标为已审查")) { perform { try await manager.markReviewed(taskID) } }
             .disabled(task.archived || task.agent?.state.active == true || manager.busy.contains(taskID))
           if let review = task.review {
@@ -168,7 +171,7 @@ struct TaskWorkspaceDetail: View {
           Text(store.text("Archive changes task metadata only. To remove a GitPier-created worktree, use Worktrees → Remove and review it separately.", "归档仅改变任务元数据。移除 GitPier 创建的工作树，请进入工作树 → 移除并单独审查。"))
             .font(.caption).foregroundStyle(.secondary)
           if task.binding.managed {
-            Button(store.text("Review Worktree Removal…", "审查移除工作树…")) { perform { try await manager.requestRemoval(taskID) } }
+            Button(store.text("Review Worktree Removal…", "审查移除工作树…")) { navigate { try await manager.requestRemoval(taskID, isCurrent: $0) } }
               .disabled(task.agent?.state.active == true || manager.busy.contains(taskID))
           }
         }.padding(16).frame(maxWidth: .infinity, alignment: .leading)
@@ -177,7 +180,7 @@ struct TaskWorkspaceDetail: View {
     // so a superseded snapshot is replaced without requiring a manual Refresh.
     }.onChange(of: task, initial: true) { _, _ in refresh() }
       .onChange(of: mutation.revision) { _, _ in refresh() }
-      .onDisappear { request.cancel() }
+      .onDisappear { request.cancel(); navigation.cancel() }
       .sheet(isPresented: $launching) { CodexLaunchSheet(taskID: taskID, manager: manager).environmentObject(store).modifier(AppAppearance(store: store)) }
       .confirmationDialog(store.text("Archive task?", "归档任务？"), isPresented: $confirmArchive) {
         Button(store.text("Archive", "归档")) { perform { try await manager.archive(taskID, archived: true) } }
@@ -187,12 +190,14 @@ struct TaskWorkspaceDetail: View {
     VStack(alignment: .leading, spacing: 3) { Text(title).font(.caption).foregroundStyle(.secondary); Text(value).font(.system(size: 11, design: .monospaced)).textSelection(.enabled).fixedSize(horizontal: false, vertical: true) }
   }
   @ViewBuilder private func openButtons(_ task: TaskWorkspace) -> some View {
-    Button(store.text("Open Worktree", "打开工作树")) { perform { _ = try await manager.open(taskID, page: "commit") } }.disabled(task.archived)
-    Button(store.text("Open Terminal", "打开终端")) { perform { _ = try await manager.open(taskID, terminal: true) } }.disabled(task.archived)
+    Button(store.text("Open Worktree", "打开工作树")) { navigate { _ = try await manager.open(taskID, page: "commit", isCurrent: $0) } }.disabled(task.archived)
+    Button(store.text("Open Terminal", "打开终端")) { navigate { _ = try await manager.open(taskID, terminal: true, isCurrent: $0) } }.disabled(task.archived)
     Menu(store.text("Open in Editor", "在编辑器中打开")) {
       ForEach(ExternalEditors.available(settings: store.settings)) { editor in
-        Button(editor.name) { perform {
+        Button(editor.name) { navigate { isCurrent in
           _ = try await manager.git(task).validateTaskWorkspace(task)
+          try Task.checkCancellation()
+          guard isCurrent(), manager.task(taskID) == task else { throw TaskWorkspaceError.changed }
           NSWorkspace.shared.open([URL(fileURLWithPath: task.path)], withApplicationAt: editor.url, configuration: NSWorkspace.OpenConfiguration()) { _, _ in }
         } }
       }
@@ -200,6 +205,9 @@ struct TaskWorkspaceDetail: View {
     Button(store.text("Refresh", "刷新")) { refresh() }
   }
   private func perform(_ action: @escaping () async throws -> Void) { mutation.start(action) }
+  private func navigate(_ action: @escaping @MainActor (@escaping () -> Bool) async throws -> Void) {
+    navigation.startTaskNavigation(taskID, manager: manager, action: action)
+  }
   private func refresh() {
     snapshot = nil
     request.start { ticket in let value = try await manager.snapshot(taskID); guard request.current(ticket) else { return }; snapshot = value }

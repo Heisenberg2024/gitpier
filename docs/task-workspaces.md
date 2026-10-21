@@ -16,6 +16,8 @@ After registration succeeds, **Open after creating** is a separate navigation st
 
 Detail refreshes use cancellable, selection-scoped reads. Confirmed actions use a per-task single-flight mutation retained across page changes; refresh cannot cancel them or clear their errors. The last-window/quit guard waits while a confirmed action is pending. A successful action triggers a fresh detail read; archived tasks can be found with **Archived** enabled.
 
+Detail opens, comparisons, editor opening and removal-review navigation use a separate cancellable request. Each request captures task, repository and page selection identities, including switching away and back to the same item. Asynchronous checks revalidate that context before committing repository selection. Superseded requests cannot change the page or create a terminal. Once selection commits, source-view dismissal does not reverse success. New detail navigation supersedes unfinished navigation; Open Terminal reuses a live task terminal. Operations Center navigation has an independent lifetime after its sheet closes. An actual opening failure remains retryable and is recorded separately from successful creation or confirmed writes.
+
 Tasks show branch/path, HEAD, staged/unstaged/conflict counts, timestamps and independent agent state. Only visible task summaries and the selected detail are queried, through the shared query budget. Opening Tasks or Dashboard never starts Codex. Missing/replaced worktrees are unavailable. Use the normal reviewed Worktree repair workflow after moving a directory; task rebinding additionally verifies its original filesystem and metadata identities.
 
 ## Optional Codex CLI
@@ -66,6 +68,8 @@ Default metadata directory: `~/Library/Application Support/GitPier/workspace.tas
 Metadata includes task/repository UUIDs, paths, common/Git directories, creation receipt, dev/inode identity, branch, baseline SHA, dates/status, optional explicitly saved description, current session metadata and optional review receipt. It excludes prompts/transcripts, source contents, terminal output, tokens, keys and full environments. Descriptions are local metadata, never automatically written into a repository.
 
 ## 简体中文
+
+详情中的打开、比较、编辑器打开及移除审查导航使用独立的可取消请求，保存任务、仓库与页面的选择身份，即使切走后返回同一项也会使旧请求失效。异步核验后、提交仓库选择前再次核对；过期请求不会改页或创建终端。选择提交后，来源视图销毁不会撤销成功。新详情导航替代尚未完成的旧导航，打开终端复用运行中的任务终端；操作中心关闭表单后发起的导航有独立生命周期。真实打开失败可主动重试，并与创建成功或已确认写入分开记录。
 
 从**工作树 → 任务 → 新建任务**创建独立工作树，选择本地基准、新分支和父目录已存在的新绝对路径。默认使用仓库旁的 UUID 目录，不自动 Fetch 或启动 Codex。可关联已有工作树；外部关联始终保持外部归属，任务元数据不能授予删除权限。移动后复用原工作树安全修复，并核对原目录/Git/Common 的设备与 inode 身份。
 

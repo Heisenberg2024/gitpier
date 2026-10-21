@@ -2,6 +2,7 @@
 
 ## 1.8.0 — Unreleased (30)
 
+- Bind task-detail navigation to the initiating request and selection identities; reject late opens after task, repository or page changes, preserve committed navigation success and reuse live task terminals. 将详情导航绑定发起请求与选择身份；任务、仓库或页面变化后拒绝迟到打开，保留已提交导航的成功结果，并复用运行中的任务终端。
 - Keep successful task creation distinct from automatic navigation failures, with retryable opening and separate Operations Center records. 创建成功与自动导航失败分别报告，提供重新打开入口与独立操作中心记录。
 - Require an explicit selection commit before opening the current task reports success; cancelled or stale requests preserve its page and terminal. 打开当前任务时，仅在本次选择确实提交后报告成功；取消或失效请求保留原页面与终端。
 - Separate cancellable task-detail reads from single-flight confirmed mutations; preserve writes and errors across refresh, selection and window changes. 将详情可取消读取与单次确认修改分离，刷新、切换或关闭窗口不会静默取消写入或清除错误。
