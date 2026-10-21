@@ -28,7 +28,9 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
       - name: CI policy regression tests
-        run: python3 Scripts/test-ci-validation.py
+        run: |
+          python3 Scripts/test-ci-validation.py
+          python3 Scripts/test-ci-cache-inputs.py
       - name: Select validation path
         id: plan
         env:
@@ -88,6 +90,11 @@ jobs:
           key: ${{ runner.os }}-${{ runner.arch }}-swiftpm-v1-${{ steps.toolchain.outputs.cache-context }}-${{ hashFiles('Package.swift', 'Package.resolved') }}-${{ hashFiles('Sources/**', 'Tests/**', 'Scripts/**', 'Resources/**', '.github/workflows/validate.yml') }}
           restore-keys: |
             ${{ runner.os }}-${{ runner.arch }}-swiftpm-v1-${{ steps.toolchain.outputs.cache-context }}-${{ hashFiles('Package.swift', 'Package.resolved') }}-
+      - name: Restore SwiftPM input timestamps
+        if: env.VALIDATION_MODE == 'full'
+        timeout-minutes: 1
+        continue-on-error: true
+        run: python3 Scripts/ci_cache_inputs.py restore --context "${{ steps.toolchain.outputs.cache-context }}"
       - name: Real Git repository tests
         id: core-tests
         if: env.VALIDATION_MODE == 'full'
@@ -135,6 +142,11 @@ jobs:
       - name: Full macOS validation complete (v1)
         if: env.VALIDATION_MODE == 'full'
         run: echo 'All full macOS validation steps passed.'
+      - name: Capture SwiftPM input timestamps
+        if: ${{ success() && env.VALIDATION_MODE == 'full' && github.event_name == 'push' && steps.swift-cache.outputs.cache-hit != 'true' }}
+        timeout-minutes: 1
+        continue-on-error: true
+        run: python3 Scripts/ci_cache_inputs.py capture --context "${{ steps.toolchain.outputs.cache-context }}"
       - name: Save SwiftPM build cache
         if: ${{ success() && env.VALIDATION_MODE == 'full' && github.event_name == 'push' && steps.swift-cache.outputs.cache-hit != 'true' }}
         uses: actions/cache/save@v4

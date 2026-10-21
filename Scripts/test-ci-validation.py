@@ -562,6 +562,8 @@ class WorkflowContractTests(unittest.TestCase):
         self.assertEqual(arguments[arguments.index('--num-workers') + 1], '2')
         self.assertEqual(arguments[arguments.index('--jobs') + 1], '2')
         self.assertIn('--xunit-output', arguments)
+        # Credential CLI acceptance executes the sibling SwiftPM application.
+        self.assertNotIn('--test-product', arguments)
 
     def test_diagnostics_preserve_test_failures_and_only_archive_test_output(self):
         core = self.steps['Real Git repository tests']
@@ -621,6 +623,29 @@ class WorkflowContractTests(unittest.TestCase):
         toolchain = self.steps['Toolchain']
         for context in ('swift --version', 'xcodebuild -version', '--show-sdk-build-version', 'sw_vers -buildVersion'):
             self.assertIn(context, toolchain)
+
+    def test_input_timestamps_are_verified_before_full_tests(self):
+        name = 'Restore SwiftPM input timestamps'
+        self.assertIn(name, self.steps)
+        step = self.steps[name]
+        self.assertIn('python3 Scripts/ci_cache_inputs.py restore --context', step)
+        self.assertIn('steps.toolchain.outputs.cache-context', step)
+        self.assertIn("env.VALIDATION_MODE == 'full'", step)
+        self.assertGreater(self.names.index(name), self.names.index('Restore SwiftPM build cache'))
+        self.assertLess(self.names.index(name), self.names.index('Real Git repository tests'))
+        self.assertIn('python3 Scripts/test-ci-cache-inputs.py', self.workflow)
+
+    def test_input_snapshot_is_captured_only_after_all_original_push_gates(self):
+        name = 'Capture SwiftPM input timestamps'
+        self.assertIn(name, self.steps)
+        step = self.steps[name]
+        self.assertIn('python3 Scripts/ci_cache_inputs.py capture --context', step)
+        self.assertIn('steps.toolchain.outputs.cache-context', step)
+        self.assertIn('success()', step)
+        self.assertIn("github.event_name == 'push'", step)
+        self.assertIn("env.VALIDATION_MODE == 'full'", step)
+        self.assertGreater(self.names.index(name), self.names.index(FULL_STEP_NAMES[-1]))
+        self.assertLess(self.names.index(name), self.names.index('Save SwiftPM build cache'))
 
 
 class CommandLineTests(unittest.TestCase):
