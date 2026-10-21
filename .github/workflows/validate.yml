@@ -13,6 +13,7 @@ concurrency:
 jobs:
   plan:
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     permissions:
       contents: read
       actions: read
@@ -38,6 +39,7 @@ jobs:
     needs: plan
     if: ${{ always() }}
     runs-on: ${{ (github.run_attempt > 1 || needs.plan.outputs.mode == 'full') && 'macos-15' || 'ubuntu-latest' }}
+    timeout-minutes: 40
     env:
       # Failed-jobs-only reruns can retain an earlier successful plan's outputs.
       VALIDATION_MODE: ${{ github.run_attempt > 1 && 'full' || needs.plan.outputs.mode }}
@@ -58,22 +60,66 @@ jobs:
           VALIDATION_BASE: ${{ needs.plan.outputs.base }}
         run: python3 Scripts/ci_validation.py docs
       - name: Toolchain
+        id: toolchain
         if: env.VALIDATION_MODE == 'full'
         run: |
-          swift --version
+          swift --version | tee "$RUNNER_TEMP/gitpier-toolchain.txt"
+          xcodebuild -version >> "$RUNNER_TEMP/gitpier-toolchain.txt"
+          xcrun --sdk macosx --show-sdk-build-version >> "$RUNNER_TEMP/gitpier-toolchain.txt"
+          sw_vers -buildVersion >> "$RUNNER_TEMP/gitpier-toolchain.txt"
           /usr/bin/git --version
           gh --version
-      - name: Real Git repository tests
+          task_cache_context="$(shasum -a 256 "$RUNNER_TEMP/gitpier-toolchain.txt" | cut -d ' ' -f 1)"
+          printf 'cache-context=%s\n' "$task_cache_context" >> "$GITHUB_OUTPUT"
+      - name: Restore SwiftPM build cache
+        id: swift-cache
         if: env.VALIDATION_MODE == 'full'
-        run: Scripts/test.sh
+        uses: actions/cache/restore@v4
+        timeout-minutes: 3
+        continue-on-error: true
+        env:
+          SEGMENT_DOWNLOAD_TIMEOUT_MINS: 2
+        with:
+          path: |
+            .build
+            .cache/swiftpm
+            .cache/swift
+            .cache/clang
+          key: ${{ runner.os }}-${{ runner.arch }}-swiftpm-v1-${{ steps.toolchain.outputs.cache-context }}-${{ hashFiles('Package.swift', 'Package.resolved') }}-${{ hashFiles('Sources/**', 'Tests/**', 'Scripts/**', 'Resources/**', '.github/workflows/validate.yml') }}
+          restore-keys: |
+            ${{ runner.os }}-${{ runner.arch }}-swiftpm-v1-${{ steps.toolchain.outputs.cache-context }}-${{ hashFiles('Package.swift', 'Package.resolved') }}-
+      - name: Real Git repository tests
+        id: core-tests
+        if: env.VALIDATION_MODE == 'full'
+        timeout-minutes: 20
+        shell: bash
+        run: |
+          set -o pipefail
+          mkdir -p .cache/ci
+          Scripts/test.sh --parallel --num-workers 2 --jobs 2 --disable-index-store --xunit-output .cache/ci/core-tests.xml 2>&1 | tee .cache/ci/core-tests.log
+      - name: Upload test diagnostics
+        if: ${{ !cancelled() && (steps.core-tests.outcome == 'success' || steps.core-tests.outcome == 'failure') }}
+        uses: actions/upload-artifact@v4
+        timeout-minutes: 3
+        continue-on-error: true
+        with:
+          name: GitPier-core-tests-attempt-${{ github.run_attempt }}
+          include-hidden-files: true
+          path: |
+            .cache/ci/core-tests.xml
+            .cache/ci/core-tests.log
+          if-no-files-found: warn
       - name: Release metadata and signing gates
         if: env.VALIDATION_MODE != 'reuse'
+        timeout-minutes: 2
         run: python3 Scripts/test-release-tools.py
       - name: Build application
         if: env.VALIDATION_MODE == 'full'
+        timeout-minutes: 12
         run: Scripts/build-app.sh
       - name: Temporary DMG structure (no Finder visual claim)
         if: env.VALIDATION_MODE == 'full'
+        timeout-minutes: 3
         run: Scripts/test-dmg-structure.sh
       - name: Archive development app preserving signatures and permissions
         if: env.VALIDATION_MODE == 'full'
@@ -81,6 +127,7 @@ jobs:
       - name: Upload development app
         if: env.VALIDATION_MODE == 'full'
         uses: actions/upload-artifact@v4
+        timeout-minutes: 5
         with:
           name: ${{ github.run_attempt > 1 && format('GitPier-development-app-attempt-{0}', github.run_attempt) || 'GitPier-development-app' }}
           path: dist/GitPier-development.zip
@@ -88,6 +135,18 @@ jobs:
       - name: Full macOS validation complete (v1)
         if: env.VALIDATION_MODE == 'full'
         run: echo 'All full macOS validation steps passed.'
+      - name: Save SwiftPM build cache
+        if: ${{ success() && env.VALIDATION_MODE == 'full' && github.event_name == 'push' && steps.swift-cache.outputs.cache-hit != 'true' }}
+        uses: actions/cache/save@v4
+        timeout-minutes: 3
+        continue-on-error: true
+        with:
+          path: |
+            .build
+            .cache/swiftpm
+            .cache/swift
+            .cache/clang
+          key: ${{ steps.swift-cache.outputs.cache-primary-key }}
       - name: Reused full validation
         if: env.VALIDATION_MODE == 'reuse'
         env:

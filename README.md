@@ -144,6 +144,8 @@ See [development](docs/development.md) for tests and build options, and [archite
 
 CI uses lightweight checks for ordinary documentation changes. Main/tag runs for the same commit reuse only proven full macOS validation; every release commit must have passed all Core, signing, bundle and DMG checks. Manual runs always perform full validation. See the [CI policy](docs/development.md#ci-validation-policy).
 
+Full CI uses two test workers and toolchain-scoped SwiftPM build caches. Every test and release gate still runs on a cache hit; bounded steps and retained test diagnostics make stalled or failed runs easier to investigate.
+
 ## Security & privacy
 
 Git operations run on your Mac. Managed HTTPS tokens are stored in macOS Keychain; workspace metadata and drafts are saved locally. GitPier has no repository-upload or analytics service. Remote operations communicate with the Git remotes you choose. Git hooks, credential helpers, and terminal commands execute with your user permissions and can access the network.

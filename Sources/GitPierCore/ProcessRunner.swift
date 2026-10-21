@@ -83,12 +83,18 @@ public struct ProcessRunner: Sendable {
     return try await withTaskCancellationHandler(
       operation: {
         try Task.checkCancellation()
-        let result = try await Task.detached(priority: .userInitiated) {
-          try Self.runBlocking(
-            executable: executable, arguments: arguments, directory: directory,
-            environment: environment, input: input, timeout: timeout, limit: limit, box: box,
-            excludingEnvironmentKeys: excludingEnvironmentKeys, onStderr: onStderr)
-        }.value
+        // Blocking process waits must not occupy Swift's cooperative workers:
+        // the command can depend on another async task making progress.
+        let result: CommandResult = try await withCheckedThrowingContinuation { continuation in
+          DispatchQueue.global(qos: .userInitiated).async {
+            do {
+              continuation.resume(returning: try Self.runBlocking(
+                executable: executable, arguments: arguments, directory: directory,
+                environment: environment, input: input, timeout: timeout, limit: limit, box: box,
+                excludingEnvironmentKeys: excludingEnvironmentKeys, onStderr: onStderr))
+            } catch { continuation.resume(throwing: error) }
+          }
+        }
         try Task.checkCancellation()
         return result
       }, onCancel: { box.cancel() })

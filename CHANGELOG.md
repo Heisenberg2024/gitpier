@@ -3,6 +3,7 @@
 ## 1.8.0 — Unreleased (30)
 
 - Fix subprocess output-reader lifetime and macOS 15 pipe-close crashes during concurrent task reviews; wait for readers before delivering results and preserve bounded draining. 修复并发任务审查时的子进程输出读取生命周期及 macOS 15 管道关闭崩溃，返回结果前等待读取结束，保留有界排空。
+- Move blocking subprocess waits off Swift's cooperative executor to keep async tasks progressing on small-core systems. 将子进程阻塞等待移出 Swift 协作线程池，避免小核数环境中的异步任务饥饿。
 - Preserve partial Worktree creation through private registration intents, original filesystem identity checks and explicit recovery; never delete user files or branches on failure. 使用私有待登记记录、原文件系统身份核验及显式恢复保留部分创建结果，失败不删除用户文件或分支。
 - Add cancellable user-requested Codex login checks, shared probe/PTY environments, optional Codex Home and Finder diagnostics; discard authentication output and retain CLI-owned credential handling. 新增可取消的主动 Codex 登录检查、检测/PTY 共享环境、可选 Codex Home 与 Finder 诊断，丢弃认证输出，凭证处理仍归 CLI。
 - Validate the full safe CLI argument combination and coalesce concurrent task review scans within the shared resource budget; routine list refreshes stay lightweight and never certify stale content. 核对完整安全 CLI 参数组合，在共享预算内合并并发任务审查；列表保持轻量且不将旧内容误标为当前已审查。

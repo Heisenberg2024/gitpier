@@ -132,9 +132,15 @@ Scripts keep build caches in `.cache` and use SwiftPM's native build engine. The
 
 PR and other branch runs do not reuse release evidence. Manual dispatches and explicit reruns always perform full validation, including failed-jobs-only reruns that retain an earlier plan's outputs. Rerun artifacts add an `-attempt-N` suffix to avoid name conflicts and preserve previous uploads. The SHA queue has GitHub's 100-pending-run limit. Planning failures fail `build-test`; the workflow does not hide required checks with top-level path exclusions. Tokens remain read-only: only planning needs `actions: read`, and checkout does not persist credentials. No CI path signs production updates, publishes releases or changes repository settings.
 
+Full runs execute the complete XCTest suite with two worker processes and two compilation jobs; IDE index generation is disabled for this CI test build. SwiftPM build/dependency and compiler module caches are separated by runner OS/architecture, Xcode/Swift/SDK/system versions and dependency manifests, with build inputs in the exact cache key. Compatible previous inputs can supply incremental compilation state. Only `.build`, `.cache/swiftpm`, `.cache/swift` and `.cache/clang` are cached. Pull requests only restore caches; successful full push runs save them after every original gate passes. Cache hits never skip tests, signature verification or packaging, and cache transport failures are optional.
+
+Planning is limited to five minutes and `build-test` to forty minutes, with twenty minutes for Core tests and twelve for the application build. Cache transfers and packaging steps have their own limits. Full runs retain test logs and xUnit results as `GitPier-core-tests-attempt-N`, including failed test runs when the runner can upload diagnostics. A hosted-runner disconnect can prevent both logs and artifacts from being saved; it is not evidence of a passing or failing test assertion.
+
 For offline CI-policy validation, run `python3 Scripts/test-ci-validation.py` and `python3 Scripts/test-release-tools.py`. These do not build or launch the application. Changes to routing or the full-step contract require updating the corresponding regression coverage. Before publishing, inspect the **exact release SHA's successful full `build-test` steps and completion marker**, or follow a verified reuse link to those steps; a successful lightweight workflow alone is insufficient.
 
 简体中文：CI 保留原 `build-test` 检查名。普通文档由 Ubuntu 检查完整差异、空白、UTF-8、NUL 和冲突标记，并保留 10 项发布安全门控；打包使用的 Markdown/许可证、源码、资源、脚本、工作流和依赖不在轻量白名单。同 SHA 的 main/tag 先由 GitHub 排队，再逐项核对相同仓库、工作流、提交及最新 attempt 的完整成功步骤，避免占用 runner 等待。文档轻量成功或仅复用成功都不能冒充完整验收；API 异常、缺失或不完整证据回退完整 macOS 检查。纯文档提交后来打发布标签时也必须获得该 SHA 的完整验收。手动运行和显式重跑始终全验，原生测试、签名、包结构、DMG 和保权限归档均保留。发布前查看完整成功步骤/标记或复用链接，不能只看 workflow 绿色状态。
+
+完整回归使用两个独立测试 worker、两个编译任务，并关闭 CI 测试构建的 IDE 索引。仅缓存 SwiftPM 构建/依赖和编译器模块目录，按系统、架构、工具链、SDK 与依赖清单隔离，再按构建输入区分精确缓存；PR 仅恢复缓存，完整 push 通过全部原有门槛后才保存。命中缓存仍执行全部测试、签名和打包检查。plan 最多 5 分钟，build-test 最多 40 分钟，Core/应用构建分别最多 20/12 分钟；测试日志与 xUnit 结果按 attempt 留存，失败时也尝试上传。托管 runner 失联可能使日志无法保存，不能据此声称测试断言成功或失败。
 
 ## Local acceptance
 

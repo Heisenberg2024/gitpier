@@ -144,6 +144,8 @@ Scripts/package-release.sh --unsigned-candidate
 
 普通文档更新走轻量 CI；同一提交的 main/tag 仅复用已证实成功的完整 macOS 验证，每个发布提交仍必须通过全部 Core、签名、应用包和 DMG 检查。手动运行始终执行完整验证，详见 [CI 策略](docs/development.md#ci-validation-policy)。
 
+完整 CI 使用两个测试 worker，并按工具链隔离 SwiftPM 构建缓存。命中缓存仍执行全部测试与发布门槛；各阶段设置超时并留存测试日志，便于排查卡住或失败的运行。
+
 ## 安全与隐私
 
 Git 操作在本机执行。受管理的 HTTPS Token 保存在 macOS Keychain 中，工作空间元数据和草稿保存在本地。GitPier 没有仓库上传或分析服务；远程操作连接用户选择的 Git Remote。Git Hooks、凭证助手和终端命令以当前用户权限执行，也可能访问网络。

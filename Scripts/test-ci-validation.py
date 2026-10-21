@@ -6,6 +6,7 @@ import io
 import os
 from pathlib import Path
 import re
+import shlex
 import subprocess
 import tempfile
 import unittest
@@ -523,6 +524,103 @@ class PaginationTests(unittest.TestCase):
             return {'total_count': 101, 'jobs': [{'id': 101}]}
         with self.assertRaises(policy.EvidenceError):
             policy.api_items('fake', 'jobs', changed)
+
+
+class WorkflowContractTests(unittest.TestCase):
+    """The fast path may reuse compilation, never successful test results."""
+
+    def setUp(self):
+        self.workflow = (policy.ROOT / policy.WORKFLOW).read_text(encoding='utf-8')
+        self.build = self.workflow.split('  build-test:\n', 1)[1]
+        matches = list(re.finditer(r'^      - name: (.+)$', self.build, re.MULTILINE))
+        self.names = [match[1] for match in matches]
+        self.assertEqual(len(self.names), len(set(self.names)))
+        self.steps = {
+            match[1]: self.build[match.end():matches[index + 1].start() if index + 1 < len(matches) else None]
+            for index, match in enumerate(matches)
+        }
+
+    def test_all_full_gates_remain_ordered_and_independent_of_cache_hits(self):
+        positions = [self.names.index(name) for name in FULL_STEP_NAMES]
+        self.assertEqual(positions, sorted(positions))
+        for name in FULL_STEP_NAMES:
+            with self.subTest(step=name):
+                step = self.steps[name]
+                self.assertNotIn('cache-hit', step)
+                self.assertNotIn('continue-on-error:', step)
+                self.assertNotIn('--skip-build', step)
+                self.assertNotIn('--filter', step)
+                self.assertNotIn('--skip ', step)
+                condition = "env.VALIDATION_MODE != 'reuse'" if name == 'Release metadata and signing gates' else "env.VALIDATION_MODE == 'full'"
+                self.assertIn('if: ' + condition, step)
+
+    def test_core_runs_all_tests_with_bounded_parallelism(self):
+        command = re.search(r'^\s*(?:run: )?(Scripts/test.sh[^\n]*)$', self.steps['Real Git repository tests'], re.MULTILINE)
+        self.assertIsNotNone(command)
+        arguments = shlex.split(command[1])
+        self.assertIn('--parallel', arguments)
+        self.assertEqual(arguments[arguments.index('--num-workers') + 1], '2')
+        self.assertEqual(arguments[arguments.index('--jobs') + 1], '2')
+        self.assertIn('--xunit-output', arguments)
+
+    def test_diagnostics_preserve_test_failures_and_only_archive_test_output(self):
+        core = self.steps['Real Git repository tests']
+        self.assertIn('set -o pipefail', core)
+        self.assertIn('2>&1 | tee .cache/ci/core-tests.log', core)
+        self.assertNotIn('continue-on-error:', core)
+        self.assertIn('Upload test diagnostics', self.steps)
+        diagnostics = self.steps['Upload test diagnostics']
+        self.assertIn("steps.core-tests.outcome == 'failure'", diagnostics)
+        self.assertIn('!cancelled()', diagnostics)
+        self.assertIn('.cache/ci/core-tests.xml', diagnostics)
+        self.assertIn('.cache/ci/core-tests.log', diagnostics)
+        self.assertIn('include-hidden-files: true', diagnostics)
+        self.assertNotIn('path: .cache\n', diagnostics)
+
+    def test_jobs_and_expensive_steps_are_time_bounded(self):
+        header = self.build.split('    steps:', 1)[0]
+        job_timeout = re.search(r'^    timeout-minutes: (\d+)$', header, re.MULTILINE)
+        self.assertIsNotNone(job_timeout)
+        self.assertLessEqual(int(job_timeout[1]), 45)
+        self.assertNotIn('continue-on-error:', header)
+        for name, maximum in (('Real Git repository tests', 25), ('Build application', 15),
+                              ('Restore SwiftPM build cache', 5), ('Save SwiftPM build cache', 5)):
+            with self.subTest(step=name):
+                timeout = re.search(r'^        timeout-minutes: (\d+)$', self.steps[name], re.MULTILINE)
+                self.assertIsNotNone(timeout)
+                self.assertGreater(int(timeout[1]), 0)
+                self.assertLessEqual(int(timeout[1]), maximum)
+
+    def test_cache_is_limited_to_build_files_and_written_only_after_successful_pushes(self):
+        self.assertIn('Restore SwiftPM build cache', self.steps)
+        self.assertIn('Save SwiftPM build cache', self.steps)
+        allowed = {'.build', '.cache/swiftpm', '.cache/swift', '.cache/clang'}
+        for name in ('Restore SwiftPM build cache', 'Save SwiftPM build cache'):
+            with self.subTest(step=name):
+                step = self.steps[name]
+                block = re.search(r'^          path: \|\n((?:            .+\n)+)', step, re.MULTILINE)
+                self.assertIsNotNone(block)
+                self.assertEqual({line.strip() for line in block[1].splitlines()}, allowed)
+                self.assertIn("env.VALIDATION_MODE == 'full'", step)
+        save = self.steps['Save SwiftPM build cache']
+        self.assertIn('success()', save)
+        self.assertIn("github.event_name == 'push'", save)
+        self.assertGreater(self.names.index('Save SwiftPM build cache'), self.names.index(FULL_STEP_NAMES[-1]))
+
+    def test_cache_keys_bind_toolchain_dependencies_and_build_inputs(self):
+        self.assertIn('Restore SwiftPM build cache', self.steps)
+        self.assertIn('Save SwiftPM build cache', self.steps)
+        restore = self.steps['Restore SwiftPM build cache']
+        self.assertIn('runner.os', restore)
+        self.assertIn('runner.arch', restore)
+        self.assertIn('steps.toolchain.outputs.cache-context', restore)
+        self.assertIn("hashFiles('Package.swift', 'Package.resolved')", restore)
+        for inputs in ('Sources/**', 'Tests/**', 'Scripts/**', 'Resources/**', '.github/workflows/validate.yml'):
+            self.assertIn(inputs, restore)
+        self.assertIn('steps.swift-cache.outputs.cache-primary-key', self.steps['Save SwiftPM build cache'])
+        toolchain = self.steps['Toolchain']
+        for context in ('swift --version', 'xcodebuild -version', '--show-sdk-build-version', 'sw_vers -buildVersion'):
+            self.assertIn(context, toolchain)
 
 
 class CommandLineTests(unittest.TestCase):

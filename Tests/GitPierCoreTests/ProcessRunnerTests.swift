@@ -14,6 +14,47 @@ private final class OutputCallbackProbe: @unchecked Sendable {
 }
 
 final class ProcessRunnerTests: XCTestCase {
+  func testBlockingProcessDoesNotStarveCooperativeTasks() async throws {
+    let probeKey = "GITPIER_COOPERATIVE_PROCESS_PROBE"
+    if ProcessInfo.processInfo.environment[probeKey] == "1" {
+      let root = FileManager.default.temporaryDirectory.appendingPathComponent("GitPier-cooperative-" + UUID().uuidString)
+      try FileManager.default.createDirectory(at: root, withIntermediateDirectories: false)
+      defer { try? FileManager.default.removeItem(at: root) }
+      let marker = root.appendingPathComponent("started"), release = root.appendingPathComponent("release")
+      try await withThrowingTaskGroup(of: CommandResult.self) { group in
+        group.addTask {
+          try await ProcessRunner().run(executable: "/bin/sh", arguments: ["-c",
+            "printf started > \"$1\"; while [ ! -e \"$2\" ]; do /bin/sleep 0.01; done; printf resumed",
+            "gitpier-cooperative-probe", marker.path, release.path], directory: root, timeout: 3)
+        }
+        do {
+          for _ in 0..<200 {
+            if FileManager.default.fileExists(atPath: marker.path) { break }
+            try await Task.sleep(for: .milliseconds(10))
+          }
+          XCTAssertTrue(FileManager.default.fileExists(atPath: marker.path))
+          try Data().write(to: release)
+          let next = try await group.next()
+          let result = try XCTUnwrap(next)
+          XCTAssertEqual(result.code, 0); XCTAssertEqual(result.text, "resumed")
+        } catch {
+          try? Data().write(to: release)
+          group.cancelAll()
+          throw error
+        }
+      }
+      FileHandle.standardOutput.write(Data("Cooperative process probe completed\n".utf8))
+      return
+    }
+    // Limit only this disposable XCTest child to one cooperative worker.
+    let result = try await ProcessRunner().run(executable: "/usr/bin/xcrun", arguments: [
+      "xctest", "-XCTest", "GitPierCoreTests.ProcessRunnerTests/testBlockingProcessDoesNotStarveCooperativeTasks",
+      Bundle(for: ProcessRunnerTests.self).bundleURL.path,
+    ], directory: nil, environment: [probeKey: "1", "LIBDISPATCH_COOPERATIVE_POOL_STRICT": "1"], timeout: 15)
+    XCTAssertEqual(result.code, 0, result.errorText + result.text)
+    XCTAssertTrue(result.text.contains("Cooperative process probe completed"))
+  }
+
   func testOutputPumpCapturesBothStreamsUnderBackpressure() async throws {
     let size = 256 * 1024 + 17
     let result = try await ProcessRunner().run(executable: "/usr/bin/python3", arguments: ["-c", """
