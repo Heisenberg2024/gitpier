@@ -11,6 +11,7 @@ struct TaskWorkspacesView: View {
   @State private var creating = false
   @State private var includeArchived = false
   @State private var selected: UUID?
+  @State private var forgetting: TaskWorkspaceCreation?
   private var tasks: [TaskWorkspace] {
     manager.tasks.filter { $0.commonDirectory == common && (includeArchived || !$0.archived) }
   }
@@ -27,6 +28,19 @@ struct TaskWorkspacesView: View {
       HSplitView {
         ScrollView {
           LazyVStack(alignment: .leading, spacing: 0) {
+            ForEach(manager.pendingCreations.filter { $0.commonDirectory == common }) { creation in
+              VStack(alignment: .leading, spacing: 5) {
+                Text(store.text("Task registration incomplete", "任务登记尚未完成")).font(.headline)
+                Text(creation.name + " · " + creation.path).font(.caption).textSelection(.enabled)
+                Text(store.text("Files and branches are preserved. Resume verifies the original identity. Without a saved identity, inspect Worktrees and associate it as an external worktree.", "文件与分支已保留。继续登记将核对原始身份；缺少已保存身份时，请检查工作树并以外部工作树关联。"))
+                  .font(.caption).foregroundStyle(.secondary)
+                HStack {
+                  Button(store.text("Resume Registration", "继续登记")) { request.start { _ in try await manager.resumeCreation(creation) } }
+                    .disabled(creation.workspace == nil || request.loading || manager.busy.contains(creation.id))
+                  Button(store.text("Forget Creation Record…", "忘记创建记录…")) { forgetting = creation }.disabled(request.loading)
+                }
+              }.padding(12).frame(maxWidth: .infinity, alignment: .leading)
+            }
             if tasks.isEmpty {
               Text(store.text("Create an independent task worktree, or associate an existing linked worktree. Codex CLI is optional.", "创建独立任务工作树，或关联已有工作树。Codex CLI 完全可选。"))
                 .foregroundStyle(.secondary).padding(16)
@@ -68,6 +82,9 @@ struct TaskWorkspacesView: View {
     }.onChange(of: manager.selectedID) { _, value in
       if tasks.contains(where: { $0.id == value }) { selected = value }
     }.onDisappear { request.cancel() }
+      .confirmationDialog(store.text("Forget this creation record?", "忘记此创建记录？"), isPresented: Binding(get: { forgetting != nil }, set: { if !$0 { forgetting = nil } })) {
+        Button(store.text("Forget Record", "忘记记录")) { if let creation = forgetting { request.start { _ in try await manager.forgetCreation(creation) }; forgetting = nil } }
+      } message: { Text(store.text("Only the private pending record is removed. Inspect and preserve any worktree, branch and files before associating it again. This does not grant ownership.", "仅移除私有待登记记录。再次关联前请检查并保留工作树、分支及文件；此操作不授予所有权。")) }
       .sheet(isPresented: $creating) { TaskWorkspaceCreationSheet(model: model, manager: manager).environmentObject(store).modifier(AppAppearance(store: store)) }
       .accessibilityIdentifier("gitpier.tasks")
   }
@@ -256,7 +273,7 @@ struct TaskWorkspaceCreationSheet: View {
           return try await git.associateTaskWorkspace(name: name, savedDescription: note, repositoryID: model.record.id, worktree: tree, receipt: receipt)
         } else {
           return try await git.createTaskWorkspace(name: name, savedDescription: note, repositoryID: model.record.id,
-            destination: URL(fileURLWithPath: location), branch: branch, startAt: base)
+            destination: URL(fileURLWithPath: location), branch: branch, startAt: base, registration: manager.persistence)
         }
       }
       if openAfter { _ = try await manager.open(task.id) }
@@ -274,6 +291,8 @@ struct CodexLaunchSheet: View {
   @State private var executablePath = ""
   @State private var detected: AgentExecutable?
   @State private var snapshot: TaskWorkspaceSnapshot?
+  @State private var login: AgentLoginStatus = .notChecked
+  @State private var starting = false
   var body: some View {
     VStack(alignment: .leading, spacing: 12) {
       Text(store.text("Review Codex Launch", "确认启动 Codex")).font(.title2.bold())
@@ -291,35 +310,49 @@ struct CodexLaunchSheet: View {
       if let detected {
         Text(detected.path).font(.caption).textSelection(.enabled)
         Text(detected.version).font(.caption)
+        CodexEnvironmentSummary(environment: detected.environment)
+        CodexLoginSummary(status: login)
+        Button(store.text("Check Login Status", "检查登录状态")) {
+          login = .notChecked
+          request.start { ticket in
+            let value = try await detected.checkLogin()
+            guard request.current(ticket), self.detected == detected else { return }; login = value
+          }
+        }.disabled(request.loading)
       }
       if let snapshot { Text(store.text("\(snapshot.status.files.count) uncommitted files", "\(snapshot.status.files.count) 个未提交文件")) }
-      Text("--no-daemon --sandbox workspace-write --ask-for-approval on-request").font(.system(size: 11, design: .monospaced))
+      Text(AgentLaunchConfiguration.safeArguments.joined(separator: " ")).font(.system(size: 11, design: .monospaced))
       Text(store.text("Codex runs in the foreground with this worktree as its project root. Its own permissions, approvals and existing local configuration apply, and may permit reading other files. GitPier does not inspect that configuration or credentials, and its Git confirmations do not constrain commands inside Codex. This dialog passes no prompt.", "Codex 在前台运行，并以此工作树为项目根目录。其自身权限、审批和已有本地配置生效，也可能允许读取其他文件。GitPier 不检查该配置或凭证，其 Git 确认不能约束 Codex 内部命令。此对话框不传递 Prompt。"))
         .font(.callout).foregroundStyle(.secondary)
       Link(store.text("Official installation and login guide", "官方安装与登录指南"), destination: URL(string: "https://developers.openai.com/codex/cli")!)
       WorkflowProblem(request: request)
       HStack {
         Spacer()
-        Button(store.text("Cancel", "取消")) { request.cancel(); dismiss() }.keyboardShortcut(.cancelAction).disabled(request.loading)
+        Button(store.text("Cancel", "取消")) { request.cancel(); dismiss() }.keyboardShortcut(.cancelAction).disabled(starting)
         Button(store.text("Start Codex", "启动 Codex")) { launch() }.disabled(detected == nil || snapshot == nil || request.loading)
       }
     }.padding(22).frame(width: 620).textFieldStyle(.roundedBorder)
       .onAppear { executablePath = store.settings.codexExecutablePath }
-      .onChange(of: executablePath) { _, _ in detected = nil; snapshot = nil; request.cancel() }
-      .onDisappear { request.cancel() }.interactiveDismissDisabled(request.loading)
+      .onChange(of: executablePath) { _, _ in invalidate() }
+      .onChange(of: store.settings.codexHomePath) { _, _ in invalidate() }
+      .onDisappear { request.cancel() }.interactiveDismissDisabled(starting)
   }
   private func detect() {
-    let path = executablePath; detected = nil; snapshot = nil
+    let path = executablePath, home = store.settings.codexHomePath; detected = nil; snapshot = nil; login = .notChecked
     request.start { ticket in
-      let executable = try await AgentExecutable.detect(explicitPath: path)
+      let environment = try AgentEnvironment(codexHome: home)
+      let executable = try await AgentExecutable.detect(explicitPath: path, environment: environment)
       let state = try await manager.snapshot(taskID)
-      guard request.current(ticket), executablePath == path else { return }
+      guard request.current(ticket), executablePath == path, store.settings.codexHomePath == home else { return }
       detected = executable; snapshot = state
     }
   }
+  private func invalidate() { detected = nil; snapshot = nil; login = .notChecked; request.cancel() }
   private func launch() {
-    guard let detected, let snapshot, let task = manager.task(taskID) else { return }
+    guard !starting, let detected, let snapshot, let task = manager.task(taskID) else { return }
+    starting = true
     request.start { _ in
+      defer { starting = false }
       let configuration = try AgentLaunchConfiguration(executable: detected, task: task, snapshot: snapshot)
       try await manager.launch(taskID, configuration: configuration); dismiss()
     }
@@ -328,26 +361,82 @@ struct CodexLaunchSheet: View {
 
 struct CodexSettingsSection: View {
   @EnvironmentObject var store: AppStore
-  @State private var result = ""
-  @State private var checking = false
+  @StateObject private var request = WorkflowRequest()
+  @State private var detected: AgentExecutable?
+  @State private var login: AgentLoginStatus = .notChecked
   var body: some View {
     Section(store.text("Codex CLI (optional)", "Codex CLI（可选）")) {
       TextField(store.text("Executable path (empty uses PATH)", "可执行文件路径（留空使用 PATH）"), text: Binding(
         get: { store.settings.codexExecutablePath },
-        set: { var settings = store.settings; settings.codexExecutablePath = $0; store.updateSettings(settings); result = "" }))
-      Button(store.text("Detect Codex CLI", "检测 Codex CLI")) {
-        checking = true
-        let path = store.settings.codexExecutablePath
-        Task {
-          defer { checking = false }
-          do { let executable = try await AgentExecutable.detect(explicitPath: path); if store.settings.codexExecutablePath == path { result = executable.version + "\n" + executable.path } }
-          catch { if store.settings.codexExecutablePath == path { result = localizedUI(error.localizedDescription) } }
-        }
-      }.disabled(checking)
-      if !result.isEmpty { Text(result).font(.caption).textSelection(.enabled) }
-      Text(store.text("Detection runs bounded version and help probes. GitPier never installs Codex or reads its login credentials. Start a session explicitly from a Task Workspace.", "检测执行有界的版本及帮助查询。GitPier 不安装 Codex，也不读取其登录凭证。请从任务工作空间主动启动会话。"))
+        set: { var settings = store.settings; settings.codexExecutablePath = $0; store.updateSettings(settings) }))
+      DisclosureGroup(store.text("Advanced Environment", "高级环境")) {
+        TextField(store.text("Codex Home (empty inherits CODEX_HOME)", "Codex Home（留空继承 CODEX_HOME）"), text: Binding(
+          get: { store.settings.codexHomePath }, set: { var settings = store.settings; settings.codexHomePath = $0; store.updateSettings(settings) }))
+        Text(store.text("Choose an existing absolute directory. This affects only Codex processes started by GitPier; no files or system settings are changed.", "请选择已存在的绝对目录。仅影响 GitPier 启动的 Codex 进程，不改动文件或系统设置。"))
+          .font(.caption).foregroundStyle(.secondary)
+      }
+      HStack {
+        Button(store.text("Detect Codex CLI", "检测 Codex CLI")) { detect() }.disabled(request.loading)
+        Button(store.text("Check Login Status", "检查登录状态")) {
+          guard let detected else { return }; login = .notChecked
+          request.start { ticket in
+            let value = try await detected.checkLogin()
+            guard request.current(ticket), self.detected == detected else { return }; login = value
+          }
+        }.disabled(detected == nil || request.loading)
+        if request.loading { Button(store.text("Cancel Check", "取消检查")) { request.cancel() } }
+      }
+      if let detected {
+        Text(detected.version + "\n" + detected.path).font(.caption).textSelection(.enabled)
+        CodexEnvironmentSummary(environment: detected.environment)
+        CodexLoginSummary(status: login)
+      }
+      WorkflowProblem(request: request)
+      Text(store.text("Checks run only on request. Codex manages login, credential storage and renewal. GitPier never reads or copies credentials. Start a session explicitly from a Task Workspace.", "仅主动检查。Codex 负责登录、凭证保存及刷新；GitPier 不读取或复制凭证。请从任务工作空间主动启动会话。"))
+        .font(.caption).foregroundStyle(.secondary)
+      Text(store.text("Finder and Dock do not inherit variables set only in shell profiles. HOME and PATH come from this app's environment, with standard command folders appended. If your shell uses a custom CODEX_HOME, configure it above or launch GitPier from that environment.", "Finder 与 Dock 不会继承仅在 Shell 配置中设置的变量。HOME 与 PATH 来自应用环境，并补充标准命令目录。如 Shell 使用自定义 CODEX_HOME，请在上方配置或从该环境启动 GitPier。"))
         .font(.caption).foregroundStyle(.secondary)
       Link(store.text("Official Codex CLI guide", "Codex CLI 官方指南"), destination: URL(string: "https://developers.openai.com/codex/cli")!)
+    }.onChange(of: store.settings.codexExecutablePath) { _, _ in invalidate() }
+      .onChange(of: store.settings.codexHomePath) { _, _ in invalidate() }.onDisappear { request.cancel() }
+  }
+  private func invalidate() { request.cancel(); detected = nil; login = .notChecked }
+  private func detect() {
+    invalidate()
+    let path = store.settings.codexExecutablePath, home = store.settings.codexHomePath
+    request.start { ticket in
+      let executable = try await AgentExecutable.detect(explicitPath: path, environment: AgentEnvironment(codexHome: home))
+      guard request.current(ticket), store.settings.codexExecutablePath == path, store.settings.codexHomePath == home else { return }
+      detected = executable
+    }
+  }
+}
+
+struct CodexEnvironmentSummary: View {
+  let environment: AgentEnvironment
+  @EnvironmentObject var store: AppStore
+  var body: some View {
+    Text(environment.customHome ? store.text("Codex Home: explicit GitPier setting", "Codex Home：GitPier 显式设置") : environment.inheritedCodexHome ? store.text("Codex Home: inherited CODEX_HOME", "Codex Home：继承 CODEX_HOME") : store.text("Codex Home: CLI default (CODEX_HOME is not inherited)", "Codex Home：CLI 默认值（未继承 CODEX_HOME）"))
+      .font(.caption).foregroundStyle(.secondary)
+  }
+}
+struct CodexLoginSummary: View {
+  let status: AgentLoginStatus
+  @EnvironmentObject var store: AppStore
+  private var title: String {
+    switch status {
+    case .notChecked: store.text("Installed · login not checked", "已安装 · 尚未检查登录")
+    case .loggedIn: store.text("Logged in · CLI credentials available", "已登录 · CLI 凭证可用")
+    case .loginRequired: store.text("Login required. Run codex login in a terminal with the same Codex Home, using the official login guide.", "需要登录。请按官方指南在使用相同 Codex Home 的终端运行 codex login。")
+    case .unconfirmed(.timedOut): store.text("Login status unconfirmed · check timed out", "登录状态无法确认 · 检查超时")
+    case .unconfirmed(.outputLimit): store.text("Login status unconfirmed · CLI output exceeded the limit", "登录状态无法确认 · CLI 输出超限")
+    case .unconfirmed(.executionFailed): store.text("Login status unconfirmed · CLI execution failed or this version does not support the check", "登录状态无法确认 · CLI 执行失败或此版本不支持检查")
+    }
+  }
+  var body: some View {
+    VStack(alignment: .leading, spacing: 3) {
+      Text(title).font(.caption)
+      if status == .loggedIn { Text(store.text("This does not verify network access, account permissions or model calls.", "这不代表网络、账号权限或模型调用已通过验证。")).font(.caption).foregroundStyle(.secondary) }
     }
   }
 }

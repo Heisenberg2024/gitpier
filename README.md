@@ -97,7 +97,7 @@ The [contextual workflow assistant](docs/context-workflow.md) lives in a compact
 
 ## Task Workspaces — v1.8.0 development
 
-The [task workspace workflow](docs/task-workspaces.md) adds independent task worktrees, local baselines, explicit review and metadata-only archive. An optional installed Codex CLI starts only after confirmation in the selected worktree's existing PTY. Review includes both agent-created commits and Index/working changes. External URL requests now require confirmation before adding an unknown repository. This development version has not been published.
+The [task workspace workflow](docs/task-workspaces.md) adds independent task worktrees, local baselines, explicit review and metadata-only archive. An optional installed Codex CLI starts only after confirmation in the selected worktree's existing PTY. Review includes both agent-created commits and Index/working changes. External URL requests now require confirmation before adding an unknown repository. This development version has not been published. Creation failures retain recoverable registration records. Optional login checks reuse the CLI environment without reading credentials; an advanced Codex Home setting supports Finder launches.
 
 ## Screenshots
 

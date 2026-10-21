@@ -221,5 +221,9 @@
   "Codex CLI Not Installed. Choose an installed executable or see the official installation guide.": "尚未安装 Codex CLI。请选择已安装的可执行文件，或查看官方安装指南。",
   "The selected Codex CLI path is not an accessible executable file.": "所选 Codex CLI 路径不是可访问的可执行文件。",
   "This executable did not report a supported Codex CLI identity and version.": "此可执行文件未报告受支持的 Codex CLI 身份和版本。",
-  "The Codex CLI executable changed. Detect it again before starting a session.": "Codex CLI 可执行文件已变化，请重新检测后再启动会话。"
+  "The Codex CLI executable changed. Detect it again before starting a session.": "Codex CLI 可执行文件已变化，请重新检测后再启动会话。",
+  "The worktree was created, but registration did not finish.": "工作树已创建，但登记尚未完成。",
+  "Git worktree creation did not finish; a directory or branch may remain.": "Git 工作树创建未完成；目录或分支可能已保留。",
+  "Open Worktrees to inspect it. Resume a saved creation record when available, or associate the existing worktree without granting ownership. Files and branches have been preserved.": "请打开工作树检查。有已保存的创建记录时可继续登记，或以外部工作树关联且不授予所有权。文件和分支均已保留。",
+  "Choose an existing absolute Codex Home directory without symbolic links or parent traversal. Leave it empty to inherit CODEX_HOME or use the CLI default.": "请选择已存在、无符号链接或父级跳转的 Codex Home 绝对目录。留空将继承 CODEX_HOME 或遵循 CLI 默认值。"
 }

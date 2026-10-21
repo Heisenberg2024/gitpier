@@ -180,6 +180,18 @@ import UserNotifications
     }
     do { try persistence.save(configuration) } catch { self.error = error.localizedDescription }
   }
+  /// Task creation must observe this write's result before retiring its recovery record.
+  func persistTaskWorktreeOwnership(_ ownership: WorktreeOwnership) throws {
+    guard canSave else { throw TaskWorkspaceError.corrupt }
+    if configuration.ownedWorktrees.contains(ownership) { return }
+    var updated = configuration
+    updated.ownedWorktrees.removeAll { $0.gitDirectory == ownership.gitDirectory }
+    updated.ownedWorktrees.append(ownership)
+    updated.selectedRepository = selectedID
+    try persistence.save(updated)
+    configuration = updated
+    workspace.sync()
+  }
   func saveSoon() {
     pendingSave?.cancel()
     pendingSave = Task { [weak self] in

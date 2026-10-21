@@ -2,6 +2,10 @@
 
 ## Task Workspaces (v1.8.0 development)
 
+Creation adds a private write-ahead reservation in the existing task store. Original filesystem identities are captured before the Git ownership marker; the pending record remains until task and application ownership writes both succeed. Explicit recovery verifies the original binding, not just a path/marker. Probes, login status and PTY use one in-memory `AgentEnvironment`; authentication remains exclusively CLI-owned. Review requests coalesce only while in flight, with bounded descriptor reads under `WorkspaceOperationBudget`; completed observations are never an mtime-based validity cache.
+
+简体中文：创建先在原任务存储中写入私有预留，标记前保存原文件系统身份，任务与应用所有权均写入后才结束登记；恢复验证原绑定，不单凭路径/标记。检测、登录及 PTY 共用内存环境，认证始终归 CLI。审查只合并执行中的请求，描述符读取受共享预算约束，不以 mtime 缓存认证后续内容。
+
 `TaskWorkspace` binds a repository UUID, immutable local baseline, branch and original worktree receipt to device/inode identities. `TaskWorkspaceStore` reuses private descriptor-relative IO for bounded versioned metadata; `TaskWorkspaceManager` owns task observations and live PTY links. All Git commands stay in `GitService.swift` and the original worktree/common queues. The Tasks subview reuses existing comparison, commit, editor and terminal workflows; no second Git engine or terminal renderer is introduced. Task review receipts contain only an opaque bounded snapshot fingerprint and timestamp, without test-success inference. See [storage, recovery and lifecycle](task-workspaces.md).
 
 `AgentExecutable` validates a bounded version/help probe and executable identity. Confirmed launches use direct SwiftTerm executable/argv with the task directory, without managed credential injection or shell-interpolated prompts. PTY termination checks PID start identity and awaits attached-session cleanup; quit can cancel. External URL repository registration requires user consent and identity revalidation, with no trusted-CLI assertion. OAuth routing is unchanged.

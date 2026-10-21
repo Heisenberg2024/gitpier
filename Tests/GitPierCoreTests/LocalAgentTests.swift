@@ -9,9 +9,9 @@ final class LocalAgentTests: XCTestCase {
     try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
   }
   override func tearDownWithError() throws { try? FileManager.default.removeItem(at: root) }
-  func executable(_ body: String, name: String = "codex") throws -> URL {
+  func executable(_ body: String, name: String = "codex", combinedHelp: Bool = true) throws -> URL {
     let file = root.appendingPathComponent(name)
-    let help = "if [ \"$1\" = --help ]; then printf '%s\\n' '--no-daemon --sandbox workspace-write --ask-for-approval on-request'; exit 0; fi\n"
+    let help = "if [ \"$1\" = --help ]" + (combinedHelp ? " || [ \"$6\" = --help ]" : "") + "; then printf '%s\\n' '--no-daemon --sandbox workspace-write --ask-for-approval on-request'; exit 0; fi\n"
     try Data(("#!/bin/sh\n" + help + body + "\n").utf8).write(to: file)
     XCTAssertEqual(chmod(file.path, 0o700), 0); return file
   }
@@ -21,7 +21,7 @@ final class LocalAgentTests: XCTestCase {
       XCTAssertNil(AgentExecutable.parseVersion(value))
     }
   }
-  func testExplicitExecutableProbeUsesOnlyVersionArgument() async throws {
+  func testExplicitExecutableProbeUsesVersionAndSafeParserArguments() async throws {
     let file = try executable("[ \"$#\" = 1 ] && [ \"$1\" = --version ] || exit 2\nprintf 'codex-cli 0.163.0\\n'")
     let detected = try await AgentExecutable.detect(explicitPath: file.path)
     XCTAssertEqual(detected.path, file.path); XCTAssertEqual(detected.version, "codex-cli 0.163.0")
@@ -54,5 +54,10 @@ final class LocalAgentTests: XCTestCase {
     try Data("#!/bin/sh\nprintf 'codex-cli 0.1.0\\n'\n".utf8).write(to: file)
     XCTAssertEqual(chmod(file.path, 0o700), 0)
     do { _ = try await AgentExecutable.detect(explicitPath: file.path); XCTFail("Missing supported interactive options") } catch LocalAgentError.invalidVersion {}
+  }
+  func testHelpKeywordsDoNotProveSafeArgumentsCanBeCombined() async throws {
+    let file = try executable("[ \"$1\" = --version ] && { printf 'codex-cli 1.0.0\\n'; exit 0; }; exit 2", combinedHelp: false)
+    do { _ = try await AgentExecutable.detect(explicitPath: file.path); XCTFail("Reject a CLI whose parser refuses the actual safe launch combination") }
+    catch LocalAgentError.invalidVersion {}
   }
 }

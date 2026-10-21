@@ -2,6 +2,10 @@
 
 ## 1.8.0 — Unreleased (30)
 
+- Preserve partial Worktree creation through private registration intents, original filesystem identity checks and explicit recovery; never delete user files or branches on failure. 使用私有待登记记录、原文件系统身份核验及显式恢复保留部分创建结果，失败不删除用户文件或分支。
+- Add cancellable user-requested Codex login checks, shared probe/PTY environments, optional Codex Home and Finder diagnostics; discard authentication output and retain CLI-owned credential handling. 新增可取消的主动 Codex 登录检查、检测/PTY 共享环境、可选 Codex Home 与 Finder 诊断，丢弃认证输出，凭证处理仍归 CLI。
+- Validate the full safe CLI argument combination and coalesce concurrent task review scans within the shared resource budget; routine list refreshes stay lightweight and never certify stale content. 核对完整安全 CLI 参数组合，在共享预算内合并并发任务审查；列表保持轻量且不将旧内容误标为当前已审查。
+
 - Add native Task Workspaces within Worktrees, private versioned task identity/recovery, existing-worktree association and metadata-only archive. 新增工作树内的原生任务工作空间、私有版本化身份/恢复、已有工作树关联及仅元数据归档。
 - Integrate an optional installed Codex CLI with explicit executable detection and launch confirmation, existing SwiftTerm PTY lifecycle, verified attached-process cleanup and independent Agent Exited states. 可选集成已安装 Codex CLI，主动检测与启动确认、复用既有 PTY、核验关联进程清理，独立展示 Agent 已退出。
 - Review task baseline/HEAD commits separately from staged, unstaged, untracked and conflict changes; preserve partial staging and record only explicit reviewed-snapshot receipts. 基准/HEAD 提交与 Index/工作树分开审查，保留部分暂存，仅显式记录已审查快照。

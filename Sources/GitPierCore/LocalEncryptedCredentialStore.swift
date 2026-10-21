@@ -145,6 +145,8 @@ struct HostingPrivateDirectory {
   func names() -> [String] {
     guard let directory = fdopendir(dup(fd)) else { return [] }
     defer { closedir(directory) }
+    // dup shares the directory cursor: every enumeration must start at its beginning.
+    rewinddir(directory)
     var result: [String] = []
     while let entry = readdir(directory) {
       let name = withUnsafePointer(to: &entry.pointee.d_name) {

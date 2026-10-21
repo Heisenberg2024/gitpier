@@ -2,7 +2,7 @@
 
 ## v1.8.0 development
 
-Task Workspaces and optional local Codex integration are under development in build 30. Use the [task guide](task-workspaces.md) for exact storage, ownership, process and review boundaries. Existing v1.7.0 evidence below is historical, not validation of this new source. Full Core/Universal/DMG/update validation and independent review must be recorded for the final inputs before release; no publication is authorized by a local build.
+Task Workspaces and optional local Codex integration are under development in build 30. Incremental hardening covers partial-creation recovery, explicit CLI login checks/environment inheritance and budgeted concurrent review. Creation fault tests use real temporary Git repositories plus controlled command/filesystem failures; authentication tests use synthetic executables and never real credential files. Record real CLI/account results separately, with explicit authorization and no credential copies. Use the [task guide](task-workspaces.md) for exact storage, ownership, process and review boundaries. Existing v1.7.0 evidence below is historical, not validation of this new source. Full Core/Universal/DMG/update validation and independent review must be recorded for the final inputs before release; no publication is authorized by a local build.
 
 ```sh
 Scripts/test.sh --filter 'TaskWorkspaceTests|LocalAgentTests|OperationCenterTests'
@@ -11,7 +11,11 @@ GITPIER_UI_ACCEPTANCE_SCOPE=task-workspaces Scripts/ui-acceptance.sh .cache/v180
 
 The new native scope uses temporary repositories and a local executable fixture, not a real Codex conversation. It verifies PTY cwd/arguments, session/page lifetime, partial Index preservation, archive/recovery, process cleanup and language/theme compositor captures. Keep real CLI detection, unauthenticated CLI startup, authenticated model execution, UI interaction and fixture evidence separate.
 
+For an explicitly authorized existing-login test, the isolated `Scripts/workspace-acceptance.sh task-workspaces` runner additionally accepts `GITPIER_TASK_ACCEPTANCE_HOLD=1` and `GITPIER_TASK_ACCEPTANCE_REAL_CODEX` set to the real absolute executable path. It launches the normal SwiftTerm pipeline without copying credentials. Inspect the temporary window, then create `finish-gui` in the selected output directory. `GITPIER_TASK_ACCEPTANCE_FAIL_AFTER_REAL_START=1` injects a failure after spawn; expect a nonzero test exit and a verified cleanup record. Unknown cleanup retains the host for inspection and an explicit `retry-real-cleanup` marker. Never accept saved folder trust if the test scope forbids Codex configuration changes.
+
 简体中文：v1.8.0（30）仍在开发，下方v1.7发布证据不代表新源码验收；最终输入需单独完成Core、Universal/DMG/升级及独立审核。专项原生验收使用临时仓库和可执行夹具，不是真实Codex对话；真实版本检测、未认证启动、认证模型执行、实际UI操作和夹具证据必须分别记录。
+
+明确授权复用登录后，隔离 runner 可设置上述 HOLD 与真实可执行路径变量，复用正常 SwiftTerm 管线且不复制凭证；验收后在输出目录创建 finish-gui。启动后故障注入应以非零退出并留下已核验清理记录；无法核验则保留宿主，等显式 retry-real-cleanup。禁止改 Codex 配置的测试不得接受保存目录信任。
 
 ## v1.7.0 publication — 2026-10-19
 

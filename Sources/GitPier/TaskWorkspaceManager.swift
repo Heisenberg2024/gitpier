@@ -12,6 +12,7 @@ struct TaskWorktreeRemovalRoute: Equatable {
   unowned let store: AppStore
   let persistence: TaskWorkspaceStore
   @Published private(set) var tasks: [TaskWorkspace] = []
+  @Published private(set) var pendingCreations: [TaskWorkspaceCreation] = []
   @Published private(set) var problem: String?
   @Published private(set) var ready = false
   @Published private(set) var busy: Set<UUID> = []
@@ -43,7 +44,7 @@ struct TaskWorktreeRemovalRoute: Equatable {
     if let restoring { await restoring.value; return }
     guard !ready else { return }
     let work = Task { @MainActor in
-      do { tasks = try await persistence.recover(); problem = nil; ready = true }
+      do { tasks = try await persistence.recover(); pendingCreations = try await persistence.pendingCreations(); problem = nil; ready = true }
       catch { problem = error.localizedDescription }
     }
     restoring = work; await work.value; restoring = nil
@@ -51,12 +52,21 @@ struct TaskWorktreeRemovalRoute: Equatable {
   func save(_ task: TaskWorkspace, replacing previous: TaskWorkspace?) async throws {
     guard ready, problem == nil else { throw TaskWorkspaceError.corrupt }
     try await persistence.save(task, replacing: previous)
+    publish(task)
+  }
+  private func publish(_ task: TaskWorkspace) {
     tasks.removeAll { $0.id == task.id }; tasks.append(task); tasks.sort { $0.createdAt > $1.createdAt }
   }
   func register(_ task: TaskWorkspace) async throws {
+    guard ready, problem == nil else { throw TaskWorkspaceError.corrupt }
     try store.requireWorktreeAvailable(task.path)
-    if task.binding.managed { store.rememberWorktree(task.binding.ownership) }
-    try await save(task, replacing: nil)
+    let pending = try await persistence.pendingCreations().first { $0.id == task.id }
+    // Keep the original binding until both independent files have committed successfully.
+    try await persistence.save(task, replacing: nil, retainingCreation: true)
+    if task.binding.managed { try store.persistTaskWorktreeOwnership(task.binding.ownership) }
+    if let pending { try await persistence.forgetCreation(pending) }
+    pendingCreations = try await persistence.pendingCreations()
+    publish(task)
     selectedID = task.id
   }
   func create(repositoryID: UUID, action: () async throws -> TaskWorkspace) async throws -> TaskWorkspace {
@@ -67,13 +77,29 @@ struct TaskWorktreeRemovalRoute: Equatable {
     defer { creatingCount -= 1; store.objectWillChange.send() }
     do {
       let task = try await action()
-      try await register(task)
+      do { try await register(task) }
+      catch { throw WorktreeCreationFailure(path: task.path, stage: .taskRegistration, reason: error.localizedDescription) }
       store.operations.linkTask(operation, taskID: task.id); store.operations.update(operation, state: .succeeded)
       return task
     } catch {
+      do { pendingCreations = try await persistence.pendingCreations() }
+      catch { problem = error.localizedDescription }
       store.operations.update(operation, state: error is CancellationError ? .cancelled : .failed)
       throw error
     }
+  }
+  func resumeCreation(_ creation: TaskWorkspaceCreation) async throws {
+    guard ready, problem == nil, pendingCreations.contains(creation), !busy.contains(creation.id) else { throw TaskWorkspaceError.changed }
+    try store.requireWorktreeAvailable(creation.path)
+    busy.insert(creation.id); defer { finishMutation(creation.id) }
+    let service = await GitServiceRegistry.shared.service(for: URL(fileURLWithPath: creation.repositoryRoot), gitPath: store.settings.gitPath)
+    let task = try await service.resumeTaskWorkspaceCreation(creation)
+    try await register(task)
+  }
+  func forgetCreation(_ creation: TaskWorkspaceCreation) async throws {
+    guard !busy.contains(creation.id), !isActive(path: creation.path) else { throw TaskWorkspaceError.activeSession }
+    try await persistence.forgetCreation(creation)
+    pendingCreations = try await persistence.pendingCreations()
   }
   func archive(_ id: UUID, archived: Bool) async throws {
     guard let old = task(id), !busy.contains(id), !isActive(path: old.path) else { throw TaskWorkspaceError.activeSession }
@@ -88,28 +114,27 @@ struct TaskWorktreeRemovalRoute: Equatable {
   }
   func snapshot(_ id: UUID) async throws -> TaskWorkspaceSnapshot {
     guard let task = task(id) else { throw TaskWorkspaceError.changed }
-    let snapshot = try await git(task).taskWorkspaceSnapshot(task)
+    reviewCurrent.remove(id)
+    let service = await git(task)
+    let snapshot = try await WorkspaceOperationBudget.shared.perform { try await service.taskWorkspaceSnapshot(task) }
     guard self.task(id) == task else { throw TaskWorkspaceError.changed }
     summaries[id] = snapshot.status; observationProblems[id] = nil
-    if let review = task.review {
-      let current = try? await git(task).taskWorkspaceReview(task)
+    if let review = task.review, task.agent?.state.active != true {
+      let current = try? await service.taskWorkspaceReview(task)
       guard self.task(id) == task else { throw TaskWorkspaceError.changed }
-      if current?.fingerprint == review.fingerprint { reviewCurrent.insert(id) } else { reviewCurrent.remove(id) }
+      if current?.head == snapshot.head, current?.fingerprint == review.fingerprint { reviewCurrent.insert(id) }
     }
     return snapshot
   }
   func observe(_ id: UUID) async {
     guard let task = task(id) else { return }
+    // Routine list observations are lightweight. A reviewed badge requires a new detail scan.
+    reviewCurrent.remove(id)
     do {
       let service = await git(task)
       let state = try await WorkspaceOperationBudget.shared.perform { try await service.taskWorkspaceSummary(task) }
       guard self.task(id) == task, !Task.isCancelled else { return }
       summaries[id] = state; observationProblems[id] = nil
-      if let review = task.review {
-        let current = try? await service.taskWorkspaceReview(task)
-        guard self.task(id) == task, !Task.isCancelled else { return }
-        if current?.fingerprint == review.fingerprint { reviewCurrent.insert(id) } else { reviewCurrent.remove(id) }
-      }
     } catch {
       guard self.task(id) == task, !Task.isCancelled else { return }
       summaries[id] = nil; observationProblems[id] = error.localizedDescription
@@ -178,6 +203,7 @@ struct TaskWorktreeRemovalRoute: Equatable {
   }
   func launch(_ id: UUID, configuration: AgentLaunchConfiguration) async throws {
     guard let old = task(id), !old.archived, !busy.contains(id), !isActive(path: old.path), configuration.taskID == id else { throw TaskWorkspaceError.activeSession }
+    guard !pendingCreations.contains(where: { $0.path == old.path }) else { throw TaskWorkspaceError.changed }
     try store.requireWorktreeAvailable(old.path)
     busy.insert(id); defer { finishMutation(id) }
     let selection = store.selectedID
@@ -291,6 +317,7 @@ struct TaskWorktreeRemovalRoute: Equatable {
   func validateSessions(_ path: String) throws {
     guard ready, problem == nil else { throw TaskWorkspaceError.inUse }
     guard !isActive(path: path), !tasks.contains(where: { $0.path == path && busy.contains($0.id) }) else { throw TaskWorkspaceError.activeSession }
+    guard !pendingCreations.contains(where: { $0.path == path }) else { throw TaskWorkspaceError.changed }
   }
   func validateRemoval(_ path: String) throws {
     try validateSessions(path)

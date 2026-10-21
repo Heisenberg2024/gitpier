@@ -4,6 +4,16 @@ import Darwin
 
 /// One shared actor per canonical working tree. A queue spans awaits, unlike actor isolation alone.
 public actor GitService {
+  private struct TaskReviewFlight {
+    let record: TaskWorkspace
+    let token: UUID
+    let work: Task<Void, Never>
+    var waiters: [UUID: CheckedContinuation<TaskWorkspaceReview, Error>]
+  }
+  private var taskReviewFlights: [UUID: TaskReviewFlight] = [:]
+  // Deterministic fault injection observes completed chunks; absent in application use.
+  private var taskReviewChunkObserver: (@Sendable () -> Void)?
+  func observeTaskReviewChunks(_ observer: (@Sendable () -> Void)?) { taskReviewChunkObserver = observer }
   public nonisolated let root: URL
   private let runner: ProcessRunner
   private var gitPath: String
@@ -2803,7 +2813,8 @@ extension GitService {
     }
     return WorktreeOwnership(path: ProfessionalWorkflowParser.canonicalPath(path), commonDirectory: common.path, gitDirectory: directory.path, creationID: creationID)
   }
-  public func createWorktree(destination: URL, branch: String, newBranch: Bool = false, startAt: String = "HEAD") async throws -> WorktreeOwnership {
+  public func createWorktree(destination: URL, branch: String, newBranch: Bool = false, startAt: String = "HEAD",
+    onCreated: (@Sendable (WorktreeOwnership) async throws -> Void)? = nil) async throws -> WorktreeOwnership {
     try InputValidation.reference(branch)
     let source = try await validate(), sourceCommon = try await commonDirectory()
     let sourceIdentity = try TaskDirectoryIdentity.read(source.path)
@@ -2849,14 +2860,36 @@ extension GitService {
       guard try TaskDirectoryIdentity.read(target.deletingLastPathComponent().path) == parentIdentity else { throw TaskWorkspaceError.changed }
       guard try TaskDirectoryIdentity.read(source.path) == sourceIdentity,
         try TaskDirectoryIdentity.read(sourceCommon.path) == sourceCommonIdentity else { throw TaskWorkspaceError.changed }
-      try await read(["worktree", "add"] + (newBranch ? ["-b", branch] : []) + ["--", canonicalTarget, base], environment: ["GIT_NO_LAZY_FETCH": "1"])
-      let identity = try await linkedOwnership(path: canonicalTarget)
-      let creationID = UUID().uuidString
-      let marker = URL(fileURLWithPath: identity.gitDirectory).appendingPathComponent("gitpier-creation-id")
-      try Data(creationID.utf8).write(to: marker, options: .withoutOverwriting)
-      try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: marker.path)
-      return WorktreeOwnership(path: identity.path, commonDirectory: identity.commonDirectory, gitDirectory: identity.gitDirectory, creationID: creationID)
+      var stage = WorktreeCreationFailure.Stage.gitCommand
+      do {
+        try await read(["worktree", "add"] + (newBranch ? ["-b", branch] : []) + ["--", canonicalTarget, base], environment: ["GIT_NO_LAZY_FETCH": "1"])
+        stage = .ownershipMarker
+        let identity = try await linkedOwnership(path: canonicalTarget)
+        let ownership = WorktreeOwnership(path: identity.path, commonDirectory: identity.commonDirectory, gitDirectory: identity.gitDirectory, creationID: UUID().uuidString)
+        let binding = try TaskWorkspaceBinding(ownership: ownership, managed: true)
+        // Persist original dev/inode identities before writing the Git marker.
+        try await onCreated?(ownership)
+        try Task.checkCancellation()
+        try binding.validateDirectories()
+        try writeCreationMarker(ownership)
+        return ownership
+      } catch {
+        throw WorktreeCreationFailure(path: canonicalTarget, stage: stage, reason: error.localizedDescription)
+      }
     }
+  }
+  private func writeCreationMarker(_ ownership: WorktreeOwnership) throws {
+    guard let id = ownership.creationID else { throw TaskWorkspaceError.invalid }
+    let directory = open(ownership.gitDirectory, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
+    guard directory >= 0 else { throw TaskWorkspaceError.changed }
+    defer { close(directory) }
+    let file = openat(directory, "gitpier-creation-id", O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0o600)
+    guard file >= 0 else { throw TaskWorkspaceError.changed }
+    defer { close(file) }
+    let data = Data(id.utf8)
+    guard fchmod(file, 0o600) == 0, data.withUnsafeBytes({ Darwin.write(file, $0.baseAddress, $0.count) }) == data.count,
+      fsync(file) == 0 else { throw TaskWorkspaceError.corrupt }
+    _ = fsync(directory)
   }
   private func currentWorktree(_ expected: GitWorktree) async throws -> GitWorktree {
     guard let current = try await worktrees(includeStatus: false).first(where: { $0.path == expected.path }), current == GitWorktree(
@@ -2914,17 +2947,57 @@ extension GitService {
   /// Task creation reuses the normal worktree lifecycle and its ownership marker.
   /// The immutable local baseline is resolved before creation; this never fetches.
   public func createTaskWorkspace(name: String, savedDescription: String? = nil, repositoryID: UUID,
-    destination: URL, branch: String, startAt: String = "HEAD") async throws -> TaskWorkspace {
+    destination: URL, branch: String, startAt: String = "HEAD", registration: TaskWorkspaceStore? = nil) async throws -> TaskWorkspace {
     guard !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, name.utf8.count <= 240,
       !name.utf8.contains(0), savedDescription.map({ $0.utf8.count <= 4096 && !$0.utf8.contains(0) }) ?? true
     else { throw TaskWorkspaceError.invalid }
     try await requireLocalWorkspaceQueries()
     let repository = try await validate()
     let base = try await localComparisonCommit(startAt)
-    let ownership = try await createWorktree(destination: destination, branch: branch, newBranch: true, startAt: base)
-    return try TaskWorkspace(name: name, savedDescription: savedDescription, repositoryID: repositoryID,
-      repositoryRoot: repository.path, binding: TaskWorkspaceBinding(ownership: ownership, managed: true),
-      branch: "refs/heads/" + branch, baseCommit: base)
+    let common = try await commonDirectory()
+    let creation = TaskWorkspaceCreation(id: UUID(), name: name.trimmingCharacters(in: .whitespacesAndNewlines), savedDescription: savedDescription,
+      repositoryID: repositoryID, repositoryRoot: repository.path, path: ProfessionalWorkflowParser.canonicalPath(destination.path),
+      branch: "refs/heads/" + branch, baseCommit: base, repositoryIdentity: try .read(repository.path),
+      commonDirectory: common.path, commonIdentity: try .read(common.path), createdAt: Date())
+    try creation.validate()
+    try Task.checkCancellation()
+    try await registration?.beginCreation(creation)
+    @Sendable func workspace(_ ownership: WorktreeOwnership) throws -> TaskWorkspace {
+      try TaskWorkspace(id: creation.id, name: creation.name, savedDescription: savedDescription, repositoryID: repositoryID,
+        repositoryRoot: repository.path, binding: TaskWorkspaceBinding(ownership: ownership, managed: true),
+        branch: creation.branch, baseCommit: base, now: creation.createdAt)
+    }
+    let ownership = try await createWorktree(destination: destination, branch: branch, newBranch: true, startAt: base,
+      onCreated: { ownership in if let registration { try await registration.captureCreation(workspace(ownership), replacing: creation) } })
+    return try workspace(ownership)
+  }
+  /// Explicit recovery only: a private original binding, Git family and inode identities must all agree.
+  public func resumeTaskWorkspaceCreation(_ creation: TaskWorkspaceCreation) async throws -> TaskWorkspace {
+    try creation.validate()
+    guard let task = creation.workspace, root.path == creation.repositoryRoot else { throw TaskWorkspaceError.unavailable }
+    return try await lifecycleWrite {
+      try Task.checkCancellation()
+      try task.binding.validateDirectories()
+      guard try await validate().path == creation.repositoryRoot,
+        try TaskDirectoryIdentity.read(creation.repositoryRoot) == creation.repositoryIdentity,
+        try await commonDirectory().path == creation.commonDirectory,
+        try TaskDirectoryIdentity.read(creation.commonDirectory) == creation.commonIdentity,
+        let tree = try await worktrees(includeStatus: false).first(where: { $0.path == task.path }),
+        !tree.main, !tree.bare, !tree.missing, !tree.prunable, tree.branch == task.branch,
+        tree.head == task.baseCommit else { throw TaskWorkspaceError.changed }
+      let current = try await linkedOwnership(path: task.path), expected = task.binding.ownership
+      guard current.path == expected.path, current.commonDirectory == expected.commonDirectory,
+        current.gitDirectory == expected.gitDirectory else { throw TaskWorkspaceError.changed }
+      try task.binding.validateDirectories()
+      if current.creationID != expected.creationID {
+        let marker = URL(fileURLWithPath: expected.gitDirectory).appendingPathComponent("gitpier-creation-id")
+        var state = stat()
+        guard lstat(marker.path, &state) != 0, errno == ENOENT else { throw TaskWorkspaceError.changed }
+        try writeCreationMarker(expected)
+      }
+      try task.binding.validateDirectories()
+      return task
+    }
   }
   /// A receipt must be supplied by the original application registry. A marker alone grants nothing.
   public func associateTaskWorkspace(name: String, savedDescription: String? = nil, repositoryID: UUID,
@@ -2971,30 +3044,107 @@ extension GitService {
   }
   /// Explicit user review receipt; stores an opaque digest, never file contents or test claims.
   public func taskWorkspaceReview(_ task: TaskWorkspace) async throws -> TaskWorkspaceReview {
+    try Task.checkCancellation()
+    let waiter = UUID()
+    let review: TaskWorkspaceReview = try await withTaskCancellationHandler {
+      try await withCheckedThrowingContinuation { continuation in
+        guard !Task.isCancelled else { continuation.resume(throwing: CancellationError()); return }
+        if var existing = taskReviewFlights[task.id], existing.record == task {
+          existing.waiters[waiter] = continuation; taskReviewFlights[task.id] = existing
+        } else {
+          if let previous = taskReviewFlights.removeValue(forKey: task.id) {
+            previous.work.cancel()
+            for waiting in previous.waiters.values { waiting.resume(throwing: TaskWorkspaceError.changed) }
+          }
+          let token = UUID()
+          let work = Task {
+            let result: Result<TaskWorkspaceReview, Error>
+            do { result = .success(try await WorkspaceOperationBudget.shared.perform { try await self.computeTaskWorkspaceReview(task) }) }
+            catch { result = .failure(error) }
+            self.finishTaskReview(task.id, token: token, result: result)
+          }
+          taskReviewFlights[task.id] = TaskReviewFlight(record: task, token: token, work: work, waiters: [waiter: continuation])
+        }
+      }
+    } onCancel: { Task { await self.cancelTaskReview(task.id, waiter: waiter) } }
+    try Task.checkCancellation()
+    return review
+  }
+  private func cancelTaskReview(_ id: UUID, waiter: UUID) {
+    guard var flight = taskReviewFlights[id], let continuation = flight.waiters.removeValue(forKey: waiter) else { return }
+    continuation.resume(throwing: CancellationError())
+    if flight.waiters.isEmpty { taskReviewFlights[id] = nil; flight.work.cancel() }
+    else { taskReviewFlights[id] = flight }
+  }
+  private func finishTaskReview(_ id: UUID, token: UUID, result: Result<TaskWorkspaceReview, Error>) {
+    guard let flight = taskReviewFlights[id], flight.token == token else { return }
+    taskReviewFlights[id] = nil
+    for continuation in flight.waiters.values { continuation.resume(with: result) }
+  }
+  private func computeTaskWorkspaceReview(_ task: TaskWorkspace) async throws -> TaskWorkspaceReview {
     let state = try await taskWorkspaceSummary(task)
     guard state.operation == nil, !state.files.contains(where: \.isConflicted), state.files.count <= 200,
       let head = state.head else { throw TaskWorkspaceError.invalid }
-    let operation = try await reviewOperation()
+    let operation = try await reviewOperation(localOnly: true)
     var bytes = Data((task.id.uuidString + "\0" + task.baseCommit + "\0" + head + "\0").utf8)
     bytes.append(operation.indexFingerprint); bytes.append(operation.operationIdentity)
     var total: UInt64 = 0
     for path in Set(state.files.flatMap(\.paths)).sorted() {
-      let url = try conflictURL(path)
-      let attributes = try? FileManager.default.attributesOfItem(atPath: url.path)
-      if attributes?[.type] as? FileAttributeType == .typeRegular {
-        let limit: UInt64 = 64 * 1024 * 1024
-        let size = (attributes?[.size] as? NSNumber)?.uint64Value ?? limit + 1
-        guard size <= limit, total <= limit - size else { throw TaskWorkspaceError.capacity }
-        total += size
-      }
-      let working = try conflictWorkingFile(path).0
+      let (working, size) = try await taskReviewFile(path, remaining: 64 * 1024 * 1024 - total)
+      total += size
       // A gitlink/nested directory can change content without changing parent porcelain or HEAD.
       // Until recursive review is supported, it cannot produce a current review receipt.
       guard working.kind != .other else { throw TaskWorkspaceError.invalid }
       bytes.append(Data((path + "\0" + String(describing: working) + "\0").utf8))
     }
-    guard try await taskWorkspaceSummary(task) == state, try await reviewOperation() == operation else { throw TaskWorkspaceError.changed }
+    guard try await taskWorkspaceSummary(task) == state, try await reviewOperation(localOnly: true) == operation else { throw TaskWorkspaceError.changed }
     return TaskWorkspaceReview(head: head, fingerprint: SHA256.hash(data: bytes).map { String(format: "%02x", $0) }.joined())
+  }
+  /// Stream a bounded descriptor, without retaining editor contents or following a raced symlink.
+  private func taskReviewFile(_ path: String, remaining: UInt64) async throws -> (ConflictWorkingState, UInt64) {
+    let url = try conflictURL(path)
+    var before = stat()
+    if lstat(url.path, &before) != 0 {
+      guard errno == ENOENT else { throw TaskWorkspaceError.changed }
+      return (ConflictWorkingState(kind: .absent, digest: "", permissions: 0), 0)
+    }
+    let permissions = Int(before.st_mode & 0o7777)
+    if before.st_mode & S_IFMT == S_IFLNK {
+      let target = try FileManager.default.destinationOfSymbolicLink(atPath: url.path)
+      var after = stat()
+      guard lstat(url.path, &after) == 0, sameReviewFile(before, after) else { throw TaskWorkspaceError.changed }
+      return (ConflictWorkingState(kind: .symbolicLink, digest: target, permissions: permissions), 0)
+    }
+    guard before.st_mode & S_IFMT == S_IFREG else { throw TaskWorkspaceError.invalid }
+    guard before.st_size >= 0, UInt64(before.st_size) <= remaining else { throw TaskWorkspaceError.capacity }
+    let file = open(url.path, O_RDONLY | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC)
+    guard file >= 0 else { throw TaskWorkspaceError.changed }
+    defer { close(file) }
+    var opened = stat()
+    guard fstat(file, &opened) == 0, sameReviewFile(before, opened) else { throw TaskWorkspaceError.changed }
+    var digest = SHA256(), count: UInt64 = 0
+    var buffer = [UInt8](repeating: 0, count: 64 * 1024)
+    while true {
+      // Let cancellation/subscriber changes enter this actor between bounded reads.
+      await Task.yield()
+      try Task.checkCancellation()
+      let n = Darwin.read(file, &buffer, buffer.count)
+      if n < 0, errno == EINTR { continue }
+      guard n >= 0 else { throw TaskWorkspaceError.changed }
+      if n == 0 { break }
+      guard UInt64(n) <= remaining - count else { throw TaskWorkspaceError.capacity }
+      count += UInt64(n); digest.update(data: Data(buffer.prefix(n)))
+      taskReviewChunkObserver?()
+    }
+    var after = stat(), atPath = stat()
+    guard fstat(file, &after) == 0, lstat(url.path, &atPath) == 0,
+      sameReviewFile(before, after), sameReviewFile(before, atPath), count == UInt64(before.st_size) else { throw TaskWorkspaceError.changed }
+    return (ConflictWorkingState(kind: .regular, digest: digest.finalize().map { String(format: "%02x", $0) }.joined(), permissions: permissions), count)
+  }
+  private func sameReviewFile(_ lhs: stat, _ rhs: stat) -> Bool {
+    lhs.st_dev == rhs.st_dev && lhs.st_ino == rhs.st_ino && lhs.st_mode == rhs.st_mode && lhs.st_size == rhs.st_size
+      && lhs.st_mtimespec.tv_sec == rhs.st_mtimespec.tv_sec && lhs.st_mtimespec.tv_nsec == rhs.st_mtimespec.tv_nsec
+      && lhs.st_ctimespec.tv_sec == rhs.st_ctimespec.tv_sec && lhs.st_ctimespec.tv_nsec == rhs.st_ctimespec.tv_nsec
   }
   /// Called only after the existing reviewed worktree-repair workflow succeeds.
   public func relocateTaskWorkspace(_ task: TaskWorkspace, ownership: WorktreeOwnership) async throws -> TaskWorkspace {

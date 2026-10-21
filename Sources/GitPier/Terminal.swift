@@ -158,11 +158,7 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable,
       do { try launch.executable.validate() } catch {
         exited = true; reportAgentExit(nil); return
       }
-      var env = ProcessInfo.processInfo.environment
-      for key in Array(env.keys) where key.hasPrefix("GITPIER_") || key.hasPrefix("GIT_CONFIG_")
-        || ["GIT_INDEX_FILE", "GIT_DIR", "GIT_WORK_TREE", "GIT_ASKPASS", "SSH_ASKPASS"].contains(key) { env[key] = nil }
-      env["TERM"] = "xterm-256color"; env["COLORTERM"] = "truecolor"; env["TERM_PROGRAM"] = "GitPier"
-      env["PATH"] = env["PATH"] ?? "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+      let env = launch.executable.environment.values
       exited = false; exitCode = nil
       var gate: [Int32] = [-1, -1]
       guard pipe(&gate) == 0 else { exited = true; reportAgentExit(126); return }

@@ -2,7 +2,7 @@ import Foundation
 
 @MainActor func localizedUI(_ english: String) -> String {
   guard AppStore.shared.settings.language == .simplifiedChinese else { return english }
-  return UILocalization.chinese[english] ?? english
+  return UILocalization.chinese[english] ?? english.components(separatedBy: "\n").map { UILocalization.chinese[$0] ?? $0 }.joined(separator: "\n")
 }
 
 enum UILocalization {

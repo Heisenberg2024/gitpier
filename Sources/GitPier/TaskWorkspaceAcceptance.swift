@@ -23,10 +23,44 @@ import PTYSupport
     await store.addRepository(root)
     guard let primary = store.current else { throw TaskWorkspaceError.unavailable }
     let manager = store.taskWorkspaces, git = await primary.git()
+    let recovering = try await git.createTaskWorkspace(name: "Recover registration", repositoryID: primary.record.id,
+      destination: directory.appendingPathComponent("recover-registration"), branch: "task/recover", registration: manager.persistence)
+    let metadataRoot = await manager.persistence.root
+    let blockedRecord = metadataRoot.appendingPathComponent(recovering.id.uuidString + ".json")
+    try FileManager.default.createDirectory(at: blockedRecord, withIntermediateDirectories: false)
+    do { try await manager.register(recovering); throw GitPierError.invalidInput("Registration fault did not fail") }
+    catch { guard !(error is GitPierError) else { throw error } }
+    try require(!store.configuration.ownedWorktrees.contains(recovering.binding.ownership) && !manager.tasks.contains(where: { $0.id == recovering.id }),
+      "Failed task persistence does not publish a task or grant application registry ownership")
+    try FileManager.default.removeItem(at: blockedRecord)
+    let pending = try await manager.persistence.pendingCreations()
+    let resumed = try await git.resumeTaskWorkspaceCreation(pending.first { $0.id == recovering.id }!)
+    try await manager.register(resumed)
+    try require(manager.tasks.filter { $0.id == recovering.id }.count == 1 && store.configuration.ownedWorktrees.contains(recovering.binding.ownership),
+      "Original creation identity resumes registration once and restores application ownership")
+    try stage("application registry persistence fault")
+    let registryTask = try await git.createTaskWorkspace(name: "Recover registry", repositoryID: primary.record.id,
+      destination: directory.appendingPathComponent("recover-registry"), branch: "task/registry", registration: manager.persistence)
+    do {
+      let backup = directory.appendingPathComponent("workspace-preserved.json")
+      try FileManager.default.moveItem(at: persistence.url, to: backup)
+      try FileManager.default.createDirectory(at: persistence.url, withIntermediateDirectories: false)
+      defer { try? FileManager.default.removeItem(at: persistence.url); try? FileManager.default.moveItem(at: backup, to: persistence.url) }
+      do {
+        _ = try await manager.create(repositoryID: primary.record.id) { registryTask }
+        throw GitPierError.invalidInput("Registry persistence failure was reported as success")
+      } catch let failure as WorktreeCreationFailure {
+        try require(failure.stage == .taskRegistration && failure.path == registryTask.path, "Application registry failure reports the created worktree and registration stage")
+      }
+      try require(!manager.tasks.contains(where: { $0.id == registryTask.id }) && !store.configuration.ownedWorktrees.contains(registryTask.binding.ownership)
+        && manager.pendingCreations.contains(where: { $0.id == registryTask.id }), "Pending identity survives until task and application registry persistence both succeed")
+    }
+    try await manager.resumeCreation(manager.pendingCreations.first { $0.id == registryTask.id }!)
+    try require(manager.tasks.filter { $0.id == registryTask.id }.count == 1, "Registry persistence failure can resume without duplicate task metadata")
     let task = try await git.createTaskWorkspace(name: "Build task workspace", savedDescription: "Private fixture description", repositoryID: primary.record.id,
-      destination: directory.appendingPathComponent("task-one"), branch: "task/one")
+      destination: directory.appendingPathComponent("task-one"), branch: "task/one", registration: manager.persistence)
     try await manager.register(task)
-    try require(manager.tasks.count == 1 && manager.ready, "Task created and registered without starting an agent")
+    try require(manager.tasks.count == 3 && manager.ready, "Task created and registered without starting an agent")
     try require(manager.active.isEmpty && primary.terminal.sessions.isEmpty, "No terminal or Codex process starts automatically")
     let child = await manager.git(task)
     try Data("committed task change\n".utf8).write(to: URL(fileURLWithPath: task.path).appendingPathComponent("task-commit.txt"))
@@ -48,7 +82,8 @@ import PTYSupport
     let script = #"""
     #!/bin/sh
     if [ "$1" = --version ]; then printf 'codex-cli 0.163.0\n'; exit 0; fi
-    if [ "$1" = --help ]; then printf '%s\n' '--no-daemon --sandbox workspace-write --ask-for-approval on-request'; exit 0; fi
+    if [ "$1" = --help ] || [ "$6" = --help ]; then printf '%s\n' '--no-daemon --sandbox workspace-write --ask-for-approval on-request'; exit 0; fi
+    if [ "$1" = login ] && [ "$2" = status ]; then printf 'Not logged in\n' >&2; exit 1; fi
     [ "$#" = 5 ] && [ "$1" = --no-daemon ] && [ "$2" = --sandbox ] && [ "$3" = workspace-write ] && [ "$4" = --ask-for-approval ] && [ "$5" = on-request ] || exit 23
     printf '%s\n' "$PWD" > agent-cwd.txt
     printf 'agent change\n' > agent-output.txt
@@ -64,6 +99,13 @@ import PTYSupport
     let executable = try await AgentExecutable.detect(explicitPath: program.path)
     let before = try await manager.snapshot(task.id)
     let launch = try AgentLaunchConfiguration(executable: executable, task: manager.task(task.id)!, snapshot: before)
+    let unverifiable = TerminalSession(root: task.path, number: 0, settings: store.settings, agentConfiguration: launch, autoStart: false)
+    let uncertainCleanup = await unverifiable.stopAgentAndWait()
+    try require(!uncertainCleanup && !unverifiable.exited, "Unverifiable process cleanup cannot publish exit or release the terminal lifecycle guard")
+    try await manager.markReviewed(task.id)
+    try require(manager.reviewCurrent.contains(task.id), "Explicit full content review publishes the current receipt")
+    await manager.observe(task.id)
+    try require(!manager.reviewCurrent.contains(task.id), "Lightweight list refresh invalidates review status without a repeated full content scan")
     try await manager.launch(task.id, configuration: launch)
     guard let model = store.current, let session = model.terminal.selected else { throw TaskWorkspaceError.unavailable }
     defer { session.close(); store.shutdown() }
@@ -88,6 +130,33 @@ import PTYSupport
     let host = NSHostingView(rootView: AnyView(EmptyView())); host.sizingOptions = []
     window.contentView = host; window.makeKeyAndOrderFront(nil); NSApp.activate(ignoringOtherApps: true)
     defer { host.rootView = AnyView(EmptyView()); window.close() }
+    try stage("cancel login check in launch sheet")
+    let slowLogin = directory.appendingPathComponent("codex-slow-login"), loginPID = directory.appendingPathComponent("login-check.pid")
+    let slowScript = """
+    #!/bin/sh
+    if [ "$1" = --version ]; then printf 'codex-cli 0.163.0\\n'; exit 0; fi
+    if [ "$1" = --help ] || [ "$6" = --help ]; then printf '%s\\n' '--no-daemon --sandbox workspace-write --ask-for-approval on-request'; exit 0; fi
+    if [ "$1" = login ] && [ "$2" = status ]; then printf '%s' "$$" > \(InputValidation.shellQuote(loginPID.path)); exec /bin/sleep 30; fi
+    exit 2
+    """
+    try Data(slowScript.utf8).write(to: slowLogin); try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: slowLogin.path)
+    let priorSettings = store.settings
+    var probeSettings = priorSettings; probeSettings.language = .english; probeSettings.codexExecutablePath = slowLogin.path; store.updateSettings(probeSettings)
+    host.rootView = AnyView(CodexLaunchSheet(taskID: recovering.id, manager: manager).environmentObject(store).modifier(AppAppearance(store: store)))
+    try await settle()
+    try require(try taskAcceptancePressButton("Detect", host: host, window: window), "Launch sheet exposes an enabled Detect action")
+    try await waitFor { workflowAccessibilityText(host).contains("Installed · login not checked") }
+    try require(try taskAcceptancePressButton("Check Login Status", host: host, window: window), "Launch sheet starts login checks only after explicit action")
+    try await waitFor { FileManager.default.fileExists(atPath: loginPID.path) }
+    try capture(host, to: output.appendingPathComponent("codex-login-checking.png"))
+    let cancelStarted = ProcessInfo.processInfo.systemUptime
+    try require(try taskAcceptancePressButton("Cancel", host: host, window: window), "Launch sheet keeps cancellation available during a slow login check")
+    let checkingPID = Int32(try String(contentsOf: loginPID, encoding: .utf8))!
+    try await waitFor { kill(checkingPID, 0) != 0 }
+    try require(ProcessInfo.processInfo.systemUptime - cancelStarted < 2.5, "Launch-sheet authentication cancellation stops the child before its timeout")
+    try require(!workflowAccessibilityText(host).contains("Login required") && workflowAccessibilityText(host).contains("Installed · login not checked"), "Cancelled authentication probes terminate and cannot publish late login results")
+    try capture(host, to: output.appendingPathComponent("codex-login-cancelled.png"))
+    host.rootView = AnyView(EmptyView()); store.updateSettings(priorSettings); try await settle()
     try stage("detail refresh after same-timestamp session transition")
     var detailSettings = store.settings; detailSettings.language = .english; store.updateSettings(detailSettings)
     host.rootView = AnyView(TaskWorkspaceDetail(taskID: task.id, manager: manager).environmentObject(store).modifier(AppAppearance(store: store)))
@@ -199,7 +268,7 @@ import PTYSupport
     let fastScript = #"""
     #!/bin/sh
     if [ "$1" = --version ]; then printf 'codex-cli 0.163.0\n'; exit 0; fi
-    if [ "$1" = --help ]; then printf '%s\n' '--no-daemon --sandbox workspace-write --ask-for-approval on-request'; exit 0; fi
+    if [ "$1" = --help ] || [ "$6" = --help ]; then printf '%s\n' '--no-daemon --sandbox workspace-write --ask-for-approval on-request'; exit 0; fi
     ( trap '' HUP INT TERM; exec /bin/sleep 60 ) </dev/null >/dev/null 2>&1 &
     printf '%s\n' "$!" > fast-child.pid
     exit 0
@@ -225,16 +294,81 @@ import PTYSupport
       "Task removal navigates to another family worktree and never attempts to remove its executing repository")
     store.taskRemovalRequest = nil
     if ProcessInfo.processInfo.environment["GITPIER_TASK_ACCEPTANCE_HOLD"] == "1" {
+      do {
       var settings = store.settings; settings.language = .english; settings.appearance = .light; settings.codexExecutablePath = program.path; store.updateSettings(settings)
-      host.rootView = AnyView(TaskWorkspacesView(model: model, manager: manager).environmentObject(store).modifier(AppAppearance(store: store)).environment(\.locale, Locale(identifier: "en_US")))
+      var realTask: TaskWorkspace?, realExecutable: AgentExecutable?, realLaunches = 0
+      let sourceIndex = try Data(contentsOf: root.appendingPathComponent(".git/index"))
+      if let path = ProcessInfo.processInfo.environment["GITPIER_TASK_ACCEPTANCE_REAL_CODEX"], !path.isEmpty {
+        let executable = try await AgentExecutable.detect(explicitPath: path)
+        let login = try await executable.checkLogin()
+        try require(login == .loggedIn, "Real CLI reports existing login without reading or copying credentials")
+        let created = try await git.createTaskWorkspace(name: "Real Codex acceptance", repositoryID: primary.record.id,
+          destination: directory.appendingPathComponent("real-codex-task"), branch: "task/real-codex", registration: manager.persistence)
+        try await manager.register(created)
+        let configuration = try AgentLaunchConfiguration(executable: executable, task: created, snapshot: try await manager.snapshot(created.id))
+        try await manager.launch(created.id, configuration: configuration)
+        if ProcessInfo.processInfo.environment["GITPIER_TASK_ACCEPTANCE_FAIL_AFTER_REAL_START"] == "1" {
+          throw GitPierError.invalidInput("Injected failure after real native CLI launch")
+        }
+        guard let actualModel = store.current else { throw TaskWorkspaceError.unavailable }
+        host.rootView = AnyView(VStack(spacing: 0) {
+          TaskWorkspacesView(model: actualModel, manager: manager).frame(height: 220)
+          TerminalPanel(model: actualModel, manager: actualModel.terminal)
+        }.environmentObject(store).modifier(AppAppearance(store: store)))
+        window.title = "GitPier Real Codex Acceptance — Temporary Worktree"
+        realTask = created; realExecutable = executable; realLaunches = 1
+        let evidence: [String: String] = ["version": executable.version, "worktree": created.path,
+          "arguments": AgentLaunchConfiguration.safeArguments.joined(separator: " "), "taskID": created.id.uuidString]
+        try JSONSerialization.data(withJSONObject: evidence, options: [.prettyPrinted, .sortedKeys])
+          .write(to: output.appendingPathComponent("real-native-start.json"))
+      } else if ProcessInfo.processInfo.environment["GITPIER_TASK_ACCEPTANCE_PAGE"] == "codex-settings" {
+        host.rootView = AnyView(SettingsView(initialTab: 3).environmentObject(store).modifier(AppAppearance(store: store)))
+      } else {
+        host.rootView = AnyView(TaskWorkspacesView(model: model, manager: manager).environmentObject(store).modifier(AppAppearance(store: store)).environment(\.locale, Locale(identifier: "en_US")))
+      }
       window.setContentSize(NSSize(width: 960, height: 640)); window.makeKeyAndOrderFront(nil); NSApp.activate(ignoringOtherApps: true)
       try await settle()
-      try Data("Ready for native task create/launch/cancel/scroll acceptance. Local fixture executable only.\n".utf8).write(to: output.appendingPathComponent("ready-gui"))
+      try Data((realTask == nil ? "Local fixture ready.\n" : "Real CLI in temporary worktree; never accept configuration changes.\n").utf8)
+        .write(to: output.appendingPathComponent("ready-gui"))
       while !FileManager.default.fileExists(atPath: output.appendingPathComponent("finish-gui").path) {
+        let restart = output.appendingPathComponent("restart-real-cli")
+        if let realTask, let realExecutable, FileManager.default.fileExists(atPath: restart.path) {
+          try require(manager.active.isEmpty, "Real CLI exits and releases its verified lifecycle guard before restart")
+          let current = manager.task(realTask.id)!
+          let configuration = try AgentLaunchConfiguration(executable: realExecutable, task: current, snapshot: try await manager.snapshot(current.id))
+          try await manager.launch(current.id, configuration: configuration)
+          realLaunches += 1
+          try FileManager.default.removeItem(at: restart)
+          try Data(String(realLaunches).utf8).write(to: output.appendingPathComponent("real-native-launch-count.txt"))
+        }
         try await Task.sleep(for: .milliseconds(250))
       }
       guard await manager.stopAllAndWait() else { throw TaskWorkspaceError.activeSession }
+      if let realTask, let realExecutable {
+        let login = try await realExecutable.checkLogin()
+        try require(login == .loggedIn, "Existing Codex login remains available after all real native sessions stop")
+        try require(try Data(contentsOf: root.appendingPathComponent(".git/index")) == sourceIndex,
+          "Real native CLI sessions preserve the source repository Index")
+        let evidence: [String: Any] = ["launches": realLaunches, "activeSessions": manager.active.count,
+          "taskState": manager.task(realTask.id)?.agent?.state.rawValue ?? "missing", "loginStillAvailable": true]
+        try JSONSerialization.data(withJSONObject: evidence, options: [.prettyPrinted, .sortedKeys])
+          .write(to: output.appendingPathComponent("real-native-result.json"))
+      }
       checks.append("Interactive hold ended; physical GUI actions require separate tool evidence")
+      } catch {
+        // Never let the outer acceptance exit bypass verified cleanup of a real child.
+        while !(await manager.stopAllAndWait()) {
+          window.title = "GitPier Acceptance — Cleanup Unverified; Session Retained"
+          let retry = output.appendingPathComponent("retry-real-cleanup")
+          while !FileManager.default.fileExists(atPath: retry.path) {
+            await Task.detached { try? await Task.sleep(for: .milliseconds(250)) }.value
+          }
+          try? FileManager.default.removeItem(at: retry)
+        }
+        try? JSONSerialization.data(withJSONObject: ["cleanupVerified": true, "activeSessions": manager.active.count])
+          .write(to: output.appendingPathComponent("hold-failure-cleanup.json"))
+        throw error
+      }
     }
     try Data(checks.joined(separator: "\n").utf8).write(to: output.appendingPathComponent("task-workspaces-results.txt"))
   }
@@ -245,6 +379,27 @@ import PTYSupport
     do { try await launch(id, configuration: configuration); throw GitPierError.invalidInput("Duplicate agent launch was allowed") }
     catch TaskWorkspaceError.activeSession { checks.append("Duplicate agent launch is refused") }
   }
+}
+
+@MainActor private func taskAcceptancePressButton(_ title: String, host: NSView, window: NSWindow) throws -> Bool {
+  var visited = Set<ObjectIdentifier>(), target: NSRect?
+  func walk(_ item: Any) {
+    guard target == nil, let object = item as? NSObject, visited.insert(ObjectIdentifier(object)).inserted else { return }
+    func value(_ key: String) -> Any? { object.responds(to: NSSelectorFromString(key)) ? object.value(forKey: key) : nil }
+    if value("accessibilityLabel") as? String == title,
+      value("accessibilityEnabled") as? Bool != false, let frame = value("accessibilityFrame") as? NSValue, !frame.rectValue.isEmpty { target = frame.rectValue; return }
+    for child in value("accessibilityChildren") as? [Any] ?? [] { walk(child) }
+    if let view = object as? NSView { for child in view.subviews { walk(child) } }
+  }
+  walk(host)
+  guard let target else { return false }
+  let point = window.convertPoint(fromScreen: NSPoint(x: target.midX, y: target.midY))
+  for kind in [NSEvent.EventType.leftMouseDown, .leftMouseUp] {
+    guard let event = NSEvent.mouseEvent(with: kind, location: point, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
+      windowNumber: window.windowNumber, context: nil, eventNumber: 0, clickCount: 1, pressure: 1) else { return false }
+    NSApp.postEvent(event, atStart: false)
+  }
+  return true
 }
 
 @MainActor private extension TerminalSession {
