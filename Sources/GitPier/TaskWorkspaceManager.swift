@@ -195,7 +195,11 @@ struct TaskWorktreeRemovalRoute: Equatable {
       guard self.task(id) == task else { throw TaskWorkspaceError.changed }
       try Task.checkCancellation()
       guard isCurrent() else { throw TaskWorkspaceError.changed }
-      await store.addRepository(URL(fileURLWithPath: task.path), ifCurrent: { !Task.isCancelled && isCurrent() })
+      let selected = await store.addRepository(URL(fileURLWithPath: task.path), ifCurrent: { !Task.isCancelled && isCurrent() })
+      guard selected else {
+        try Task.checkCancellation()
+        throw TaskWorkspaceError.changed
+      }
       // Selection can dismiss the originating view and cancel its query. It has
       // already committed; cancellation is not evidence that navigation failed.
       guard let model = store.current, model.record.path == task.path else { throw TaskWorkspaceError.changed }

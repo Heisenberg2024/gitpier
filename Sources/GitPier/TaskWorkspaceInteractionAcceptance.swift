@@ -102,6 +102,41 @@ import SwiftUI
       && store.operations.records.first { $0.kind == .openTask }?.state == .succeeded,
       "Cancellation caused by the committed selection cannot misreport successful opening as cancelled")
 
+    for cancel in [true, false] {
+      committedModel.setPage("history")
+      let previousPage = committedModel.page
+      let previousVisibility = committedModel.panels.layout.terminalVisible
+      let previousSessions = Set(committedModel.terminal.sessions.map(\.id))
+      let previousSelection = store.selectedID
+      var checks = 0
+      let rejectedNavigation = Task {
+        try await manager.open(created.id, page: "commit", terminal: true, isCurrent: {
+          checks += 1
+          // The first two checks surround task validation; reject at the repository
+          // selection guard, after its real asynchronous root validation completes.
+          guard checks < 3 else {
+            if cancel { withUnsafeCurrentTask { $0?.cancel() } }
+            return false
+          }
+          return true
+        })
+      }
+      var expectedFailure = false
+      do { _ = try await rejectedNavigation.value }
+      catch is CancellationError { expectedFailure = cancel }
+      catch TaskWorkspaceError.changed { expectedFailure = !cancel }
+      let unexpectedSessions = committedModel.terminal.sessions.filter { !previousSessions.contains($0.id) }
+      // A failing regression must close any shell the old implementation spawned.
+      for session in unexpectedSessions { session.close() }
+      let operation = store.operations.records.first { $0.kind == .openTask }
+      let expectedState = cancel ? operation?.state == .cancelled : operation?.state == .failed
+      try require(checks == 3 && expectedFailure && store.selectedID == previousSelection
+        && committedModel.page == previousPage && committedModel.panels.layout.terminalVisible == previousVisibility
+        && unexpectedSessions.isEmpty && expectedState,
+        cancel ? "Cancellation before selection cannot reuse the current task as proof of a committed navigation"
+          : "A stale selection cannot change the current task page or create a terminal without committing navigation")
+    }
+
     // Close the owner immediately after registration, while its task still awaits completion.
     let close = TaskWorkspaceCreationRequest(), closeGate = TaskInteractionGate()
     var openedAfterClose = false

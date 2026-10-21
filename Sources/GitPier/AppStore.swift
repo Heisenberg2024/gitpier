@@ -320,11 +320,12 @@ import UserNotifications
       Task { for url in urls { await addRepository(url, group: group) } }
     }
   }
-  func addRepository(_ url: URL, group: String? = nil, credential: UUID? = nil, ifCurrent: () -> Bool = { true }) async {
+  @discardableResult
+  func addRepository(_ url: URL, group: String? = nil, credential: UUID? = nil, ifCurrent: () -> Bool = { true }) async -> Bool {
     do {
       let initial = await GitServiceRegistry.shared.service(for: url, gitPath: settings.gitPath)
       let root = try await initial.validate()
-      guard ifCurrent() else { return }
+      guard ifCurrent() else { return false }
       if let group, !group.isEmpty, !organizations.contains(where: { $0.name == group }) {
         throw GitPierError.invalidInput(text("Organization no longer exists.", "组织已不存在。"))
       }
@@ -335,7 +336,7 @@ import UserNotifications
           try moveRepositories([existing.id], to: organizations.first { $0.name == group }?.id)
         }
         select(existing.id)
-        return
+        return true
       }
       var record = RepositoryRecord(path: root.path)
       record.group = group ?? ""
@@ -345,7 +346,8 @@ import UserNotifications
       models[record.id] = model
       save()
       select(record.id)
-    } catch { self.error = error.localizedDescription }
+      return true
+    } catch { self.error = error.localizedDescription; return false }
   }
   func remove(_ id: UUID) {
     if let model = models[id], taskWorkspaces.isActive(path: model.record.path) {
