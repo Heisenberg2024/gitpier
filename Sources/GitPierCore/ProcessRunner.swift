@@ -56,6 +56,20 @@ private final class OutputBuffer: @unchecked Sendable {
     defer { lock.unlock() }
     return (data, overflow)
   }
+  var hasOverflowed: Bool { lock.lock(); defer { lock.unlock() }; return overflow }
+}
+
+private final class OutputDrain: @unchecked Sendable {
+  private let lock = NSLock()
+  private var deadline: TimeInterval?
+  private var failure: Int32?
+  func finish() { lock.lock(); deadline = ProcessInfo.processInfo.systemUptime + 2; lock.unlock() }
+  var expired: Bool {
+    lock.lock(); defer { lock.unlock() }
+    return deadline.map { ProcessInfo.processInfo.systemUptime >= $0 } ?? false
+  }
+  func fail(_ code: Int32) { lock.lock(); failure = code; lock.unlock() }
+  var error: Int32? { lock.lock(); defer { lock.unlock() }; return failure }
 }
 
 public struct ProcessRunner: Sendable {
@@ -136,18 +150,11 @@ public struct ProcessRunner: Sendable {
     try process.run()
     launched = ProcessInfo.processInfo.systemUptime
     if box.isCancelled { box.cancel() }
-    let readers = DispatchGroup()
-    for (pipe, buffer) in [(out, stdout), (err, stderr)] {
-      readers.enter()
-      DispatchQueue.global().async {
-        while true {
-          let data = pipe.fileHandleForReading.availableData
-          if data.isEmpty { break }
-          buffer.append(data)
-          if pipe === err { onStderr?(data) }
-        }
-        readers.leave()
-      }
+    let readers = DispatchGroup(), drain = OutputDrain()
+    readers.enter()
+    DispatchQueue.global().async {
+      defer { readers.leave() }
+      Self.readOutput(out: out, err: err, stdout: stdout, stderr: stderr, drain: drain, onStderr: onStderr)
     }
     DispatchQueue.global().async {
       if let input { try? stdin.fileHandleForWriting.write(contentsOf: input) }
@@ -162,15 +169,49 @@ public struct ProcessRunner: Sendable {
     }
     process.waitUntilExit()
     waited = ProcessInfo.processInfo.systemUptime
-    // Descendants may inherit pipes. Don't wait indefinitely after a cancelled command.
-    if readers.wait(timeout: .now() + 2) == .timedOut {
-      try? out.fileHandleForReading.close()
-      try? err.fileHandleForReading.close()
-    }
+    // Only the reader closes its descriptors. Closing a FileHandle concurrently
+    // with availableData can raise an Objective-C exception on macOS 15.
+    drain.finish()
+    readers.wait()
     if expired { throw GitPierError.timeout }
+    if let code = drain.error { throw POSIXError(POSIXErrorCode(rawValue: code) ?? .EIO) }
     let (output, largeOut) = stdout.result()
     let (errors, largeErr) = stderr.result()
     if largeOut || largeErr { throw GitPierError.outputLimit }
     return CommandResult(code: process.terminationStatus, stdout: output, stderr: errors)
+  }
+
+  private static func readOutput(out: Pipe, err: Pipe, stdout: OutputBuffer, stderr: OutputBuffer,
+    drain: OutputDrain, onStderr: (@Sendable (Data) -> Void)?) {
+    let handles = [out.fileHandleForReading, err.fileHandleForReading]
+    defer { for handle in handles { try? handle.close() } }
+    var descriptors = handles.map { pollfd(fd: $0.fileDescriptor, events: Int16(POLLIN), revents: 0) }
+    for descriptor in descriptors {
+      let flags = fcntl(descriptor.fd, F_GETFL)
+      guard flags >= 0, fcntl(descriptor.fd, F_SETFL, flags | O_NONBLOCK) >= 0 else { drain.fail(errno); return }
+    }
+    var buffer = [UInt8](repeating: 0, count: 64 * 1024)
+    while descriptors.contains(where: { $0.fd >= 0 }) {
+      // Descendants may keep pipes open after their parent exits. After the
+      // drain deadline, consume already-readable data without waiting for them.
+      let finishing = drain.expired
+      let ready = poll(&descriptors, nfds_t(descriptors.count), finishing ? 0 : 100)
+      if ready < 0 {
+        if errno == EINTR { continue }
+        drain.fail(errno); return
+      }
+      if ready == 0 { if finishing { return }; continue }
+      for index in descriptors.indices where descriptors[index].fd >= 0 && descriptors[index].revents != 0 {
+        if descriptors[index].revents & Int16(POLLNVAL) != 0 { drain.fail(EBADF); return }
+        let count = Darwin.read(descriptors[index].fd, &buffer, buffer.count)
+        if count > 0 {
+          let data = Data(buffer.prefix(count))
+          if index == 0 { stdout.append(data) } else { stderr.append(data); onStderr?(data) }
+        } else if count == 0 { descriptors[index].fd = -1 }
+        else if errno != EAGAIN && errno != EINTR { drain.fail(errno); return }
+      }
+      // A continuously writing descendant cannot extend draining indefinitely.
+      if drain.expired && (stdout.hasOverflowed || stderr.hasOverflowed) { return }
+    }
   }
 }

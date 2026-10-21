@@ -15,24 +15,33 @@ extension TaskWorkspaceTests {
     exec /usr/bin/git "$@"
     """
     try Data(script.utf8).write(to: wrapper); XCTAssertEqual(chmod(wrapper.path, 0o700), 0)
-    var works: [Task<TaskWorkspaceReview, Error>] = []
+    var reviews: [(GitService, TaskWorkspace)] = []
     for n in 0..<4 {
       let task = try await create("budget-\(n)"), directory = URL(fileURLWithPath: task.path)
       for file in 0..<16 { try write("change-\(file).txt", String(repeating: "changed\n", count: 1024), directory: directory) }
       let service = GitService(root: directory, gitPath: wrapper.path)
-      works.append(Task { try await service.taskWorkspaceReview(task) })
+      reviews.append((service, task))
     }
-    for _ in 0..<300 {
-      if try FileManager.default.contentsOfDirectory(atPath: markers.path).count >= 3 { break }
-      try await Task.sleep(for: .milliseconds(10))
+    try await withThrowingTaskGroup(of: TaskWorkspaceReview.self) { group in
+      for (service, task) in reviews { group.addTask { try await service.taskWorkspaceReview(task) } }
+      do {
+        for _ in 0..<300 {
+          if try FileManager.default.contentsOfDirectory(atPath: markers.path).count >= 3 { break }
+          try await Task.sleep(for: .milliseconds(10))
+        }
+        try await Task.sleep(for: .milliseconds(50))
+        let running = try FileManager.default.contentsOfDirectory(atPath: markers.path).count
+        let budget = await WorkspaceOperationBudget.shared.metrics()
+        // Release every real child before assertions, including on failure.
+        try Data().write(to: release)
+        XCTAssertEqual(running, 3); XCTAssertEqual(budget.active, 3)
+        for try await receipt in group { XCTAssertEqual(receipt.fingerprint.count, 64) }
+      } catch {
+        try? Data().write(to: release)
+        group.cancelAll()
+        throw error
+      }
     }
-    try await Task.sleep(for: .milliseconds(50))
-    let running = try FileManager.default.contentsOfDirectory(atPath: markers.path).count
-    let budget = await WorkspaceOperationBudget.shared.metrics()
-    // Release every real child before assertions, including on a buggy unlimited implementation.
-    try Data().write(to: release)
-    XCTAssertEqual(running, 3); XCTAssertEqual(budget.active, 3)
-    for work in works { let receipt = try await work.value; XCTAssertEqual(receipt.fingerprint.count, 64) }
   }
   func testConcurrentReviewRefreshesShareOneContentScanAndRevalidateNextTime() async throws {
     let task = try await create(), directory = URL(fileURLWithPath: task.path)
