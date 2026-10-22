@@ -2384,6 +2384,61 @@ public actor GitService {
     return GitOperationReview(head: state.head, branch: state.branch,
                               indexFingerprint: Data(SHA256.hash(data: entries)), operationIdentity: operation)
   }
+  public func reviewMergeRevert(_ hash: String, expectedIndex: IndexSnapshot? = nil) async throws -> MergeRevertReview {
+    guard [40, 64].contains(hash.count), hash.allSatisfy(\.isHexDigit) else {
+      throw GitPierError.invalidInput("Select a full merge commit ID.")
+    }
+    return try await writing {
+      let executable = gitPath
+      let operation = try await reviewOperation(expectedIndex: expectedIndex, localOnly: true)
+      try await requireCleanMergeRevert(expected: operation)
+      let commit = try await mergeRevertCommit(hash)
+      guard commit.parents.count > 1 else {
+        throw GitPierError.invalidInput("Select a merge commit with at least two parents.")
+      }
+      var parents: [CommitRecord] = []
+      for parent in commit.parents { parents.append(try await mergeRevertCommit(parent)) }
+      guard try await reviewOperation(localOnly: true) == operation else { throw GitPierError.indexChanged }
+      try await requireCleanMergeRevert(expected: operation)
+      guard executable == gitPath else { throw GitPierError.indexChanged }
+      return MergeRevertReview(workingTree: root.path, executable: executable, operation: operation, commit: commit, parents: parents)
+    }
+  }
+  public func revertMerge(_ review: MergeRevertReview, mainline: Int) async throws -> String {
+    try await writing {
+      guard review.workingTree == root.path, review.executable == gitPath,
+        review.parents.count > 1, mainline > 0, mainline <= review.parents.count,
+        review.parents.map(\.hash) == review.commit.parents else {
+        throw GitPierError.invalidInput("Choose a valid mainline parent from this working tree's merge review.")
+      }
+      guard try await reviewOperation(localOnly: true) == review.operation else { throw GitPierError.indexChanged }
+      try await requireCleanMergeRevert(expected: review.operation)
+      let commit = try await mergeRevertCommit(review.commit.hash)
+      guard commit.parents == review.commit.parents else { throw GitPierError.indexChanged }
+      // Recheck after object reads, immediately before the native write. No resets, staging,
+      // hook/signing overrides or push; Git retains a conflicted revert for normal recovery.
+      guard try await reviewOperation(localOnly: true) == review.operation else { throw GitPierError.indexChanged }
+      try await requireCleanMergeRevert(expected: review.operation)
+      guard review.executable == gitPath else { throw GitPierError.indexChanged }
+      let result = try await read(["revert", "--no-edit", "--mainline", String(mainline), review.commit.hash])
+      return Self.redact(result.text + result.errorText)
+    }
+  }
+  private func requireCleanMergeRevert(expected: GitOperationReview) async throws {
+    let state = try await status(localOnly: true)
+    guard state.head == expected.head, state.branch == expected.branch else { throw GitPierError.indexChanged }
+    guard state.head != nil, state.operation == nil, state.tracked.isEmpty else {
+      throw GitPierError.invalidInput("Commit or stash tracked changes and finish the current Git operation before reverting a merge.")
+    }
+  }
+  private func mergeRevertCommit(_ hash: String) async throws -> CommitRecord {
+    let data = try await read(["show", "--no-patch", "--format=%H%x00%P%x00%an%x00%ae%x00%at%x00%s%x00%b%x00%D%x00", hash],
+      environment: ["GIT_NO_LAZY_FETCH": "1"]).stdout
+    guard let commit = Self.parseHistory(data).first, commit.hash == hash else {
+      throw GitPierError.invalidInput("The merge commit or one of its parents is unavailable locally.")
+    }
+    return commit
+  }
   public func interactiveRebaseCandidate(upstream reference: String) async throws -> InteractiveRebaseCandidate {
     let review = try await reviewOperation()
     let state = try await status()

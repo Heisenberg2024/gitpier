@@ -194,9 +194,7 @@ struct HistoryView: View {
         confirmation: store.text("Apply this commit to the current branch?", "将此提交应用到当前分支？"))
     }
     Button(localizedUI("Revert…")) {
-      model.perform(
-        ["revert", "--no-edit", commit.hash],
-        confirmation: store.text("Create a new commit reversing this commit?", "创建反向提交以撤销此提交？"))
+      model.revert(commit)
     }
     Menu(localizedUI("Reset…")) {
       Button(localizedUI("Soft…")) {

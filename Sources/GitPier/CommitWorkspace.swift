@@ -136,8 +136,13 @@ struct RepositoryWorkspace: View {
       Text(model.confirmation?.title ?? "").font(.headline)
       if model.confirmation?.canConfirm == false { ProgressView().controlSize(.small) }
       ScrollView {
-        Text(model.confirmation?.detail ?? "").font(.callout).textSelection(.enabled)
-          .frame(maxWidth: .infinity, alignment: .leading)
+        VStack(alignment: .leading, spacing: 14) {
+          Text(model.confirmation?.detail ?? "").font(.callout).textSelection(.enabled)
+            .frame(maxWidth: .infinity, alignment: .leading)
+          if let parents = model.confirmation?.mainlineParents, !parents.isEmpty {
+            MergeRevertParentPicker(model: model, parents: parents)
+          }
+        }
       }.frame(maxHeight: 280)
       HStack {
         Spacer()
@@ -153,16 +158,21 @@ struct RepositoryWorkspace: View {
           model.confirmation?.confirmTitle ?? store.text("Confirm", "确认"),
           role: model.confirmation?.destructive == false ? nil : .destructive
         ) {
-          guard model.confirmation?.canConfirm == true else { return }
-          let action = model.confirmation?.action
+          guard let pending = model.confirmation, pending.readyForConfirmation else { return }
           model.confirmation = nil
-          action?()
+          pending.performConfirmedAction()
         }.buttonStyle(.borderedProminent).keyboardShortcut(.defaultAction)
-          .disabled(model.confirmation?.canConfirm != true).accessibilityIdentifier("gitpier.workflow.review.confirm")
+          .disabled(model.confirmation?.readyForConfirmation != true).accessibilityIdentifier("gitpier.workflow.review.confirm")
       }
     }.padding(24).frame(width: 560).frame(maxHeight: 420)
       .modifier(AppAppearance(store: store))
       .onExitCommand { model.confirmation = nil }
+      .onChange(of: store.selectionIdentity) { _, _ in
+        if model.confirmation?.mainlineParents != nil { model.confirmation = nil }
+      }
+      .onChange(of: model.pageIdentity) { _, _ in
+        if model.confirmation?.mainlineParents != nil { model.confirmation = nil }
+      }
   }
   var toolbar: some View {
     HStack(spacing: 14) {

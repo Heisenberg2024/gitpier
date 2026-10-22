@@ -225,5 +225,10 @@
   "The worktree was created, but registration did not finish.": "工作树已创建，但登记尚未完成。",
   "Git worktree creation did not finish; a directory or branch may remain.": "Git 工作树创建未完成；目录或分支可能已保留。",
   "Open Worktrees to inspect it. Resume a saved creation record when available, or associate the existing worktree without granting ownership. Files and branches have been preserved.": "请打开工作树检查。有已保存的创建记录时可继续登记，或以外部工作树关联且不授予所有权。文件和分支均已保留。",
-  "Choose an existing absolute Codex Home directory without symbolic links or parent traversal. Leave it empty to inherit CODEX_HOME or use the CLI default.": "请选择已存在、无符号链接或父级跳转的 Codex Home 绝对目录。留空将继承 CODEX_HOME 或遵循 CLI 默认值。"
+  "Choose an existing absolute Codex Home directory without symbolic links or parent traversal. Leave it empty to inherit CODEX_HOME or use the CLI default.": "请选择已存在、无符号链接或父级跳转的 Codex Home 绝对目录。留空将继承 CODEX_HOME 或遵循 CLI 默认值。",
+  "Select a full merge commit ID.": "请选择合并提交的完整 Hash。",
+  "Select a merge commit with at least two parents.": "请选择至少有两个父提交的合并提交。",
+  "Choose a valid mainline parent from this working tree's merge review.": "请从当前工作树的合并审查中选择有效的主线父提交。",
+  "Commit or stash tracked changes and finish the current Git operation before reverting a merge.": "撤销合并前，请先提交或 Stash 已跟踪文件修改，并完成当前 Git 操作。",
+  "The merge commit or one of its parents is unavailable locally.": "本地无法读取合并提交或其父提交。"
 }

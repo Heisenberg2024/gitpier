@@ -1635,6 +1635,61 @@ struct DiffTab: Identifiable, Equatable {
       }
     }
   }
+  func revert(_ commit: CommitRecord) {
+    guard commit.parents.count > 1 else {
+      perform(["revert", "--no-edit", commit.hash],
+        confirmation: store.text("Create a new commit reversing this commit?", "创建反向提交以撤销此提交？"))
+      return
+    }
+    guard !busy, store.current === self, !store.showDashboard else { return }
+    let id = UUID(), selection = store.selectionIdentity, page = pageIdentity
+    let path = record.path, executable = store.settings.gitPath, expectedIndex = snapshot
+    confirmationReviewID = id
+    confirmationReviewTask?.cancel()
+    error = nil
+    confirmation = PendingAction(id: id, title: store.text("Revert Merge", "撤销合并"),
+      detail: store.text("Reading the merge and its ordered parents…", "正在读取合并提交及按序排列的父提交…"),
+      canConfirm: false, asynchronousReview: true, mainlineParents: []) {}
+    let isCurrent = { [weak self] in
+      guard let self else { return false }
+      return self.store.current === self && !self.store.showDashboard
+        && self.store.selectionIdentity == selection && self.pageIdentity == page
+        && self.record.path == path && self.store.settings.gitPath == executable
+    }
+    confirmationReviewTask = Task { [weak self] in
+      guard let self else { return }
+      do {
+        let review = try await git().reviewMergeRevert(commit.hash, expectedIndex: expectedIndex)
+        try Task.checkCancellation()
+        guard isCurrent(), confirmationReviewID == id, confirmation?.id == id, !busy else {
+          if confirmation?.id == id { confirmation = nil }
+          return
+        }
+        confirmation = PendingAction(id: id, title: store.text("Revert Merge", "撤销合并"),
+          detail: review.commit.subject + "\n" + review.commit.hash + "\n\n"
+            + review.operation.branch + " · HEAD " + (review.operation.head ?? "") + "\n\n"
+            + store.text("Choose the parent to use as the mainline. A new commit reverses the merge's changes relative to that parent. Hooks and signing remain enabled. No push will run.",
+              "请选择作为主线的父提交。将创建新提交，撤销合并相对于该父提交的改动。保留 Hooks 和签名，不会执行推送。"),
+          confirmTitle: store.text("Create Revert Commit", "创建撤销提交"), asynchronousReview: true,
+          mainlineParents: review.parents, mainlineAction: { [weak self] mainline in
+            guard let self else { return }
+            guard isCurrent() else {
+              self.error = self.store.text("The repository context changed. Review the merge again.", "仓库上下文已改变，请重新审查合并提交。")
+              return
+            }
+            self.run(label: self.store.text("Reverting merge", "撤销合并"), kind: .git, updatesCommitState: .history) { git in
+              guard isCurrent() else { throw GitPierError.indexChanged }
+              self.output = try await git.revertMerge(review, mainline: mainline)
+            }
+          }) {}
+      } catch {
+        if !Task.isCancelled, confirmationReviewID == id, confirmation?.id == id {
+          confirmation = nil
+          if isCurrent() { self.error = localizedUI(GitService.redact(error.localizedDescription)) }
+        }
+      }
+    }
+  }
   func perform(_ args: [String], confirmation detail: String? = nil, context: ContextWorkflowReview? = nil) {
     guard !busy else { return }
     confirmationReviewID = UUID()
@@ -1822,7 +1877,21 @@ struct PendingAction: Identifiable {
   var canConfirm = true
   var asynchronousReview = false
   var reviewedAction: (() -> Void)? = nil
+  var mainlineParents: [CommitRecord]? = nil
+  var mainlineParent: Int? = nil
+  var mainlineAction: ((Int) -> Void)? = nil
   var action: () -> Void
+  var readyForConfirmation: Bool {
+    guard canConfirm else { return false }
+    guard let mainlineParents else { return true }
+    guard mainlineAction != nil, let mainlineParent else { return false }
+    return mainlineParent > 0 && mainlineParent <= mainlineParents.count
+  }
+  func performConfirmedAction() {
+    guard readyForConfirmation else { return }
+    if let mainlineParent, let mainlineAction { mainlineAction(mainlineParent) }
+    else { action() }
+  }
 }
 
 func copyText(_ text: String) {

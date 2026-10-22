@@ -80,6 +80,13 @@ import SwiftUI
         window.orderFront(nil)
         try await settle()
         try await waitFor { !model.refreshing && !model.diffLoading }
+        if acceptanceScope == "merge-revert" {
+          window.close()
+          try await verifyMergeRevert(root: root, output: output)
+          store.shutdown()
+          print("Native merge revert acceptance passed (temporary repository).")
+          exit(0)
+        }
         if acceptanceScope == "confirmations" {
           window.close()
           try await verifyConfirmations(root: root, output: output)

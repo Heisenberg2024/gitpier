@@ -1,5 +1,23 @@
 # Development
 
+## Merge revert mainline selection (development)
+
+History → Revert on a merge commit opens the existing bounded confirmation sheet. Parents are numbered in Git order and show full hashes and subjects; no parent is selected automatically. The selected parent is the reference history used to reverse the merge, not a branch guessed from its name. Confirming creates a new revert commit without pushing or rewriting history. Ordinary commit Revert keeps its existing flow. Fast-forward integrations have no merge commit and therefore no mainline picker.
+
+```sh
+Scripts/test.sh --filter MergeRevertTests
+GITPIER_UI_ACCEPTANCE_SCOPE=merge-revert Scripts/ui-acceptance.sh .cache/ui-acceptance/merge-revert
+GITPIER_UI_ACCEPTANCE_SCOPE=confirmations Scripts/ui-acceptance.sh .cache/ui-acceptance/confirmations
+```
+
+All writes use disposable repositories. Core coverage includes both mainlines, an octopus merge's third parent, changed HEAD/branch/executable/Index, partial staging, working edits, untracked preservation, hooks/signing and conflicted Revert continuation. Three gated regressions also change HEAD, branch or Git executable during the last clean-status read, requiring rejection before Revert writes. Native acceptance exercises real parent buttons and confirmation, cancellation, stale HEAD and navigation, English/Simplified Chinese, both themes, wheel/drag endpoints, resizing and shared scrollbar pass-through. `GITPIER_UI_ACCEPTANCE_EXECUTABLE` can point to an isolated app built through `Scripts/build-app.sh`; `GITPIER_MERGE_REVERT_CAPTURE=1` additionally captures the composited fixture window when screen capture is available. This source change has not been published or installed.
+
+Local validation on macOS 27.0.1 / Swift 6.4 passed **1008 Core tests, zero failures/skips**, including 15 merge-revert tests. The final isolated Debug arm64 app passed bundle/deep-signature checks, **60** new native assertions, **196** existing confirmation/snapshot assertions and the complete UI/PTY suite (**104** captures). One authorized read-only reviewer identified two execution-window issues; both fixes and their gated regressions passed the same reviewer's follow-up, with no remaining substantive findings. Exact-source Swift 6.1 CI remains pending; no Intel/macOS 14 device or full VoiceOver acceptance is claimed.
+
+简体中文：在历史中对合并提交执行 Revert，会在原有有界确认页中展示按 Git 顺序编号的父提交、完整 Hash 和标题，要求明确选择主线后创建撤销提交。主线父提交用于计算相对改动，不会按分支名猜测；不会改写历史或自动推送。普通 Revert 保持原流程，快进合并没有合并提交，因此不显示主线选择。上述测试仅写临时仓库，覆盖安全拒绝、部分暂存保护、Hooks/签名、冲突继续以及双语主题与原生滚动交互；此源码变更尚未发布或安装。
+
+本地 macOS 27.0.1 / Swift 6.4 验证通过 1008 项 Core（含新增 15 项），零失败/跳过；最终隔离 Debug arm64 包的深签名、60 项新原生断言、196 项原确认/快照断言和完整 UI/PTY（104 图）均通过。1 名授权只读审核者发现的 2 项执行窗口问题均已修复，并由同一审核者复核通过，无剩余实质发现；新增 3 项门闩回归覆盖最后状态读取期间 HEAD、分支和 Git 路径变化。同源码 Swift 6.1 CI 待完成，不宣称 Intel/macOS 14 真机或完整 VoiceOver 验收。
+
 ## v1.8.0 publication — 2026-10-22
 
 [GitPier v1.8.0 (30)](https://github.com/Heisenberg2024/gitpier/releases/tag/v1.8.0) became Latest at **2026-10-22 18:29:09 (Asia/Shanghai)** after approval of the exact English-first/Chinese-second notes. The tag remains on `ce761f0e55ae6b5c39d5d23802ecc55140300d1d`. [Main CI 39741467461](https://github.com/Heisenberg2024/gitpier/actions/runs/39741467461) passed Swift 6.1.2 full validation: **993 Core tests, zero failures/errors/skips**, ten release gates, Release app, temporary DMG and preserved-permission archive checks. Downloaded diagnostics matched GitHub's digest and the actual xUnit counts. [Tag CI 39761751374](https://github.com/Heisenberg2024/gitpier/actions/runs/39761751374) explicitly reused that exact full run.

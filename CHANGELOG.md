@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- Revert merge commits from History with an explicit numbered mainline parent, full hashes and subjects in the existing bounded confirmation sheet. Create a new revert commit with reviewed HEAD/branch/Index/operation checks, hooks, signing and conflict recovery preserved; no automatic push. Ordinary commit Revert is unchanged.
+- 支持在历史的原有有界确认页中显式选择主线父提交，展示编号、完整 Hash 和标题后创建合并撤销提交。保留 HEAD、分支、Index、操作状态复核及 Hooks、签名和冲突恢复，不自动推送；普通提交 Revert 流程不变。
+
 ## 1.8.0 — 2026-10-22 (30)
 
 - Published [v1.8.0](https://github.com/Heisenberg2024/gitpier/releases/tag/v1.8.0) as Latest from `ce761f0`. Exact-source Swift 6.1.2 CI and local packaging passed 993 Core tests; Tag CI reused the full main run. Universal DMG, production signatures, Draft asset readback and anonymous public downloads/Latest Feed were verified. See [evidence and limits](docs/development.md#v180-publication--2026-10-22).
