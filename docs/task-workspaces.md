@@ -1,4 +1,6 @@
-# Task Workspaces — v1.8.0 development
+# Task Workspaces — v1.8.0
+
+Available in [v1.8.0 (30)](https://github.com/Heisenberg2024/gitpier/releases/tag/v1.8.0), released on 2026-10-22. See [publication validation and limits](development.md#v180-publication--2026-10-22). 已于 2026-10-22 正式发布，验收范围与边界见发布记录。
 
 Task Workspaces organize an independent linked worktree, branch, immutable local baseline, optional Codex CLI session and review state. GitPier manages the Git workspace; the optional installed Codex CLI performs coding. This is a local integration, without a GitPier model backend or unattended agent scheduler.
 

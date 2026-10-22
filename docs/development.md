@@ -1,8 +1,20 @@
 # Development
 
-## v1.8.0 development
+## v1.8.0 publication — 2026-10-22
 
-Task Workspaces and optional local Codex integration are under development in build 30. Incremental hardening covers partial-creation recovery, explicit CLI login checks/environment inheritance and budgeted concurrent review. Creation fault tests use real temporary Git repositories plus controlled command/filesystem failures; authentication tests use synthetic executables and never real credential files. Record real CLI/account results separately, with explicit authorization and no credential copies. Use the [task guide](task-workspaces.md) for exact storage, ownership, process and review boundaries. Existing v1.7.0 evidence below is historical, not validation of this new source. Full Core/Universal/DMG/update validation and independent review must be recorded for the final inputs before release; no publication is authorized by a local build.
+[GitPier v1.8.0 (30)](https://github.com/Heisenberg2024/gitpier/releases/tag/v1.8.0) became Latest at **2026-10-22 18:29:09 (Asia/Shanghai)** after approval of the exact English-first/Chinese-second notes. The tag remains on `ce761f0e55ae6b5c39d5d23802ecc55140300d1d`. [Main CI 39741467461](https://github.com/Heisenberg2024/gitpier/actions/runs/39741467461) passed Swift 6.1.2 full validation: **993 Core tests, zero failures/errors/skips**, ten release gates, Release app, temporary DMG and preserved-permission archive checks. Downloaded diagnostics matched GitHub's digest and the actual xUnit counts. [Tag CI 39761751374](https://github.com/Heisenberg2024/gitpier/actions/runs/39761751374) explicitly reused that exact full run.
+
+Local `Scripts/package-release.sh` reran all **993 Core tests**, zero failures, in **315.614 seconds**, built the **arm64/x86_64** app and CLI, verified deep signatures and created the final **HFS+/ULFO DMG**. Ten release-tool tests passed. Finder default-open inspection passed; all **181** bundle entries matched dist by bytes, modes and symbolic links. The DMG is **29,230,304 bytes**, SHA256 `0612f91d9bd2ac772b18f66c66147cecfa4a6307ba802c8bbba63a96836e2758`.
+
+The existing production Keychain key signed the DMG and Feed without export or replacement. Production signatures and equal-length tamper rejection passed. Three Draft assets were downloaded by asset ID and checked before publication. Anonymous Release/Latest pages, the public Latest API, all three public assets and the canonical Latest Feed returned HTTP 200; hashes, embedded approved notes and signatures matched the candidate. Publication preserved **311** frozen source inputs/modes, **17** historical releases, **47** historical assets, **17** tags, **34** local historical files and the installed app. Public documentation was synchronized after publication.
+
+Earlier confirmation validation (**196 assertions**), full native UI/PTY acceptance and independent reviews were reused after checking matching inputs. Earlier isolated actual 1.7.0 → 1.8.0 Sparkle upgrades remain compatibility evidence for their recorded checkpoints; this release did not repeat replacement with the final production DMG. Authenticated model execution/Git approval, actual Finder/Dock launch-source checks, physical Intel/macOS 14 and full VoiceOver acceptance remain separately unverified. Distribution remains **ad-hoc signed, without Developer ID or Apple notarization**.
+
+简体中文：v1.8.0（30）于 **2026-10-22 18:29:09（Asia/Shanghai）**按确认的双语正文正式发布为 Latest，标签保持 `ce761f0`。同源码 Swift 6.1.2 主 CI 与本地打包均通过 **993 项 Core、零失败/错误/跳过**，Tag CI 明确复用该完整主运行；10 项发布工具、双架构主程序/CLI、深层签名、DMG 与 Finder 默认布局均通过。既有生产 Keychain 密钥签署 DMG/Feed，三附件按 ID 回读，公开页面/Latest API/三附件/固定 Feed 均匿名 HTTP 200，哈希、正文及签名一致，等长篡改拒绝通过。历史版本/产物及现有安装保留，公共文档在发布后同步；前序原生/独立复核仅在输入匹配后复用，旧检查点的实际 Sparkle 升级不冒充最终生产包重新替换。真实已认证模型/Git 审批、实际启动来源、Intel/macOS14 真机及完整 VoiceOver 仍分别未验；仍为 ad-hoc 签名，未公证。
+
+## v1.8.0 validation workflow
+
+Task Workspaces and optional local Codex integration are available in build 30. Incremental hardening covers partial-creation recovery, explicit CLI login checks/environment inheritance and budgeted concurrent review. Creation fault tests use real temporary Git repositories plus controlled command/filesystem failures; authentication tests use synthetic executables and never real credential files. Record real CLI/account results separately, with explicit authorization and no credential copies. Use the [task guide](task-workspaces.md) for exact storage, ownership, process and review boundaries. Existing v1.7.0 evidence below is historical, not validation of this new source. Final-input validation and publication evidence are recorded above; further changes require checks for their own inputs, and a local build does not authorize publication.
 
 ```sh
 Scripts/test.sh --filter 'TaskWorkspaceTests|LocalAgentTests|OperationCenterTests'
@@ -11,7 +23,7 @@ GITPIER_UI_ACCEPTANCE_SCOPE=task-workspaces Scripts/ui-acceptance.sh .cache/v180
 
 The native task scope also runs deterministic continuation-gated creation/navigation and detail-mutation regressions. It checks persistence failures, duplicate clicks, retry without recreation, dismissal/selection guards, delayed reads and exact persisted review/archive state. These are AppKit application assertions, separate from the Core XCTest count. CI cache tests inject content and permission changes between hashing and timestamp restoration. Descriptor rechecks skip changed inputs; post-write content verification forces a fresh timestamp if a writer races the timestamp syscall.
 
-Navigation regression gates also cover task/repository switching and return, same-repository reselection, page/dashboard changes, baseline and working-tree review, cancellation before and after selection, actual SwiftUI detail disappearance, terminal reuse, opening failure/retry and the native Operations Center entry. Assertions inspect the real AppStore selection, destination, terminal sessions, operation records and unchanged task persistence. Cancelling navigation while a confirmed review awaits persistence must not cancel that write. A final local commit still requires its own full Swift 6.1 CI; an earlier SHA's successful run is baseline evidence only.
+Navigation regression gates also cover task/repository switching and return, same-repository reselection, page/dashboard changes, baseline and working-tree review, cancellation before and after selection, actual SwiftUI detail disappearance, terminal reuse, opening failure/retry and the native Operations Center entry. Assertions inspect the real AppStore selection, destination, terminal sessions, operation records and unchanged task persistence. Cancelling navigation while a confirmed review awaits persistence must not cancel that write. Further code changes require their own full Swift 6.1 CI; an earlier SHA's successful run is baseline evidence only.
 
 The new native scope uses temporary repositories and a local executable fixture, not a real Codex conversation. It verifies PTY cwd/arguments, session/page lifetime, partial Index preservation, archive/recovery, process cleanup and language/theme compositor captures. Keep real CLI detection, unauthenticated CLI startup, authenticated model execution, UI interaction and fixture evidence separate.
 
@@ -19,11 +31,11 @@ For version/login and native PTY startup/Stop checks without sending a model pro
 
 For an explicitly authorized existing-login test, the isolated `Scripts/workspace-acceptance.sh task-workspaces` runner additionally accepts `GITPIER_TASK_ACCEPTANCE_HOLD=1` and `GITPIER_TASK_ACCEPTANCE_REAL_CODEX` set to the real absolute executable path. It launches the normal SwiftTerm pipeline without copying credentials. Inspect the temporary window, then create `finish-gui` in the selected output directory. `GITPIER_TASK_ACCEPTANCE_FAIL_AFTER_REAL_START=1` injects a failure after spawn; expect a nonzero test exit and a verified cleanup record. Unknown cleanup retains the host for inspection and an explicit `retry-real-cleanup` marker. Never accept saved folder trust if the test scope forbids Codex configuration changes.
 
-简体中文：v1.8.0（30）仍在开发，下方v1.7发布证据不代表新源码验收；最终输入需单独完成Core、Universal/DMG/升级及独立审核。专项原生验收使用临时仓库和可执行夹具，不是真实Codex对话；真实版本检测、未认证启动、认证模型执行、实际UI操作和夹具证据必须分别记录。
+简体中文：v1.8.0（30）已正式发布，最终输入的验收与发布证据见上节，下方 v1.7 记录仍属历史证据；后续修改须验证各自输入。专项原生验收使用临时仓库和可执行夹具，不是真实Codex对话；真实版本检测、未认证启动、认证模型执行、实际UI操作和夹具证据必须分别记录。
 
 原生任务专项另用 continuation 闸门确定性验证创建/导航边界、持久化故障、重复点击、无重复创建的重试、关闭/切换、迟到读取和审查/归档的真实落盘状态。这些属于 AppKit 应用断言，不混入 Core XCTest 数量。CI 缓存回归在哈希与时间戳写入之间注入内容/权限变化；描述符变化时跳过恢复，写后内容复核发现时间戳系统调用期间的竞态则强制使用新时间戳重新编译。
 
-导航回归还覆盖任务/仓库切换后返回、同仓库重选、页面/总览变化、两种审查、选择提交前后取消、真实 SwiftUI 详情销毁、终端复用、失败重试和原生操作中心入口，核对真实选择、目标页、会话、操作记录及任务持久化。确认审查等待落盘期间取消导航不得取消写入。最终本地提交仍须对应 SHA 的完整 Swift 6.1 CI，旧 SHA 成功仅属基线证据。
+导航回归还覆盖任务/仓库切换后返回、同仓库重选、页面/总览变化、两种审查、选择提交前后取消、真实 SwiftUI 详情销毁、终端复用、失败重试和原生操作中心入口，核对真实选择、目标页、会话、操作记录及任务持久化。确认审查等待落盘期间取消导航不得取消写入。后续代码修改须验证对应 SHA 的完整 Swift 6.1 CI，旧 SHA 成功仅属基线证据。
 
 如需不发送模型 Prompt 的版本/登录及原生 PTY 启停检查，可为任务 runner 设置 GITPIER_RC_REAL_CODEX 为明确选定的已安装可执行文件。可选专项仅通过官方状态命令检查已有登录，在全新空临时 Codex Home 中启动真实 CLI，核对可执行文件和工作树 cwd，停止后再次检查原登录；不复制凭证或改原 Home。Finder 类环境使用显式路径，不等于真实 Finder 启动、认证编码或 Git 审批验收。
 

@@ -1,6 +1,12 @@
 # Architecture and security boundaries
 
-## Task Workspaces (v1.8.0 development)
+## Task Workspaces (v1.8.0 released)
+
+[v1.8.0 (30)](https://github.com/Heisenberg2024/gitpier/releases/tag/v1.8.0) was published on 2026-10-22. See [publication validation and limits](development.md#v180-publication--2026-10-22). 已于 2026-10-22 正式发布，验收范围与边界见发布记录。
+
+Commit confirmation tracks the reviewed and observed Index-tree/HEAD/branch identities instead of a latched warning flag. Local writes acknowledge only their scoped receipts; stale dialogs cannot accept newer observations, and network operations do not absorb external changes. Core commit snapshot validation remains authoritative. Shared confirmation sheets bound their scrolling content and keep the action footer reachable.
+
+简体中文：提交确认比较已审查与当前观察的 Index 树/HEAD/分支身份，替代锁存标记；自身写入仅确认匹配的操作回执，旧弹窗不能确认新状态，网络阶段不吸收外部变化。Core 提交快照校验保持最终约束；共享确认页限制滚动内容高度并固定可达的操作区。
 
 Creation adds a private write-ahead reservation in the existing task store. Original filesystem identities are captured before the Git ownership marker; the pending record remains until task and application ownership writes both succeed. Explicit recovery verifies the original binding, not just a path/marker. Probes, login status and PTY use one in-memory `AgentEnvironment`; authentication remains exclusively CLI-owned. Review requests coalesce only while in flight, with bounded descriptor reads under `WorkspaceOperationBudget`; completed observations are never an mtime-based validity cache.
 

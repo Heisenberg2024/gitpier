@@ -1,6 +1,11 @@
 # Changelog
 
-## 1.8.0 — Unreleased (30)
+## 1.8.0 — 2026-10-22 (30)
+
+- Published [v1.8.0](https://github.com/Heisenberg2024/gitpier/releases/tag/v1.8.0) as Latest from `ce761f0`. Exact-source Swift 6.1.2 CI and local packaging passed 993 Core tests; Tag CI reused the full main run. Universal DMG, production signatures, Draft asset readback and anonymous public downloads/Latest Feed were verified. See [evidence and limits](docs/development.md#v180-publication--2026-10-22).
+- 已从 `ce761f0` 正式发布为 Latest；同源码 Swift 6.1.2 CI 与本地打包均通过 993 项 Core 测试，Tag CI 复用完整主运行。通用 DMG、生产签名、草稿附件回读及匿名公开下载/Latest Feed 核验通过，验收范围与边界见发布记录。
+- Compare reviewed Index, HEAD and branch snapshots, describe concrete changes and prevent obsolete review flags from repeatedly prompting. Preserve fresh precommit validation, partial staging, hooks and signing. 按已审查的 Index、HEAD 和分支快照比较并展示具体变化，避免历史审查标记反复提示；保留提交前重新校验、部分暂存、Hooks 与签名。
+- Bound confirmation content with shared scrolling and fixed action buttons, keeping long file lists usable. 确认内容复用共享滚动条并限制高度，固定操作按钮，避免大量文件将按钮挤出页面。
 
 - Bind task-detail navigation to the initiating request and selection identities; reject late opens after task, repository or page changes, preserve committed navigation success and reuse live task terminals. 将详情导航绑定发起请求与选择身份；任务、仓库或页面变化后拒绝迟到打开，保留已提交导航的成功结果，并复用运行中的任务终端。
 - Keep successful task creation distinct from automatic navigation failures, with retryable opening and separate Operations Center records. 创建成功与自动导航失败分别报告，提供重新打开入口与独立操作中心记录。
