@@ -147,7 +147,7 @@ struct PatchImportView: View {
   func execute() {
     guard let review, store.current === model, !model.busy else { return }
     dismiss()
-    model.run(label: store.text("Applying patch", "应用补丁"), completion: store.text("Patch applied. Review the resulting changes before committing.", "补丁已应用，请在提交前审查结果。")) { git in
+    model.run(label: store.text("Applying patch", "应用补丁"), completion: store.text("Patch applied. Review the resulting changes before committing.", "补丁已应用，请在提交前审查结果。"), updatesCommitState: review.target == .index ? .index : nil) { git in
       model.output = try await git.applyImportedPatch(review)
     }
   }

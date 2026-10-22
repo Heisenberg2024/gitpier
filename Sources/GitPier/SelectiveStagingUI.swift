@@ -96,7 +96,7 @@ import GitPierCore
                           file: FileChange, comparison: DiffComparison, index: IndexSnapshot) {
     guard !busy, !store.settings.ignoreWhitespace, !selected.isEmpty else { return }
     run(label: store.text(comparison == .staged ? "Unstaging selected lines" : "Staging selected lines",
-                          comparison == .staged ? "取消暂存选中行" : "暂存选中行")) { git in
+                          comparison == .staged ? "取消暂存选中行" : "暂存选中行"), updatesCommitState: .index) { git in
       let review = try await git.reviewSelectiveStaging(file: file, comparison: comparison,
                                                        expectedPatch: document.raw, expectedIndex: index)
       try await git.applySelectedLines(selected, expected: review)

@@ -196,7 +196,7 @@ enum ConflictSelection: Equatable { case edited, ours, theirs, delete }
       guard let self else { return }
       repository.run(
         label: repository.store.text("Resolving conflict", "解决冲突"),
-        completion: repository.store.text("File saved and marked resolved.", "文件已保存并标记解决。")
+        completion: repository.store.text("File saved and marked resolved.", "文件已保存并标记解决。"), updatesCommitState: .index
       ) { [weak self] git in
         guard let self else { return }
         do {

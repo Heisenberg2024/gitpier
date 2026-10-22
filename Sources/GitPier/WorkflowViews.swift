@@ -93,7 +93,7 @@ struct BranchesView: View {
       Button(store.text("Rename", "重命名")) {
         if let old = renaming {
           let new = renamed
-          model.run { git in
+          model.run(updatesCommitState: old == model.status.branch ? .checkout : nil) { git in
             try InputValidation.reference(new)
             try await git.perform(["check-ref-format", "--branch", new])
             try await git.perform(["branch", "-m", old, new])
@@ -134,14 +134,14 @@ struct BranchesView: View {
         .foregroundStyle(.secondary)
       if !branch.current {
         Button(store.text("Switch", "切换")) {
-          model.run { git in try await git.switchBranch(branch.name, remote: branch.remote) }
+          model.run(updatesCommitState: .checkout) { git in try await git.switchBranch(branch.name, remote: branch.remote) }
         }.controlSize(.small)
       }
     }.padding(.vertical, 8)
       .contextMenu {
         if !branch.current {
           Button(store.text("Switch", "切换")) {
-            model.run { git in try await git.switchBranch(branch.name, remote: branch.remote) }
+            model.run(updatesCommitState: .checkout) { git in try await git.switchBranch(branch.name, remote: branch.remote) }
           }
         }
         Button(store.text("Compare with Current Branch", "与当前分支比较")) {
@@ -329,7 +329,7 @@ struct StashView: View {
             }
             Spacer()
             Button(localizedUI("Apply")) {
-              model.run { git in model.output = try await git.stashOperation("apply", stash: stash)
+              model.run(updatesCommitState: .index) { git in model.output = try await git.stashOperation("apply", stash: stash)
               }
             }
             Button(localizedUI("Pop…")) {
@@ -339,7 +339,7 @@ struct StashView: View {
                   "Apply and remove this stash? Conflicts keep the stash intact.",
                   "应用并移除此 Stash？发生冲突时保留 Stash。") + "\n" + stash.message
               ) {
-                model.run { git in model.output = try await git.stashOperation("pop", stash: stash)
+                model.run(updatesCommitState: .index) { git in model.output = try await git.stashOperation("pop", stash: stash)
                 }
               }
             }

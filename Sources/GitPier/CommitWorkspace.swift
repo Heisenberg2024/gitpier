@@ -85,25 +85,10 @@ struct RepositoryWorkspace: View {
     }
     .sheet(isPresented: $model.showRebaseRecovery) { RebaseRecoveryView(model: model).environmentObject(store) }
     .sheet(item: $importedPatch) { PatchImportView(model: model, input: $0).environmentObject(store) }
-    .sheet(isPresented: Binding(get: { model.confirmation?.asynchronousReview == true }, set: { if !$0, model.confirmation?.asynchronousReview == true { model.confirmation = nil } })) { workflowReview }
-    .alert(
-      model.confirmation?.title ?? "",
-      isPresented: Binding(
-        get: { model.confirmation != nil && model.confirmation?.asynchronousReview != true },
-        set: { if !$0, model.confirmation?.asynchronousReview != true { model.confirmation = nil } })
-    ) {
-      Button(
-        model.confirmation?.confirmTitle ?? store.text("Confirm", "确认"),
-        role: model.confirmation?.destructive == false ? nil : .destructive
-      ) {
-        let action = model.confirmation?.action
-        model.confirmation = nil
-        action?()
-      }
-      Button(store.text("Cancel", "取消"), role: .cancel) { model.confirmation = nil }
-    } message: {
-      Text(model.confirmation?.detail ?? "")
-    }
+    .sheet(isPresented: Binding(
+      get: { model.confirmation != nil },
+      set: { if !$0 { model.confirmation = nil } })
+    ) { workflowReview }
     .task { await model.activate() }
     .background {
       if PerformanceAcceptance.enabled {
@@ -144,8 +129,8 @@ struct RepositoryWorkspace: View {
       }
     }
   }
-  /// Same PendingAction and guarded execution as other confirmations. A sheet
-  /// can update preparation/details in place; NSAlert caches them when shown.
+  /// Bound every PendingAction's details, including large commit/discard lists.
+  /// Keep actions outside the scroll region and allow async reviews to update in place.
   private var workflowReview: some View {
     VStack(alignment: .leading, spacing: 16) {
       Text(model.confirmation?.title ?? "").font(.headline)
@@ -158,7 +143,16 @@ struct RepositoryWorkspace: View {
         Spacer()
         Button(store.text("Cancel", "取消"), role: .cancel) { model.confirmation = nil }
           .keyboardShortcut(.cancelAction).accessibilityIdentifier("gitpier.workflow.review.cancel")
-        Button(model.confirmation?.confirmTitle ?? store.text("Confirm", "确认")) {
+        if let reviewedAction = model.confirmation?.reviewedAction {
+          Button(store.text("Reviewed, Commit Later", "已审查，稍后提交")) {
+            model.confirmation = nil
+            reviewedAction()
+          }.accessibilityIdentifier("gitpier.workflow.review.reviewed")
+        }
+        Button(
+          model.confirmation?.confirmTitle ?? store.text("Confirm", "确认"),
+          role: model.confirmation?.destructive == false ? nil : .destructive
+        ) {
           guard model.confirmation?.canConfirm == true else { return }
           let action = model.confirmation?.action
           model.confirmation = nil
@@ -167,6 +161,7 @@ struct RepositoryWorkspace: View {
           .disabled(model.confirmation?.canConfirm != true).accessibilityIdentifier("gitpier.workflow.review.confirm")
       }
     }.padding(24).frame(width: 560).frame(maxHeight: 420)
+      .modifier(AppAppearance(store: store))
       .onExitCommand { model.confirmation = nil }
   }
   var toolbar: some View {
@@ -175,7 +170,7 @@ struct RepositoryWorkspace: View {
       Menu {
         ForEach(model.branches.filter { !$0.remote }) { branch in
           Button((branch.current ? "✓ " : "") + branch.name) {
-            model.run { git in try await git.switchBranch(branch.name) }
+            model.run(updatesCommitState: .checkout) { git in try await git.switchBranch(branch.name) }
           }
         }
         Divider()

@@ -228,7 +228,7 @@ struct SubmoduleAddView: View {
       .alert(store.text("Clone & Add Submodule?", "克隆并添加子模块？"), isPresented: $confirming) {
         Button(store.text("Clone & Add", "克隆并添加")) {
           guard let review, store.current === model, !model.busy else { return }; dismiss()
-          model.run(label: store.text("Adding Submodule", "添加子模块")) { git in model.output = try await git.addSubmodule(review, progress: model.activity.receiver()) }
+          model.run(label: store.text("Adding Submodule", "添加子模块"), updatesCommitState: .index) { git in model.output = try await git.addSubmodule(review, progress: model.activity.receiver()) }
         }
         Button(store.text("Cancel", "取消"), role: .cancel) {}.keyboardShortcut(.defaultAction)
       } message: { Text(store.text("This downloads a repository into the displayed new directory and stages its configuration/gitlink. Existing directories are never replaced. No commit is created.", "将仓库下载到显示的新目录并暂存配置 / gitlink，绝不替换已有目录，不创建提交。")) }

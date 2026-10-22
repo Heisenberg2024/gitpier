@@ -80,6 +80,21 @@ import SwiftUI
         window.orderFront(nil)
         try await settle()
         try await waitFor { !model.refreshing && !model.diffLoading }
+        if acceptanceScope == "confirmations" {
+          window.close()
+          try await verifyConfirmations(root: root, output: output)
+          try await verifyCommitReviews(root: root, output: output)
+          store.shutdown()
+          print("Native bounded confirmation acceptance passed (temporary repository).")
+          exit(0)
+        }
+        if acceptanceScope == "commit-review" {
+          window.close()
+          try await verifyCommitReviews(root: root, output: output)
+          store.shutdown()
+          print("Native commit snapshot review acceptance passed (temporary repository).")
+          exit(0)
+        }
         if ProcessInfo.processInfo.environment["GITPIER_UI_ACCEPTANCE_SCOPE"] == "context-repository" {
           window.close(); store.shutdown()
           guard let repository = ProcessInfo.processInfo.environment["GITPIER_CONTEXT_READONLY_REPOSITORY"] else { throw GitPierError.invalidInput("Set the read-only acceptance repository path") }
@@ -917,7 +932,7 @@ import SwiftUI
     model.toggleIncluded(model.status.files.filter { model.includedPaths.contains($0.path) })
     model.toggleIncluded(model.status.files.filter { $0.path == path || $0.path == secondPath })
     model.editDraft("conflict acceptance current")
-    model.requiresIndexReview = false
+    if let snapshot = model.snapshot { model.indexReview.acknowledge(snapshot) }
     func press(_ title: String) throws {
       var visited: Set<ObjectIdentifier> = []
       var labels: [String] = []
@@ -960,13 +975,14 @@ import SwiftUI
     func pressAlert(_ title: String) async throws {
       try await waitFor { window.attachedSheet != nil }
       try await settle()
-      guard
-        let button = descendants(window.attachedSheet!.contentView!).compactMap({ $0 as? NSButton })
-          .first(where: { $0.title == title })
-      else {
+      let content = window.attachedSheet!.contentView!
+      if let button = descendants(content).compactMap({ $0 as? NSButton }).first(where: { $0.title == title }) {
+        button.performClick(nil)
+      } else if let button = assistantFind(content, id: "gitpier.workflow.review." + (title == store.text("Cancel", "取消") ? "cancel" : "confirm")) {
+        try assistantPress(button)
+      } else {
         throw GitPierError.invalidInput("Missing native conflict confirmation: " + title)
       }
-      button.performClick(nil)
       try await waitFor { window.attachedSheet == nil }
     }
     model.commit(push: true)
@@ -1111,6 +1127,7 @@ import SwiftUI
   ) async throws {
     window.center()
     window.makeKeyAndOrderFront(nil)
+    NSApp.activate(ignoringOtherApps: true)
     let git = await model.git()
     _ = try await git.commit(
       message: "acceptance setup", expected: git.snapshot(), selection: git.status().files)
@@ -1133,14 +1150,21 @@ import SwiftUI
       _ = try await peer.network("push")
       return commit.hash
     }
-    func pressAlert(_ title: String) async throws {
+    func pressReview(_ action: String) async throws {
       try await waitFor { window.attachedSheet != nil }
-      guard let sheet = window.attachedSheet,
-        let button = descendants(sheet.contentView!).compactMap({ $0 as? NSButton }).first(where: { $0.title == title })
-      else { throw GitPierError.invalidInput("Missing native recovery alert button: " + title) }
-      button.performClick(nil)
+      try await settle()
+      guard let content = window.attachedSheet?.contentView,
+        let button = assistantFind(content, id: "gitpier.workflow.review." + action)
+      else {
+        let elements = window.attachedSheet?.contentView.map { assistantElements($0) } ?? []
+        let details = elements.map { String(describing: type(of: $0)) + ": " + assistantString($0, "accessibilityIdentifier") + " | " + assistantString($0, "accessibilityLabel") }
+        throw GitPierError.invalidInput("Missing native recovery confirmation button: " + action + "\n" + details.joined(separator: "\n"))
+      }
+      try assistantPress(button)
       try await waitFor { window.attachedSheet == nil }
     }
+    let mergeHook = root.appendingPathComponent(".git/hooks/post-merge")
+    defer { try? FileManager.default.removeItem(at: mergeHook) }
     for language in [AppLanguage.english, .simplifiedChinese] {
       var settings = store.settings
       settings.language = language
@@ -1151,7 +1175,7 @@ import SwiftUI
       model.toggleIncluded(model.status.files.filter { model.includedPaths.contains($0.path) })
       model.toggleIncluded(model.status.files.filter { $0.path == "local-recovery.txt" })
       model.editDraft("acceptance local " + language.rawValue)
-      model.requiresIndexReview = false
+      if let snapshot = model.snapshot { model.indexReview.acknowledge(snapshot) }
       model.commit(push: true)
       try await waitFor { !model.busy && model.confirmation != nil }
       guard let rejection = model.rejectedPush, let localHead = model.lastCommit,
@@ -1171,15 +1195,20 @@ import SwiftUI
           to: output.appendingPathComponent("push-recovery-\(language.rawValue)-capture.txt"),
           atomically: true, encoding: .utf8)
       }
-      try await pressAlert(store.text("Cancel", "取消"))
+      try await pressReview("cancel")
       let afterCancel = try await git.status()
       let remoteAfterCancel = try await git.read(["--git-dir=" + remote.path, "rev-parse", "refs/heads/main"]).text
         .trimmingCharacters(in: .whitespacesAndNewlines)
       guard model.confirmation == nil, afterCancel.head == localHead, remoteAfterCancel == remoteHead else {
         throw GitPierError.invalidInput("Cancelling recovery mutated local or remote commits")
       }
+      if language == .english {
+        try "#!/bin/sh\nprintf 'Post-merge staging\\n' > hook-staged.txt\ngit add -- hook-staged.txt\n"
+          .write(to: mergeHook, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: mergeHook.path)
+      }
       model.confirmMergeAndPush(rejection)
-      try await pressAlert(store.text("Merge & Push", "合并并推送"))
+      try await pressReview("confirm")
       try await waitFor { !model.busy }
       let remoteAfter = try await git.read(["--git-dir=" + remote.path, "rev-parse", "refs/heads/main"]).text
         .trimmingCharacters(in: .whitespacesAndNewlines)
@@ -1190,28 +1219,79 @@ import SwiftUI
         model.status.head == remoteAfter,
         localSubjects.filter({ $0 == "acceptance local " + language.rawValue }).count == 1
       else { throw GitPierError.invalidInput("Recovery did not merge and push exactly once") }
+      if language == .english {
+        guard model.requiresIndexReview, model.snapshot?.paths.contains("hook-staged.txt") == true else {
+          throw GitPierError.invalidInput("Merge recovery acknowledged foreign staging made by post-merge Hook")
+        }
+        try FileManager.default.removeItem(at: mergeHook)
+        try await git.unstage(git.status().files.filter { $0.path == "hook-staged.txt" })
+        try FileManager.default.removeItem(at: root.appendingPathComponent("hook-staged.txt"))
+        await model.refresh()
+      }
     }
+    // Ordinary Merge and Rebase have the same Hook boundary as recovery.
+    _ = try await advancePeer(path: "ordinary-remote.txt", contents: "Ordinary merge input\n")
+    _ = try await git.network("fetch")
+    await model.refresh()
+    if let snapshot = model.snapshot { model.indexReview.acknowledge(snapshot) }
+    try "#!/bin/sh\nprintf 'Ordinary post-merge staging\\n' > hook-staged.txt\ngit add -- hook-staged.txt\n"
+      .write(to: mergeHook, atomically: true, encoding: .utf8)
+    try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: mergeHook.path)
+    model.perform(["merge", "--no-edit", "origin/main"])
+    try await waitFor { !model.busy }
+    guard model.error == nil, model.requiresIndexReview, model.snapshot?.paths.contains("hook-staged.txt") == true else {
+      throw GitPierError.invalidInput("Ordinary Merge acknowledged foreign staging made by post-merge Hook")
+    }
+    try FileManager.default.removeItem(at: mergeHook)
+    try await git.unstage(git.status().files.filter { $0.path == "hook-staged.txt" })
+    try FileManager.default.removeItem(at: root.appendingPathComponent("hook-staged.txt"))
+    try "Local rebase input\n".write(to: root.appendingPathComponent("rewrite-local.txt"), atomically: true, encoding: .utf8)
+    try await git.stage(git.status().files)
+    _ = try await git.commit(message: "acceptance local rewrite", expected: git.snapshot())
+    _ = try await advancePeer(path: "rewrite-remote.txt", contents: "Remote rebase input\n")
+    _ = try await git.network("fetch")
+    await model.refresh()
+    if let snapshot = model.snapshot { model.indexReview.acknowledge(snapshot) }
+    let rewriteHook = root.appendingPathComponent(".git/hooks/post-rewrite")
+    try "#!/bin/sh\nprintf 'Post-rewrite staging\\n' > hook-rewrite.txt\ngit add -- hook-rewrite.txt\n"
+      .write(to: rewriteHook, atomically: true, encoding: .utf8)
+    try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: rewriteHook.path)
+    defer { try? FileManager.default.removeItem(at: rewriteHook) }
+    model.perform(["rebase", "origin/main"])
+    try await waitFor { !model.busy }
+    guard model.error == nil, model.requiresIndexReview, model.snapshot?.paths.contains("hook-rewrite.txt") == true else {
+      throw GitPierError.invalidInput("Rebase acknowledged foreign staging made by post-rewrite Hook")
+    }
+    try FileManager.default.removeItem(at: rewriteHook)
+    try await git.unstage(git.status().files.filter { $0.path == "hook-rewrite.txt" })
+    try FileManager.default.removeItem(at: root.appendingPathComponent("hook-rewrite.txt"))
+    await model.refresh()
+    if let snapshot = model.snapshot { model.indexReview.acknowledge(snapshot) }
+
     let remoteConflict = try await advancePeer(path: "local-recovery.txt", contents: "remote conflict\n")
     try "local conflict\n".write(to: root.appendingPathComponent("local-recovery.txt"), atomically: true, encoding: .utf8)
     await model.refresh()
     model.toggleIncluded(model.status.files.filter { model.includedPaths.contains($0.path) })
     model.toggleIncluded(model.status.files.filter { $0.path == "local-recovery.txt" })
     model.editDraft("acceptance conflicting local")
-    model.requiresIndexReview = false
+    if let snapshot = model.snapshot { model.indexReview.acknowledge(snapshot) }
     model.commit(push: false)
     try await waitFor { !model.busy }
     let localConflict = model.lastCommit
     model.network("push")
     try await waitFor { !model.busy && model.confirmation != nil }
-    try await pressAlert("合并并推送")
+    try await pressReview("confirm")
     try await waitFor { !model.busy }
     let remoteAfterConflict = try await git.read(["--git-dir=" + remote.path, "rev-parse", "refs/heads/main"]).text
       .trimmingCharacters(in: .whitespacesAndNewlines)
     guard model.status.operation == .merge, model.status.files.contains(where: \.isConflicted),
       model.status.head == localConflict, remoteAfterConflict == remoteConflict,
       model.page == "conflicts", model.error == nil,
-      model.pushFailed, model.activity.state?.result == .failed
-    else { throw GitPierError.invalidInput("Conflict recovery pushed or lost its merge/local commit") }
+      model.pushFailed, model.activity.state?.result == .needsAttention
+    else {
+      throw GitPierError.invalidInput("Conflict recovery pushed or lost its merge/local commit"
+        + " (operation=\(String(describing: model.status.operation)), conflicts=\(model.status.files.contains(where: \.isConflicted)), local=\(model.status.head == localConflict), remote=\(remoteAfterConflict == remoteConflict), page=\(model.page), error=\(model.error != nil), pushFailed=\(model.pushFailed), activity=\(String(describing: model.activity.state?.result)))")
+    }
     model.error = nil
     try await settle()
     try "resolved content\n".write(to: root.appendingPathComponent("local-recovery.txt"), atomically: true, encoding: .utf8)
@@ -1226,7 +1306,7 @@ import SwiftUI
     guard model.error == nil, model.status.operation == nil, !model.pushFailed,
       model.status.head == completedHead, model.output?.hasPrefix("推送已完成。") == true
     else { throw GitPierError.invalidInput("Resolved merge could not continue and retry Push") }
-    try "English/Chinese native recovery alert buttons, cancel without writes, commit-and-push rejection, explicit push rejection, one local commit per attempt, merge despite pull.rebase/ff-only, successful push, conflict preservation, resolve/continue/retry passed against temporary local remotes.\n"
+    try "English/Chinese native recovery buttons, cancel without writes, commit-and-push rejection, explicit push rejection, one local commit per attempt, merge despite pull.rebase/ff-only, successful push, post-merge/rewrite staging review, conflict preservation, resolve/continue/retry passed against temporary local remotes.\n"
       .write(to: output.appendingPathComponent("push-recovery.txt"), atomically: true, encoding: .utf8)
   }
   static func verifyWorkspaceImprovements(
@@ -1375,7 +1455,7 @@ import SwiftUI
     }
     model.toggleIncluded([probeFile])
     model.editDraft("test: verify final commit and push notice")
-    model.requiresIndexReview = false
+    if let snapshot = model.snapshot { model.indexReview.acknowledge(snapshot) }
     model.commit(push: true)
     try await waitFor { !model.busy }
     guard model.lastCommit != nil, model.error == nil,
@@ -1415,7 +1495,7 @@ import SwiftUI
     }
     model.toggleIncluded([pendingFile])
     model.editDraft("test: report pending push")
-    model.requiresIndexReview = false
+    if let snapshot = model.snapshot { model.indexReview.acknowledge(snapshot) }
     model.commit(push: true)
     try await waitFor { !model.busy }
     guard model.needsUpstream, model.outputResult == .needsAttention,
@@ -1440,7 +1520,7 @@ import SwiftUI
     await model.refresh()
     model.toggleIncluded([pendingFile])
     model.editDraft("test: preserve commit on failed push")
-    model.requiresIndexReview = false
+    if let snapshot = model.snapshot { model.indexReview.acknowledge(snapshot) }
     model.commit(push: true)
     try await waitFor { !model.busy }
     guard model.pushFailed, model.error != nil, model.outputResult == .needsAttention,

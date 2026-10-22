@@ -154,7 +154,7 @@ struct InteractiveRebaseView: View {
     do { try plan.validate() } catch { problem = localizedUI(error.localizedDescription); return }
     dismiss()
     model.run(label: store.text("Interactive rebase", "交互式变基"),
-              completion: store.text("Interactive rebase completed. Review the rewritten history before pushing.", "交互式变基完成，请在推送前审查改写后的历史。"), kind: .rebase) { git in
+              completion: store.text("Interactive rebase completed. Review the rewritten history before pushing.", "交互式变基完成，请在推送前审查改写后的历史。"), kind: .rebase, updatesCommitState: .history) { git in
       model.output = try await git.startInteractiveRebase(plan)
     }
   }
@@ -257,6 +257,6 @@ struct RebaseRecoveryView: View {
     let edited = editMessage ? message : nil
     let label = controlTitle
     self.control = nil; dismiss()
-    model.run(label: label, kind: .rebase) { git in model.output = try await git.controlRebase(control, expected: state, message: edited) }
+    model.run(label: label, kind: .rebase, updatesCommitState: .history) { git in model.output = try await git.controlRebase(control, expected: state, message: edited) }
   }
 }

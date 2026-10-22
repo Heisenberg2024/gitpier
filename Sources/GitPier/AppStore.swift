@@ -550,7 +550,11 @@ struct DiffTab: Identifiable, Equatable {
   @Published var needsUpstream = false
   @Published var lastCommit: String?
   @Published var amend = false
-  @Published var requiresIndexReview = false
+  @Published var indexReview = CommitSnapshotReview()
+  var requiresIndexReview: Bool { indexReview.requiresReview }
+  // One local-write phase may consume this successful entry snapshot once.
+  // Network waits and the final refresh never accept new local changes as owned.
+  private var ownCommitStateEntry: IndexSnapshot?
   @Published private(set) var history: [CommitRecord] = []
   @Published private(set) var historyGraph: [String: GraphRow] = [:]
   @Published private(set) var historyLoading = false
@@ -695,10 +699,12 @@ struct DiffTab: Identifiable, Equatable {
       }
     }
   }
-  func refresh() async {
+  func refresh(afterCurrent: Bool = false) async {
     if let refreshTask {
+      let generation = refreshGeneration
       await refreshTask.value
-      return
+      guard afterCurrent else { return }
+      if refreshGeneration != generation { await refresh(afterCurrent: true); return }
     }
     refreshGeneration += 1
     let generation = refreshGeneration
@@ -749,10 +755,9 @@ struct DiffTab: Identifiable, Equatable {
       trackingReadUptime = ProcessInfo.processInfo.systemUptime
       let snap =
         new.files.contains(where: \.isConflicted) ? nil : try await git.snapshot(status: new)
-      let previousSnapshot = snapshot
       invalidateDiffCache()
-      if let old = previousSnapshot, let snap, old.identity != snap.identity && !busy {
-        requiresIndexReview = true
+      if let snap {
+        indexReview.observe(snap, ownedChangeFrom: nil)
       }
       if status.files != new.files {
         fileIndex = await Task.detached(priority: .userInitiated) { RepositoryFileIndex(new.files) }
@@ -1057,7 +1062,7 @@ struct DiffTab: Identifiable, Equatable {
       stageGroup([file], unstage: false)
       return
     }
-    run { git in
+    run(updatesCommitState: .index) { git in
       if file.isStaged && !file.isPartial {
         try await git.unstage([file])
       } else {
@@ -1071,16 +1076,17 @@ struct DiffTab: Identifiable, Equatable {
       openConflicts(conflict.path)
       return
     }
-    run { git in if unstage { try await git.unstage(files) } else { try await git.stage(files) } }
+    run(updatesCommitState: .index) { git in if unstage { try await git.unstage(files) } else { try await git.stage(files) } }
   }
   func run(
     label: String? = nil, completion: String? = nil, notify: Bool = false,
-    kind: WorkflowOperationKind = .git,
+    kind: WorkflowOperationKind = .git, updatesCommitState: CommitStateUpdate? = nil,
     _ action: @escaping (GitService) async throws -> Void
   ) {
     guard !busy else { return }
     do { try store.requireWorktreeAvailable(record.path) }
     catch { self.error = error.localizedDescription; return }
+    ownCommitStateEntry = nil
     confirmationReviewID = UUID()
     confirmationReviewTask?.cancel()
     confirmationReviewTask = nil
@@ -1092,6 +1098,7 @@ struct DiffTab: Identifiable, Equatable {
     let hadConflicts = status.files.contains(where: \.isConflicted)
     activeTask = Task {
       defer {
+        ownCommitStateEntry = nil
         busy = false
         activeTask = nil
         if let rejection = pendingPushRecovery {
@@ -1111,12 +1118,21 @@ struct DiffTab: Identifiable, Equatable {
         try Task.checkCancellation()
         try store.requireWorktreeAvailable(record.path)
         activity.markRunning()
-        try await action(await git())
+        let git = await git()
+        // Observe changes that predate this action even when the visible model is stale.
+        // A failed/conflicted snapshot still leaves the operation's original validation in charge.
+        if let before = try? await git.snapshot() {
+          indexReview.observe(before, ownedChangeFrom: nil)
+          ownCommitStateEntry = before
+        }
+        try Task.checkCancellation()
+        try await action(git)
         if error != nil {
           result = .failed
         } else if outputResult == .needsAttention {
           result = .needsAttention
         }
+        if let updatesCommitState, result != .failed { await recordOwnCommitState(git, update: updatesCommitState) }
         let details = GitOutputSummary.details(output ?? "")
         let summary = result == .succeeded
           ? (completion ?? (label ?? store.text("Git operation", "Git 操作"))
@@ -1134,7 +1150,8 @@ struct DiffTab: Identifiable, Equatable {
       }
       await store.workspace.endManualOperation()
       activity.advance(store.text("Refreshing", "刷新仓库"), cancellable: false, phase: .refreshing)
-      await refresh()
+      // A read started during the write may still contain an older snapshot.
+      await refresh(afterCurrent: true)
       if !hadConflicts, status.files.contains(where: \.isConflicted) {
         setPage("conflicts")
         let diagnosis = error.map { "\n\n" + $0 } ?? ""
@@ -1154,6 +1171,13 @@ struct DiffTab: Identifiable, Equatable {
       if notify, let output { store.notifyCompletion(output) }
     }
   }
+  private func recordOwnCommitState(_ git: GitService, update: CommitStateUpdate) async {
+    let entry = ownCommitStateEntry
+    ownCommitStateEntry = nil
+    guard let completed = try? await git.snapshot() else { return }
+    let matches = entry.map { update.accepts($0, completed) } ?? false
+    indexReview.observe(completed, ownedChangeFrom: matches ? entry?.identity : nil)
+  }
   func cancel() {
     guard !committing else { return }
     activity.advance(store.text("Cancelling", "取消中"), cancellable: false, phase: .cancelling)
@@ -1163,18 +1187,16 @@ struct DiffTab: Identifiable, Equatable {
     guard canCommit, let expected = snapshot else { return }
     let selection = status.files.filter { includedPaths.contains($0.path) }
     if amend || requiresIndexReview {
-      let warning =
-        amend
-        ? store.text(
-          "This rewrites commit history. Ensure the last commit has not been shared.",
-          "这会重写历史，请确认最后一次提交尚未共享。")
-        : store.text(
-          "The Index or HEAD changed externally. Confirm the current staged files before committing.",
-          "Index 或 HEAD 发生外部变化，请确认当前暂存文件后再提交。")
       confirmation = PendingAction(
         title: store.text("Review Commit", "确认提交"),
-        detail: warning + "\n\n" + selection.map(\.path).joined(separator: "\n")
-      ) { [weak self] in self?.performCommit(push: push, expected: expected, selection: selection) }
+        detail: commitReviewDetail(expected: expected, selection: selection),
+        confirmTitle: store.text(push ? "Commit & Push" : "Commit", push ? "提交并推送" : "提交"),
+        reviewedAction: requiresIndexReview ? { [weak self] in self?.indexReview.acknowledge(expected) } : nil
+      ) { [weak self] in
+        guard let self else { return }
+        indexReview.acknowledge(expected)
+        performCommit(push: push, expected: expected, selection: selection)
+      }
     } else {
       performCommit(push: push, expected: expected, selection: selection)
     }
@@ -1200,13 +1222,13 @@ struct DiffTab: Identifiable, Equatable {
       let result = try await git.commit(
         message: message, expected: expected, amend: amend, selection: selection,
         reviewedPatches: reviewed)
+      await recordOwnCommitState(git, update: .commit(head: result.hash, branch: expected.branch, acceptsIndex: !result.indexChangedDuringCommit))
       lastCommit = result.hash
       includedPaths.subtract(selection.map(\.path))
       recentMessages.insert(message, at: 0)
       recentMessages = Array(recentMessages.prefix(15))
       editDraft("")
       self.amend = false
-      requiresIndexReview = false
       committing = false
       let localOutput =
         store.text("Local commit succeeded: ", "本地提交成功：")
@@ -1274,6 +1296,7 @@ struct DiffTab: Identifiable, Equatable {
       : operation == "pull"
         ? store.text("Pull completed.", "拉取已完成。")
         : store.text("Fetch completed.", "获取已完成。")
+    // Pull includes a network interval; its resulting local changes require review.
     run(label: title, completion: completed, notify: true, kind: operation == "push" ? .push : operation == "pull" ? .pull : .fetch) { [weak self] git in
       guard let self else { return }
       if let context {
@@ -1356,7 +1379,8 @@ struct DiffTab: Identifiable, Equatable {
       defer { committing = false }
       do {
         let details = try await git.mergeAndPush(rejection) { [weak self] phase in
-          await MainActor.run {
+          if phase == .pushing { await self?.recordOwnCommitState(git, update: .history) }
+          return await MainActor.run {
             guard let self else { return nil }
             self.committing = phase == .merging
             let title: String
@@ -1443,6 +1467,7 @@ struct DiffTab: Identifiable, Equatable {
     ) { [weak self] in self?.finishMerge(review, target: target) }
   }
   private func finishMerge(_ review: MergeReview, target: PushRejection?) {
+    indexReview.acknowledge(review.index)
     run(
       label: store.text(
         target == nil ? "Continuing merge" : "Continue Merge & Push",
@@ -1454,6 +1479,7 @@ struct DiffTab: Identifiable, Equatable {
       activity.advance(store.text("Creating merge commit", "创建合并提交"), cancellable: false)
       defer { committing = false }
       let commit = try await git.completeMerge(review)
+      await recordOwnCommitState(git, update: .commit(head: commit.hash, branch: review.index.branch, acceptsIndex: !commit.indexChangedDuringCommit))
       committing = false
       conflictPush = nil
       output = store.text("Merge completed: ", "合并已完成：") + String(commit.hash.prefix(8))
@@ -1517,7 +1543,7 @@ struct DiffTab: Identifiable, Equatable {
     let reverse = comparison == .staged || discard
     let expected = snapshot
     let action: () -> Void = { [weak self] in
-      self?.run { git in
+      self?.run(updatesCommitState: discard ? nil : .index) { git in
         try await git.applyHunk(hunk.patch, reverse: reverse, toIndex: !discard, expected: expected)
       }
     }
@@ -1614,7 +1640,16 @@ struct DiffTab: Identifiable, Equatable {
     confirmationReviewID = UUID()
     confirmationReviewTask?.cancel()
     let action: (GitOperationReview?) -> Void = { [weak self] review in
-      self?.run(kind: args.first == "rebase" ? .rebase : args.first == "merge" ? .merge : .git) { [weak self] git in
+      let changesState: CommitStateUpdate?
+      switch args.first ?? "" {
+      case "reset": changesState = .reset
+      case "switch", "checkout": changesState = .checkout
+      case "merge", "rebase", "cherry-pick", "revert", "am": changesState = .history
+      case "stash": changesState = ["push", "save", "apply", "pop"].contains(args.dropFirst().first ?? "") ? .index : nil
+      default: changesState = nil
+      }
+      self?.run(kind: args.first == "rebase" ? .rebase : args.first == "merge" ? .merge : .git,
+                updatesCommitState: changesState) { [weak self] git in
         guard let self else { return }
         if let context {
           guard self.store.current === self, !self.store.showDashboard, self.store.settings.gitPath == context.gitExecutable,
@@ -1786,6 +1821,7 @@ struct PendingAction: Identifiable {
   var destructive = true
   var canConfirm = true
   var asynchronousReview = false
+  var reviewedAction: (() -> Void)? = nil
   var action: () -> Void
 }
 
