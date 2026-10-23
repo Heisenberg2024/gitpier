@@ -80,6 +80,13 @@ import SwiftUI
         window.orderFront(nil)
         try await settle()
         try await waitFor { !model.refreshing && !model.diffLoading }
+        if acceptanceScope == "merge-state" {
+          window.close()
+          try await verifyMergeState(root: root, output: output)
+          store.shutdown()
+          print("Native pending merge state acceptance passed (temporary repositories).")
+          exit(0)
+        }
         if acceptanceScope == "merge-revert" {
           window.close()
           try await verifyMergeRevert(root: root, output: output)
@@ -1104,7 +1111,9 @@ import SwiftUI
     guard model.status.head == localHead, model.status.operation == .merge else {
       throw GitPierError.invalidInput("Cancelling merge review created a commit")
     }
-    try press("审查、继续并推送")
+    model.setPage("commit")
+    try await settle()
+    try press("完成并推送…")
     try await waitFor { !model.busy && model.confirmation != nil }
     try await pressAlert("继续并推送")
     try await waitFor { !model.busy }

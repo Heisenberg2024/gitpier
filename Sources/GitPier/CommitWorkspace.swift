@@ -16,6 +16,10 @@ struct RepositoryWorkspace: View {
     VStack(spacing: 0) {
       toolbar
       Divider()
+      if model.status.operation == .merge {
+        MergeStateBanner(model: model)
+        Divider()
+      }
       if let output = model.output {
         HStack(alignment: .center, spacing: 10) {
           Image(
@@ -392,7 +396,10 @@ struct ChangesPanel: View {
                 }
               }
               if model.status.files.isEmpty {
-                Text(store.text("Working tree is clean", "工作区干净")).font(uiFont(size: 11))
+                Text(model.status.operation == nil
+                  ? store.text("Working tree is clean", "工作区干净")
+                  : store.text("No file changes · Git operation still in progress", "没有文件差异 · Git 操作尚未完成"))
+                  .font(uiFont(size: 11))
                   .foregroundStyle(.secondary).padding(18)
               }
             }.padding(.vertical, 6).background(
@@ -604,7 +611,7 @@ struct ChangesPanel: View {
         Spacer()
         Toggle(localizedUI("Amend"), isOn: $model.amend).toggleStyle(.checkbox).font(
           uiFont(size: 10)
-        ).help(
+        ).disabled(model.status.operation != nil).help(
           store.text("Amend rewrites the latest commit", "Amend 会重写最后一次提交"))
         Menu {
           ForEach(["feat", "fix", "docs", "refactor", "test", "chore"], id: \.self) { type in
@@ -648,11 +655,22 @@ struct ChangesPanel: View {
           .foregroundStyle(.secondary)
       }.font(uiFont(size: 10, design: .monospaced)).padding(.horizontal, 10).frame(height: 26)
       HStack(spacing: 7) {
-        Button(store.text("Commit", "提交")) { model.commit(push: false) }.buttonStyle(
-          .borderedProminent)
-        Button(store.text("Commit & Push…", "提交并推送…")) { model.commit(push: true) }
+        if model.status.operation == .merge {
+          Button(store.text("Complete Merge…", "完成合并…")) { model.reviewMergeContinuation() }
+            .buttonStyle(.borderedProminent).disabled(!model.canContinueMerge)
+            .accessibilityIdentifier("gitpier.merge.complete")
+          if model.conflictPush != nil {
+            Button(store.text("Complete & Push…", "完成并推送…")) { model.reviewMergeContinuation(push: true) }
+              .disabled(!model.canContinueMerge).accessibilityIdentifier("gitpier.merge.complete-push")
+          }
+        } else {
+          Button(store.text("Commit", "提交")) { model.commit(push: false) }.buttonStyle(
+            .borderedProminent).disabled(!model.canCommit)
+          Button(store.text("Commit & Push…", "提交并推送…")) { model.commit(push: true) }
+            .disabled(!model.canCommit)
+        }
         Spacer()
-      }.controlSize(.small).disabled(!model.canCommit).padding(10)
+      }.controlSize(.small).padding(10)
     }
   }
   func selected(_ file: FileChange) -> [FileChange] {

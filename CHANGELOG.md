@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Keep pending merges visible across repository pages and offer Complete Merge on the Commit page even when conflict resolution leaves no file differences. Review ordered parents and the merge message through the existing protected completion path; keep ordinary empty commits blocked.
+- 修复冲突解决后无文件差异时误显“工作区干净”且提交入口不可用的问题；仓库各页面持续显示待完成合并，提交页提供“完成合并”，复用原保护流程审查按序父提交及合并说明，普通空提交仍禁止。
+
 - Revert merge commits from History with an explicit numbered mainline parent, full hashes and subjects in the existing bounded confirmation sheet. Create a new revert commit with reviewed HEAD/branch/Index/operation checks, hooks, signing and conflict recovery preserved; no automatic push. Ordinary commit Revert is unchanged.
 - 支持在历史的原有有界确认页中显式选择主线父提交，展示编号、完整 Hash 和标题后创建合并撤销提交。保留 HEAD、分支、Index、操作状态复核及 Hooks、签名和冲突恢复，不自动推送；普通提交 Revert 流程不变。
 

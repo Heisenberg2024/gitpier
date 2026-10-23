@@ -204,6 +204,8 @@ For the rejected-push workflow only, run `GITPIER_UI_ACCEPTANCE_SCOPE=push-recov
 
 Use `GITPIER_UI_ACCEPTANCE_SCOPE=version110 Scripts/ui-acceptance.sh` for native update-delegate/gate registration, deferred install callbacks, cancellation of reviewed destructive actions, full-history layout, rapid stash previews and bilingual About captures.
 
+Use `GITPIER_UI_ACCEPTANCE_SCOPE=merge-state Scripts/ui-acceptance.sh` for the no-diff pending merge regression. It constructs the amended-history conflict in a disposable repository and checks the actual Commit-page completion control, ordered parents/message review, both languages/themes, cancellation, hook failure and retry, unchanged-tree merge completion, partial staging, stale reviews, linked worktrees, confirmed abort, external completion followed by refresh and separate cherry-pick/rebase recovery. Use an isolated application identity for native acceptance.
+
 Use `GITPIER_UI_ACCEPTANCE_SCOPE=conflicts Scripts/ui-acceptance.sh` for the built-in conflict editor. It uses disposable local remotes to verify native text input, block-choice button actions, drafts across files, save/review cancellation, protected merge commits and the original push destination. English and Simplified Chinese captures contain only the fixture window.
 
 App-modal `NSAlert.runModal()` is separate from SwiftUI's attached sheets. Default conflict acceptance checks its alert configuration without displaying a blocking quit dialog. Set `GITPIER_UI_ACCEPTANCE_INTERACTIVE_QUIT=1` only for an interactive run and press Cancel on the actual quit alert; do not infer a successful click from a proxy button or an empty `attachedSheet`.

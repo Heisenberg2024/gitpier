@@ -322,7 +322,7 @@ struct ConflictResolutionView: View {
                   model.conflictPush == nil ? "审查并继续合并" : "审查、继续并推送")
               ) {
                 model.reviewMergeContinuation(push: model.conflictPush != nil)
-              }.buttonStyle(.borderedProminent).disabled(model.busy)
+              }.buttonStyle(.borderedProminent).disabled(!model.canContinueMerge)
                 .accessibilityIdentifier("gitpier.conflict.continue")
             } else if model.status.operation == nil {
               Button(store.text("Review Commit", "审查提交")) { model.setPage("commit") }

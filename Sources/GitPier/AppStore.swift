@@ -629,6 +629,10 @@ struct DiffTab: Identifiable, Equatable {
       && status.operation == nil && !fileIndex.hasConflicts
   }
   var selectedFile: FileChange? { selectedPath.flatMap { fileIndex.byPath[$0] } }
+  var canContinueMerge: Bool {
+    available && !busy && !refreshing && snapshot != nil
+      && status.operation == .merge && !fileIndex.hasConflicts
+  }
   var filteredFiles: [FileChange] {
     let key = "\(fileGeneration):\(filter):\(query)"
     if filteredKey == key { return filteredCache }
@@ -1436,7 +1440,7 @@ struct DiffTab: Identifiable, Equatable {
     conflictEditor.select(path ?? status.files.first(where: \.isConflicted)?.path)
   }
   func reviewMergeContinuation(push: Bool = false) {
-    guard status.operation == .merge, !status.files.contains(where: \.isConflicted) else { return }
+    guard canContinueMerge else { return }
     run(label: store.text("Reviewing merge", "审查合并"), completion: "", kind: .merge) { [weak self] git in
       guard let self else { return }
       pendingMergeReview = (try await git.reviewMerge(), push)
@@ -1455,8 +1459,15 @@ struct DiffTab: Identifiable, Equatable {
         "是否使用以下已暂存文件创建合并提交？Hooks 和签名仍有效，不包含未暂存修改。")
         + "\n\n"
         + (review.index.paths.isEmpty
-          ? store.text("The merge keeps the current file tree.", "合并将保留当前文件树。")
+          ? store.text(
+            "There are no staged content changes. A merge commit is still needed to record the joined histories; the file tree stays unchanged.",
+            "当前没有暂存内容差异，仍需创建合并提交以记录两条历史的合并关系；文件树保持不变。")
           : review.index.paths.joined(separator: "\n"))
+        + "\n\n" + store.text("Merge parents (in order):", "合并父提交（按顺序）：")
+        + "\n" + ([review.index.head].compactMap { $0 }
+          + String(decoding: review.parents, as: UTF8.self).split(whereSeparator: \.isWhitespace).map(String.init))
+          .enumerated().map { "\($0.offset + 1). \($0.element)" }.joined(separator: "\n")
+        + "\n\n" + store.text("Merge message:", "合并说明：") + "\n" + review.message
         + (target.map {
           "\n\n" + GitService.redact($0.remoteURL) + "\n" + review.index.branch + " → "
             + String($0.remoteReference.dropFirst("refs/heads/".count))
