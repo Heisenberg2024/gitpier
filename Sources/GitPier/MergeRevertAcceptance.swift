@@ -44,10 +44,11 @@ import SwiftUI
     var checks: [String] = []
     var phase = "starting"
     defer {
-      let diagnostic = checks.joined(separator: "\n") + "\nPhase: " + phase
-        + "\nBusy: \(model.busy), refreshing: \(model.refreshing), sheet: \(window.attachedSheet != nil)"
-        + "\nConfirmation: " + (model.confirmation?.title ?? "none") + ", ready: \(model.confirmation?.canConfirm ?? false)"
-        + "\nError: " + (model.error ?? "none")
+      var diagnostic = checks.joined(separator: "\n")
+      diagnostic += "\nPhase: \(phase)"
+      diagnostic += "\nBusy: \(model.busy), refreshing: \(model.refreshing), sheet: \(window.attachedSheet != nil)"
+      diagnostic += "\nConfirmation: \(model.confirmation?.title ?? "none"), ready: \(model.confirmation?.canConfirm ?? false)"
+      diagnostic += "\nError: \(model.error ?? "none")"
       try? diagnostic.write(to: output.appendingPathComponent("merge-revert-diagnostics.txt"), atomically: true, encoding: .utf8)
     }
     func require(_ value: Bool, _ name: String) throws {
