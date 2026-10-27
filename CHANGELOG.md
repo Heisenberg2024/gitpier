@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Reuse native AppKit file-list rows to improve scrolling with hundreds or thousands of changes, preserving list/tree groups, independent inclusion checkboxes, multi-selection, keyboard navigation, context menus and shared overlay scrollbars.
+- 提交页文件列表改为复用 AppKit 原生行视图，改善数百至数千文件下的滚动性能，保留列表/目录树分组、独立勾选、多选、键盘导航、右键菜单及统一覆盖滚动条。
+
+- Avoid loading encoded binary payloads into Index snapshot statistics, fixing safe-loading-limit errors during refresh and Commit & Push with staged images/audio. Exact tree validation, partial staging and binary Patch export remain intact.
+- 修复暂存图片、音频等资源后刷新及提交并推送触发安全加载上限的问题；快照统计仅保留二进制摘要，继续使用完整 Git 树校验并保留部分暂存及二进制补丁导出。
+
 - Keep pending merges visible across repository pages and offer Complete Merge on the Commit page even when conflict resolution leaves no file differences. Review ordered parents and the merge message through the existing protected completion path; keep ordinary empty commits blocked.
 - 修复冲突解决后无文件差异时误显“工作区干净”且提交入口不可用的问题；仓库各页面持续显示待完成合并，提交页提供“完成合并”，复用原保护流程审查按序父提交及合并说明，普通空提交仍禁止。
 

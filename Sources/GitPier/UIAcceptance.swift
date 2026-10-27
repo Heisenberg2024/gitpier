@@ -109,6 +109,13 @@ import SwiftUI
           print("Native commit snapshot review acceptance passed (temporary repository).")
           exit(0)
         }
+        if acceptanceScope == "file-scroll" {
+          window.close()
+          try await verifyFileScroll(store: store, model: model, root: root, output: output)
+          store.shutdown()
+          print("Native file scrolling acceptance passed (temporary repository).")
+          exit(0)
+        }
         if ProcessInfo.processInfo.environment["GITPIER_UI_ACCEPTANCE_SCOPE"] == "context-repository" {
           window.close(); store.shutdown()
           guard let repository = ProcessInfo.processInfo.environment["GITPIER_CONTEXT_READONLY_REPOSITORY"] else { throw GitPierError.invalidInput("Set the read-only acceptance repository path") }

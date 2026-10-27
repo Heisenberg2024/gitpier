@@ -1,5 +1,31 @@
 # Development
 
+## Large staged assets and Commit file scrolling — 2026-10-27
+
+Index snapshot statistics omit encoded binary payloads while retaining the exact tree/HEAD/branch/path receipt. A real staged-assets case produced a **26,220,056-byte** binary patch against the **16 MiB** loading limit; its text-statistics patch is **775,088 bytes**. Two disposable Git regressions failed with `outputLimit` before the fix and passed afterward, covering selected binary commit/local push, partial and excluded staging, unborn Index, unchanged Index bytes during reads and stale binary receipts.
+
+The Commit file list now uses reusable AppKit cells with existing model-owned actions and the shared overlay scrollbar. Marking the old SwiftUI list as a leaf stopped repeated discovery but did not materially improve scrolling; native cell reuse addresses the measured row creation/layout cost. A frozen Debug baseline and final fixture use the same 226/1000-change data, list/tree modes and 90 scroll steps per case. Each interval **includes a fixed 8 ms pacing delay**, so these are comparative fixture intervals, not physical touchpad FPS measurements.
+
+| Changes | Mode | Baseline P95 | Final P95 | Baseline/final materialized rows |
+| --- | --- | --- | --- | --- |
+| 226 | List | 30.31 ms | 13.74 ms | 54 / 17 |
+| 226 | Tree | 30.72 ms | 13.37 ms | 51 / 18 |
+| 1000 | List | 97.78 ms | 16.88 ms | 161 / 17 |
+| 1000 | Tree | 89.88 ms | 16.66 ms | 151 / 18 |
+
+The final follow-up passed viewport reuse, zero repeated leaf discovery, unchanged scroll-only Diff reads/selection/inclusion/Index, 16 native control checks and bilingual light/dark 960×640 captures. An earlier final-input run had one 299.59 ms maximum at 226/tree; it remains in the evidence, and the follow-up maximum for that case was 26.23 ms. Full native UI/PTY acceptance passed with 104 captures, including first-click/double-click, keyboard focus, Command/Shift selection, right/Control clicks, nested scrollbar geometry, fade and pass-through. The initial focus attempt only changed FileMouseDownView and was removed after it failed; the table's shared navigation callback now restores row focus. **1010 Core tests passed with zero failures/errors/skips**; all 118 captured Swift Core/test/package/test-runner hashes still match that run, and the two native PTY inputs match the initially clean HEAD.
+
+```sh
+Scripts/test.sh --parallel --num-workers 2 --jobs 2 --disable-index-store
+CONFIGURATION=debug Scripts/build-app.sh
+GITPIER_UI_ACCEPTANCE_SCOPE=file-scroll Scripts/ui-acceptance.sh .cache/large-index-fix/scroll-confirmed
+Scripts/ui-acceptance.sh .cache/large-index-fix/full-ui-focus
+```
+
+Evidence is under `.cache/large-index-fix`: `core-tests.xml`, `scroll-before`, `scroll-confirmed`, `full-ui-focus`, input manifests and build logs. Native scopes use disposable repositories and local remotes. Initial CUA scrolling on the old installed window failed because of its desktop position; comparative performance uses the native temporary fixture. After explicit approval to end the live terminal, the final Release was installed and normally restarted. The real client page loaded 226 staged files and its saved draft, enabled Commit and no longer showed the limit error; native scrolling reached the bottom and returned to the top. Client HEAD/branch/exact Index/status and all 14 repository/draft/credential-reference identities were preserved. No real client commit/push or remote CI/publication was performed. The old installation and saved workspace have private local backups; see installed-backup/install-report.json under the evidence directory.
+
+简体中文：修复大二进制暂存导致刷新/提交并推送触发加载上限；提交仍按完整 Git 树校验。提交页文件列表改用 AppKit 可复用行，保留原有勾选、分组/目录树、多选、菜单、键盘定位和统一覆盖滚动条。相同临时数据下，226 文件列表/树 P95 约 **30→13–14 ms**，1000 文件约 **90–98→17 ms**，均含固定 8 ms 采样间隔；实际行视图降至 17–18 个。1010 项 Core、16 项新增原生交互及 104 图完整 UI/PTY 验收通过；经明确确认结束终端后，已安装并正常重启最终 Release；真实 client 的226项暂存、草稿及提交入口恢复，原生滚动到底/回顶通过，HEAD/分支/Index/status与14仓库元数据保持。物理触控板帧率、远程 CI 与真实 client 提交/推送不属于本轮验收。
+
 ## Merge revert mainline selection (development)
 
 History → Revert on a merge commit opens the existing bounded confirmation sheet. Parents are numbered in Git order and show full hashes and subjects; no parent is selected automatically. The selected parent is the reference history used to reverse the merge, not a branch guessed from its name. Confirming creates a new revert commit without pushing or rewriting history. Ordinary commit Revert keeps its existing flow. Fast-forward integrations have no merge commit and therefore no mainline picker.

@@ -55,11 +55,12 @@ struct UnifiedScrollbars: NSViewRepresentable {
     func visit(_ view: NSView) {
       guard !view.isHidden else { return }
       if let scroll = view as? NSScrollView {
-        OverlayScrollbars.install(on: scroll).refresh()
+        let overlay = OverlayScrollbars.install(on: scroll)
+        overlay.refresh()
         // SwiftUI scroll documents can contain other scroll views or editors.
         // Inspect their materialized native views, but skip Diff cells and text
         // document leaves; neither contains another scrolling container.
-        if !(scroll is DiffScrollView), let document = scroll.documentView,
+        if !overlay.hasLeafDocument, !(scroll is DiffScrollView), let document = scroll.documentView,
           !(document is NSTextView) { visit(document) }
         return
       }
@@ -79,6 +80,14 @@ struct UnifiedScrollbars: NSViewRepresentable {
   let verticalThumb = OverlayScrollThumb(horizontal: false)
   let horizontalThumb = OverlayScrollThumb(horizontal: true)
   weak var scrollView: NSScrollView?
+  // A live marker opts known leaf content out of discovery. Validate ancestry
+  // each time so replacing/reusing a SwiftUI document restores nested discovery.
+  weak var leafDocumentMarker: NSView?
+  var hasLeafDocument: Bool {
+    guard let marker = leafDocumentMarker, let scrollView,
+      marker.enclosingScrollView === scrollView, let document = scrollView.documentView else { return false }
+    return marker === document || marker.isDescendant(of: document)
+  }
   private weak var observedClip: NSClipView?
   private weak var observedDocument: NSView?
   nonisolated(unsafe) private var observers: [NSObjectProtocol] = []

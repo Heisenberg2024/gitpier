@@ -366,63 +366,8 @@ struct ChangesPanel: View {
           }
         }.font(uiFont(size: 11)).padding(.horizontal, 12).frame(height: 33)
         Divider()
-        ScrollViewReader { proxy in
-          ScrollView {
-            LazyVStack(alignment: .leading, spacing: 0) {
-              let tracked = model.filteredFiles.filter { !$0.isUntracked }
-              let untracked = model.filteredFiles.filter(\.isUntracked)
-              fileGroup(
-                title: store.text("Tracked Files", "已跟踪文件"), files: tracked,
-                expanded: $panels.trackedExpanded)
-              if panels.trackedExpanded {
-                ForEach(entries(tracked)) { entry in
-                  if let file = entry.file {
-                    fileRow(file, depth: entry.depth)
-                  } else {
-                    directoryRow(entry)
-                  }
-                }
-              }
-              fileGroup(
-                title: store.text("Untracked Files", "未跟踪文件"), files: untracked,
-                expanded: $panels.untrackedExpanded)
-              if panels.untrackedExpanded {
-                ForEach(entries(untracked)) { entry in
-                  if let file = entry.file {
-                    fileRow(file, depth: entry.depth)
-                  } else {
-                    directoryRow(entry)
-                  }
-                }
-              }
-              if model.status.files.isEmpty {
-                Text(model.status.operation == nil
-                  ? store.text("Working tree is clean", "工作区干净")
-                  : store.text("No file changes · Git operation still in progress", "没有文件差异 · Git 操作尚未完成"))
-                  .font(uiFont(size: 11))
-                  .foregroundStyle(.secondary).padding(18)
-              }
-            }.padding(.vertical, 6).background(
-              ScrollMemory(key: "files-" + model.record.id.uuidString))
-          }.onReceive(NotificationCenter.default.publisher(for: .gitpierRevealSelected)) { event in
-            guard event.object == nil || event.object as? UUID == model.record.id else { return }
-            if let path = model.selectedPath {
-              panels.trackedExpanded = true
-              panels.untrackedExpanded = true
-              model.expandedDirectories.formUnion(parents(path))
-              proxy.scrollTo(path, anchor: .center)
-            }
-          }.onMoveCommand { direction in
-            let files = model.filteredFiles
-            guard !files.isEmpty else { return }
-            let index = files.firstIndex { $0.path == model.selectedPath } ?? 0
-            let next =
-              direction == .down
-              ? min(files.count - 1, index + 1) : direction == .up ? max(0, index - 1) : index
-            model.select(files[next])
-            proxy.scrollTo(files[next].path)
-          }.focusable().focusEffectDisabled()
-        }.frame(maxHeight: .infinity)
+        NativeChangesList(model: model, panels: panels, rows: listRows,
+          menu: fileMenu, move: moveFileSelection).frame(maxHeight: .infinity)
         ResizeHandle(
           vertical: false,
           onDrag: { delta in
@@ -442,101 +387,29 @@ struct ChangesPanel: View {
   var selectedChanges: [FileChange] {
     model.status.files.filter { model.selectedPaths.contains($0.path) }
   }
-  @ViewBuilder func fileGroup(title: String, files: [FileChange], expanded: Binding<Bool>)
-    -> some View
-  {
-    let all = !files.isEmpty && files.allSatisfy { model.includedPaths.contains($0.path) }
-    let mixed = files.contains { model.includedPaths.contains($0.path) } && !all
-    HStack(spacing: 7) {
-      Button {
-        expanded.wrappedValue.toggle()
-      } label: {
-        Image(systemName: expanded.wrappedValue ? "chevron.down" : "chevron.right").font(
-          .system(size: 9)
-        ).frame(width: 12)
-      }.buttonStyle(.workspace)
-      StagingCheckbox(
-        state: all ? .on : mixed ? .mixed : .off, enabled: !model.busy && !files.isEmpty
-      ) { model.toggleIncluded(files) }.frame(width: 14, height: 16)
-      Text(title).font(uiFont(size: 11, weight: .semibold))
-      Text(localizedUI("\(files.count)")).font(uiFont(size: 11)).foregroundStyle(.secondary)
-      Spacer()
-    }.padding(.horizontal, 10).frame(height: 28)
-  }
-  func directoryRow(_ entry: TreeEntry) -> some View {
-    Button {
-      if model.expandedDirectories.contains(entry.id) {
-        model.expandedDirectories.remove(entry.id)
-      } else {
-        model.expandedDirectories.insert(entry.id)
+  var listRows: [ChangesListRow] {
+    let tracked = model.filteredFiles.filter { !$0.isUntracked }
+    let untracked = model.filteredFiles.filter(\.isUntracked)
+    var rows: [ChangesListRow] = []
+    for (trackedGroup, title, files, expanded) in [
+      (true, store.text("Tracked Files", "已跟踪文件"), tracked, panels.trackedExpanded),
+      (false, store.text("Untracked Files", "未跟踪文件"), untracked, panels.untrackedExpanded),
+    ] {
+      rows.append(.group(tracked: trackedGroup, title: title, files: files, expanded: expanded))
+      if expanded {
+        for entry in entries(files) {
+          if let file = entry.file { rows.append(.file(file, depth: entry.depth)) }
+          else { rows.append(.directory(path: entry.id, depth: entry.depth,
+            expanded: model.expandedDirectories.contains(entry.id))) }
+        }
       }
-    } label: {
-      HStack(spacing: 6) {
-        Image(
-          systemName: model.expandedDirectories.contains(entry.id)
-            ? "chevron.down" : "chevron.right"
-        ).font(uiFont(size: 8))
-        Image(systemName: "folder").foregroundStyle(.secondary)
-        Text(URL(fileURLWithPath: entry.id).lastPathComponent).font(uiFont(size: 11))
-        Spacer()
-      }.padding(.leading, 35 + CGFloat(entry.depth) * 13).frame(height: 23)
-    }.buttonStyle(.workspace)
-  }
-  func fileRow(_ file: FileChange, depth: Int) -> some View {
-    HStack(spacing: 7) {
-      StagingCheckbox(
-        state: model.includedPaths.contains(file.path) ? .on : .off,
-        enabled: !model.busy && model.available && !file.isConflicted
-      ) { model.toggleIncluded([file]) }.frame(width: 14, height: 16)
-        .help(
-          file.isPartial
-            ? store.text(
-              "Commit the staged portion. Use Stage to include the remaining edits.",
-              "提交已暂存部分；使用“暂存”操作可包含其余修改。")
-            : store.text("Include in commit; does not stage this file.", "选入提交，不会立即暂存文件。"))
-      HStack(spacing: 7) {
-        Image(
-          systemName: file.isConflicted
-            ? "exclamationmark.triangle.fill"
-            : file.submodule.hasPrefix("S")
-              ? "shippingbox" : file.kind == .deleted ? "doc.badge.minus" : "doc.text"
-        ).font(uiFont(size: 11)).foregroundStyle(
-          store.settings.coloredFileIcons ? changeColor(file) : .secondary)
-        Text(URL(fileURLWithPath: file.path).lastPathComponent).font(uiFont(size: 11))
-          .foregroundStyle(changeColor(file)).lineLimit(1).layoutPriority(1)
-        if !model.treeMode {
-          Text(
-            URL(fileURLWithPath: file.path).deletingLastPathComponent().path == "/"
-              ? "" : (file.path as NSString).deletingLastPathComponent
-          ).font(uiFont(size: 10)).foregroundStyle(.tertiary).lineLimit(1).truncationMode(.middle)
-        }
-        Spacer(minLength: 0)
-        if file.isPartial {
-          Text(localizedUI("±")).font(uiFont(size: 10, weight: .semibold)).foregroundStyle(.orange)
-        }
-      }.frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
-        .contentShape(Rectangle())
-        .overlay {
-          ImmediateFileClick(
-            path: file.path, selected: model.selectedPaths.contains(file.path),
-            action: { count, modifiers in
-              if count > 1 {
-                if model.selectedPath != file.path { model.select(file) }
-                model.promoteTab(file.path)
-              } else {
-                model.select(
-                  file, extend: modifiers.contains(.shift), toggle: modifiers.contains(.command))
-              }
-            }, move: { delta, modifiers in moveFileSelection(delta, modifiers: modifiers) })
-        }
-    }.padding(.leading, 32 + CGFloat(depth) * 13).padding(.trailing, 10).frame(
-      height: store.settings.compactUI ? 24 : 30
-    )
-    .background(
-      model.selectedPaths.contains(file.path) ? Color.accentColor.opacity(0.18) : Color.clear
-    ).contentShape(Rectangle())
-    .nativeContextMenu { fileMenu(file) }.help(
-      file.originalPath.map { "\($0) → \(file.path)" } ?? file.path)
+    }
+    if model.status.files.isEmpty {
+      rows.append(.empty(model.status.operation == nil
+        ? store.text("Working tree is clean", "工作区干净")
+        : store.text("No file changes · Git operation still in progress", "没有文件差异 · Git 操作尚未完成")))
+    }
+    return rows
   }
   func moveFileSelection(_ delta: Int, modifiers: NSEvent.ModifierFlags) -> String? {
     let files = model.filteredFiles
@@ -832,15 +705,16 @@ extension Notification.Name {
 
 struct ScrollMemory: NSViewRepresentable {
   var key: String
+  var containsNestedScrollViews = true
   static var positions: [String: NSPoint] = [:]
   func makeNSView(context: Context) -> NSView {
     let view = NSView()
-    DispatchQueue.main.async { context.coordinator.attach(view, key: key) }
+    DispatchQueue.main.async { context.coordinator.attach(view, key: key, containsNestedScrollViews: containsNestedScrollViews) }
     return view
   }
   func updateNSView(_ view: NSView, context: Context) {
-    if context.coordinator.key != key {
-      DispatchQueue.main.async { context.coordinator.attach(view, key: key) }
+    if context.coordinator.key != key || context.coordinator.containsNestedScrollViews != containsNestedScrollViews {
+      DispatchQueue.main.async { context.coordinator.attach(view, key: key, containsNestedScrollViews: containsNestedScrollViews) }
     }
   }
   func makeCoordinator() -> Coordinator { Coordinator() }
@@ -848,8 +722,12 @@ struct ScrollMemory: NSViewRepresentable {
     nonisolated(unsafe) var observer: NSObjectProtocol?
     weak var scroll: NSScrollView?
     var key = ""
-    func attach(_ view: NSView, key: String) {
+    var containsNestedScrollViews = true
+    func attach(_ view: NSView, key: String, containsNestedScrollViews: Bool) {
       guard let scroll = view.enclosingScrollView else { return }
+      let overlay = OverlayScrollbars.install(on: scroll)
+      overlay.leafDocumentMarker = containsNestedScrollViews ? nil : view
+      self.containsNestedScrollViews = containsNestedScrollViews
       if self.scroll === scroll && self.key == key { return }
       if let observer {
         NotificationCenter.default.removeObserver(observer)

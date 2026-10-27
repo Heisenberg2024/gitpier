@@ -245,8 +245,10 @@ public actor GitService {
       throw GitPierError.invalidInput("Resolve conflicts before committing.")
     }
     let tree = try await indexTree()
+    // This patch is for text line statistics, not replay. Binary payloads can
+    // exceed the display budget; the tree still identifies their exact content.
     let patch = try await read([
-      "diff", "--cached", "--binary", "--full-index", "--no-ext-diff", "--no-textconv",
+      "diff", "--cached", "--full-index", "--no-ext-diff", "--no-textconv",
     ]).stdout
     let paths = try await read(["diff", "--cached", "--name-only", "-z"]).stdout.split(separator: 0)
       .map { String(decoding: $0, as: UTF8.self) }
