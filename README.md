@@ -97,6 +97,10 @@ Released [v1.7.0](https://github.com/Heisenberg2024/gitpier/releases/tag/v1.7.0)
 
 The [contextual workflow assistant](docs/context-workflow.md) lives in a compact status button **before the repository branch name**. Neutral, suggestion, attention, warning and conflict/blocked states use distinct symbols with a stable width; incoming tracking commits alone never imply a conflict. Its native frosted popover shares one system surface across the body and arrow, dismisses with Escape/outside click/the entry, and explains the next useful step using the selected Worktree, branch, edits and Fetch snapshot. Risks take priority; ordinary review already available on the Commit page stays quiet. Comparisons open immediately and read local tracking snapshots in the background; synchronization review keeps its write button disabled until checking completes. Existing confirmations and target revalidation remain in place. A pending merge has its own status banner until completion or abort; the assistant does not run Git work automatically.
 
+## v1.8.1 candidate
+
+Version 1.8.1 (build 31) is being prepared for release. It improves scrolling in large Commit file lists, fixes loading staged binary assets, keeps empty-diff merges available for completion, and adds reviewed mainline selection when reverting merge commits. The current public stable release remains v1.8.0 until publication.
+
 ## Task Workspaces — v1.8.0
 
 Released [v1.8.0](https://github.com/Heisenberg2024/gitpier/releases/tag/v1.8.0) (build 30) on 2026-10-22. Exact-source Swift 6.1.2 CI and local packaging passed 993 Core tests; Universal DMG, production update signatures, asset readback and public downloads passed verification. See [publication evidence and remaining checks](docs/development.md#v180-publication--2026-10-22).

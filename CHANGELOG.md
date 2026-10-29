@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+### 1.8.1 candidate (31)
+
 - Reuse native AppKit file-list rows to improve scrolling with hundreds or thousands of changes, preserving list/tree groups, independent inclusion checkboxes, multi-selection, keyboard navigation, context menus and shared overlay scrollbars.
 - 提交页文件列表改为复用 AppKit 原生行视图，改善数百至数千文件下的滚动性能，保留列表/目录树分组、独立勾选、多选、键盘导航、右键菜单及统一覆盖滚动条。
 

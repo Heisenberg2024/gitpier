@@ -1,5 +1,19 @@
 # Development
 
+## v1.8.1 release preparation — 2026-10-29
+
+Version **1.8.1 (31)** is a local release candidate based on `c26f674`, with only version/build metadata and release documentation changed. The public stable release remains v1.8.0. Scope includes large staged binary snapshot recovery, native reusable Commit rows, empty-diff merge completion and explicit merge-revert mainline review.
+
+The baseline's [full macOS CI](https://github.com/Heisenberg2024/gitpier/actions/runs/40459413276) passed on Swift 6.1.2: **1010 Core tests**, zero failures/errors/skips, application build and temporary DMG gates. The original diagnostic ZIP matches GitHub's SHA256; XML confirms the count. That CI validated build 30 at `c26f674`; the upcoming version-bump commit still requires its own full CI.
+
+Local `python3 Scripts/test-release-tools.py` passed **10 tests**. `Scripts/package-release.sh --unsigned-candidate` passed **1010 Core tests**, zero failures/skips, in **334.937 seconds**, then built Universal main/CLI executables, verified deep ad-hoc signatures and packaged the DMG. All **182 bundle entries including the root** match dist by content, modes and symlinks. The **29,666,333-byte** DMG has SHA256 `116b7fa0d142375b61c1aec5eab1998a85f060b4843f27267f157ca91deb4b63`. Its default Finder layout was visually checked in a read-only mount; only the task's window/volume were closed/detached.
+
+All **297** frozen build/test/release inputs remained stable. Prior full native UI/PTY, 112 commit-review assertions and 16 file-scroll interactions are reused only after checking **283/284** captured inputs match; the sole difference is version/build configuration. The existing installation, previous dist bundle backup, 36 historical local files, 18 remote releases/50 assets and 18 tags remain preserved. Evidence and English-first/Chinese-second notes are local under `.cache/releases/v1.8.1/prepare-20261029/`.
+
+No Commit/Push/Tag/Draft, production EdDSA signing, upload or Latest publication was performed. The new DMG has no signed 1.8.1 appcast and must not be published as a signed update yet. No new actual 1.8.0 → 1.8.1 Sparkle replacement, physical Intel/macOS 14 or full VoiceOver acceptance is claimed. Distribution remains ad-hoc signed without Developer ID/Apple notarization. Metadata preparation was self-reviewed; no new independent reviewer was used.
+
+简体中文：1.8.1（31）本地候选已准备，公开稳定版仍为 1.8.0。`c26f674` 的 Swift 6.1.2 完整 CI 已通过 1010 项 Core，原始 ZIP 摘要和 XML 已核实；版本变更提交仍需自己的完整 CI。本地标准打包入口重新通过 1010 项 Core、10 项发布工具、主程序/CLI 双架构及深签名、DMG 结构与 182 项包内容/权限/链接检查，Finder 默认布局实看通过。297 项输入保持；既有原生验收仅在输入匹配后复用。安装、历史本地/远端资产和标签保持。发布说明尚待维护者确认，未提交/推送/Tag/Draft/使用生产更新私钥/上传/发布，候选尚无新版签名 Feed；不冒充已完成真实生产升级、Intel/macOS14 真机、完整 VoiceOver 或独立审核。
+
 ## Large staged assets and Commit file scrolling — 2026-10-27
 
 Index snapshot statistics omit encoded binary payloads while retaining the exact tree/HEAD/branch/path receipt. A real staged-assets case produced a **26,220,056-byte** binary patch against the **16 MiB** loading limit; its text-statistics patch is **775,088 bytes**. Two disposable Git regressions failed with `outputLimit` before the fix and passed afterward, covering selected binary commit/local push, partial and excluded staging, unborn Index, unchanged Index bytes during reads and stale binary receipts.
