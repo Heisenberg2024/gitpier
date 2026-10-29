@@ -2,7 +2,10 @@
 
 ## Unreleased
 
-### 1.8.1 candidate (31)
+## 1.8.1 — 2026-10-29 (31)
+
+- Published [v1.8.1](https://github.com/Heisenberg2024/gitpier/releases/tag/v1.8.1) as Latest from `6c90015`. Exact-source full CI passed 1010 Core tests; Tag CI verified reuse of that complete run. Universal DMG, production update signatures, three asset-ID readbacks and anonymous public downloads/Latest Feed were verified. See [publication evidence and limits](docs/development.md#v181-publication--2026-10-29).
+- 已从 `6c90015` 正式发布为 Latest；同源码完整 CI 通过 1010 项 Core，Tag CI 核实复用该完整运行。Universal DMG、生产更新签名、三附件按 ID 回读及匿名公开下载/Latest Feed 均核验通过，验收范围与边界见发布记录。
 
 - Reuse native AppKit file-list rows to improve scrolling with hundreds or thousands of changes, preserving list/tree groups, independent inclusion checkboxes, multi-selection, keyboard navigation, context menus and shared overlay scrollbars.
 - 提交页文件列表改为复用 AppKit 原生行视图，改善数百至数千文件下的滚动性能，保留列表/目录树分组、独立勾选、多选、键盘导航、右键菜单及统一覆盖滚动条。

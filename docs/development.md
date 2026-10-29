@@ -1,6 +1,20 @@
 # Development
 
+## v1.8.1 publication — 2026-10-29
+
+[GitPier v1.8.1 (31)](https://github.com/Heisenberg2024/gitpier/releases/tag/v1.8.1) was published as **Latest** at **2026-10-29 14:38:31 (Asia/Shanghai)** after maintainer approval of the exact bilingual notes and the verified Draft. Release ID **427530895**, source/tag **`6c90015dc509f1ce26e641f2d8da4eed45583d74`**, approved notes and all three attachment IDs remained fixed.
+
+The same-source [main CI](https://github.com/Heisenberg2024/gitpier/actions/runs/40828135767) passed **1010 Core tests**, zero failures/errors/skips, on Swift 6.1.2, plus 49 policy, 19 cache-input and 10 release-tool checks, Release build, temporary DMG and archive/upload gates. [Tag CI](https://github.com/Heisenberg2024/gitpier/actions/runs/40829476111) explicitly reused that exact full run/attempt. The locally verified Universal candidate was reused without rebuilding: **29,666,333 bytes**, SHA256 `116b7fa0d142375b61c1aec5eab1998a85f060b4843f27267f157ca91deb4b63`. Its main/CLI architectures, deep ad-hoc signatures, 182 bundle entries and default Finder layout were verified during preparation.
+
+The existing production Keychain account signed the DMG and Feed without key export or trust changes. Equal-length tampered copies were rejected. Three Draft assets were read back by asset ID before publication. After publication, anonymous Release/Latest pages, the public Latest API, all three downloads and the canonical Latest Feed reached HTTP 200; sizes, hashes, exact Markdown notes, version/build, stable download URL and production signatures matched. The anonymous API returned three transient rate-limit responses before the successful read; a separate diagnostic also recorded the shared-egress limit. Other public endpoints passed on their first read, with no network/security configuration changes.
+
+Evidence is local under `.cache/releases/v1.8.1/`: `prepare-20261029`, `ci-6c90015`, `draft-20261029` and `publish-20261029`, including original CI XML/ZIPs, signed/readback assets, the approved publication snapshot and anonymous public copies. Existing installation, local historical assets and old releases/attachments/tags were preserved; only publication state and post-publication documentation changed. App/build inputs remained frozen. Previous native UI/PTY and focused acceptance are reused only for matching inputs. This release does not claim a new final-production-DMG Sparkle replacement, physical Intel/macOS 14 or full VoiceOver run, authenticated model/Git approval acceptance, or new independent review. Distribution remains **ad-hoc signed, without Developer ID or Apple notarization**.
+
+简体中文：v1.8.1（31）于 **2026-10-29 14:38:31（Asia/Shanghai）**按确认说明正式发布为 Latest，Release427530895，源/Tag保持 `6c90015`。同SHA Swift6.1.2完整主CI通过 **1010项Core、零失败/错误/跳过**，49策略/19缓存/10发布工具及Release/DMG/归档上传均过，TagCI明确复用该完整主运行。复用已验证的Universal候选，29,666,333字节，SHA256如上；既有生产更新密钥签名，等长篡改拒绝、三附件按ID回读及发布后匿名公开页面/Latest API/下载/固定Feed均核实，公开字节、签名和内嵌说明一致。匿名API曾触发频率限制，成功重试记录与额外诊断均保留，未改网络/安全配置。历史资产和本机安装保持，发布后同步状态文档；原生验收仅复用输入匹配的既有证据，不冒充新的最终包实际升级或硬件/VoiceOver/独立审核；仍ad-hoc签名、未Apple公证。
+
 ## v1.8.1 release preparation — 2026-10-29
+
+Historical preparation checkpoint before publication; the final release status is recorded above. 下述为发布前准备快照，最终状态以上节正式发布记录为准。
 
 Version **1.8.1 (31)** is a local release candidate based on `c26f674`, with only version/build metadata and release documentation changed. The public stable release remains v1.8.0. Scope includes large staged binary snapshot recovery, native reusable Commit rows, empty-diff merge completion and explicit merge-revert mainline review.
 

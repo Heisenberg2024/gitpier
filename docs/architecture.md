@@ -1,5 +1,7 @@
 # Architecture and security boundaries
 
+Current stable: [v1.8.1 (31)](https://github.com/Heisenberg2024/gitpier/releases/tag/v1.8.1), published on 2026-10-29. The maintenance release includes compact binary snapshot statistics, native reusable Commit rows, empty-diff merge completion and reviewed merge-revert mainlines within the existing Git and update trust boundaries. See [publication validation and limits](development.md#v181-publication--2026-10-29). 当前稳定版为 v1.8.1（31），已于 2026-10-29 正式发布；既有 Git 写入与更新信任边界保持，验收范围见发布记录。
+
 ## Task Workspaces (v1.8.0 released)
 
 [v1.8.0 (30)](https://github.com/Heisenberg2024/gitpier/releases/tag/v1.8.0) was published on 2026-10-22. See [publication validation and limits](development.md#v180-publication--2026-10-22). 已于 2026-10-22 正式发布，验收范围与边界见发布记录。
