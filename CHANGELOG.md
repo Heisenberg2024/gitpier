@@ -2,6 +2,30 @@
 
 ## Unreleased
 
+### v2.0.0 — Production Quality & Native Experience (in development)
+
+- Build commit-review tree, text statistics and staged paths from one private Index against a fixed base; reject external Index/HEAD/branch changes during collection while preserving live Index bytes and partial staging.
+- Keep successful local commits visible when post-commit status collection or Push preparation fails/cancels. Retain push-only retry behavior and the original operation diagnosis through final refresh, while respecting an error Sheet the user has already closed.
+- Bound rapid Diff reads with the existing workspace budget and reject working-file changes detected during a read.
+- Preserve a local commit checkpoint and failure details bounded to 4,096 characters and 16 KiB UTF-8 and redacted before truncation in session operation history; show captured worktree context and shared semantic status symbols in Operations Center.
+- Add History selection clearing, selection/focus presentation, complete-hash tooltips and row arrow navigation; keep graph edges and cherry-pick ordering intact.
+- Use the selected interface locale for native dates/numbers, localize operation progress accessibility and retain native sheet material with shared scrollbar installation.
+- Replace repeated full sorting in Dashboard scheduling with lazy minimum selection; record algorithm, native UI, memory and Git-process measurements separately.
+- Expand diagnostic redaction for authentication headers and named token/password fields. Existing credential storage, helpers and update trust remain unchanged.
+- Add deterministic real-Git, model/native UI and scheduler regressions, require real HEAD advancement in performance commit measurements, and add a public roadmap and v2.0.0 quality records. Final RC gates remain in the validation record.
+
+### v2.0.0 — 产品质量与原生体验（开发中）
+
+- 在同一私有 Index 上以固定基准生成提交审查树、文本统计和暂存路径；采集期间外部 Index、HEAD 或分支变化会使审查失效，保留实时 Index 字节和部分暂存。
+- 本地提交成功后，即使状态采集或推送准备失败、取消，仍准确保留成功结果；重试只执行推送，最终刷新保留原操作诊断，同时尊重用户已关闭的错误弹窗。
+- Diff 快速切换复用现有工作空间并发预算，读取期间检测到工作文件变化时拒绝旧结果。
+- 操作中心按次保留本地提交检查点及最多 4,096 字符且 16 KiB UTF-8、先脱敏再截断的会话诊断，显示实际工作树上下文和统一语义状态图标。
+- 历史页增加清除选择、选中与焦点提示、完整 Hash Tooltip 和方向键导航，保留原有图连线与 Cherry-pick 顺序。
+- 原生日期、数字跟随界面语言，补齐操作进度无障碍翻译；Sheet 采用原生材质并安装共用滚动条。
+- Dashboard 调度以惰性最小项选择替代反复全排序；算法、原生界面、内存和 Git 进程测量分别记录。
+- 诊断脱敏补充认证 Header 与具名 Token、密码字段；既有凭证存储、助手和更新信任链保持不变。
+- 增加确定性真实 Git、模型/原生 UI 与调度回归，性能提交测量增加就绪等待及真实 HEAD 前进断言，并整理公开路线图及 v2.0.0 质量记录；最终 RC 门槛以验收记录为准。
+
 ## 1.9.0 — 2026-11-01 (32)
 
 - Published [v1.9.0](https://github.com/Heisenberg2024/gitpier/releases/tag/v1.9.0) as Latest from `9df9364`. Exact-source Swift 6.1.2 CI passed 1056 Core tests; Tag CI reused that full run. Universal DMG, production update signatures, asset-ID readbacks and public downloads/Latest Feed were verified. See [publication evidence and limits](docs/development.md#v190-publication--2026-11-01).

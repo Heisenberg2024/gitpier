@@ -36,6 +36,8 @@ public struct WorkflowOperationRecord: Identifiable, Equatable, Sendable {
   public var phase: WorkflowOperationPhase = .queued
   public var transferPhase: GitTransferPhase?
   public var repositoryIdentity: OperationRepositoryIdentity?
+  public var localCommit: String?
+  public private(set) var detail: String?
   public var cancellationRequested = false
   public var canCancel: Bool
   public var recovery: OperationRecoveryAction
@@ -46,9 +48,23 @@ public struct WorkflowOperationRecord: Identifiable, Equatable, Sendable {
     self.id = id; self.kind = kind; self.repositoryID = repositoryID; self.startedAt = startedAt
     self.state = state; self.canCancel = canCancel; self.recovery = recovery
   }
+  /// Session-only diagnostics: at most 4,096 characters and 16 KiB of UTF-8.
+  /// Redact before truncating so a cut inside a secret cannot bypass masking.
+  public mutating func setDetail(_ text: String?) {
+    let redacted = text.map { GitService.redact($0) } ?? ""
+    var bytes = Array(redacted.utf8.prefix(16 * 1024))
+    var decoded = String(bytes: bytes, encoding: .utf8)
+    // Only a final, incomplete UTF-8 sequence can need trimming (up to 3 bytes).
+    while decoded == nil && !bytes.isEmpty {
+      bytes.removeLast()
+      decoded = String(bytes: bytes, encoding: .utf8)
+    }
+    let value = String((decoded ?? "").prefix(4096))
+    detail = value.isEmpty ? nil : value
+  }
 }
 
-/// A bounded event reducer, with no timers, disk scans, task queues, commands, or error bodies.
+/// A bounded, in-memory event reducer with no timers, disk scans, task queues or commands.
 public struct OperationCenterHistory: Sendable {
   public private(set) var records: [WorkflowOperationRecord] = []
   public let recentLimit: Int

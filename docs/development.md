@@ -1,5 +1,15 @@
 # Development
 
+## v2.0.0 product quality development — 2026-11-01
+
+v2.0.0 is in development on the existing SwiftUI/AppKit architecture. Read the [audit and implementation plan](v2.0.0-plan.md), [quality evidence and remaining gates](v2.0.0-testing.md), and [public roadmap](../ROADMAP.md) before interpreting a local build as an RC.
+
+New Debug acceptance scopes cover post-commit observation failure/cancellation, working-file changes during Diff, rapid Diff selection and native presentation. Use `quality-commit-failure`, `quality-commit-cancel`, `quality-diff-stale`, `quality-diff-burst` (with `GITPIER_PERFORMANCE_TRACE=1`), `quality-error-dismissal` (real Sheet Close during a gated final refresh), or `quality-presentation` through `Scripts/ui-acceptance.sh`. All Git writes use generated temporary repositories and local bare remotes. Supplied executables must be disposable copies with isolated configuration/identity.
+
+`WorkspaceSchedulingTests` can save repeated zero-I/O coordinator measurements through `GITPIER_QUALITY_BENCHMARK_OUTPUT`. Keep those algorithm timings separate from `workspace-performance` and `Scripts/performance.sh` native UI measurements. `GITPIER_PERFORMANCE_EXECUTABLE` accepts an already-built isolated executable for before/after runs; the normal script still builds with the existing build script.
+
+简体中文：当前为质量开发，计划、性能数据和未完成门槛见上述记录。新增验收通过既有脚本运行，只写入临时仓库和本地裸远端；算法调度与真实界面测量分别报告。正式分发、生产签名/公证、自动提交/推送/发布不属于本次开发授权。
+
 ## v1.9.0 publication — 2026-11-01
 
 [GitPier v1.9.0 (32)](https://github.com/Heisenberg2024/gitpier/releases/tag/v1.9.0) was published as **Latest** at **2026-11-01 19:35:00 (Asia/Shanghai)** after approval of the exact bilingual notes, verified Draft and production-signed update assets. Release **430536712**, source/tag **`9df93646e6099269abc861c2a547c3270a1cfd53`**, approved notes and all three attachment IDs remained fixed.

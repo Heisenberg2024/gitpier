@@ -1,4 +1,6 @@
 # macOS
+# Keep the product roadmap available in public source checkouts.
+!/ROADMAP.md
 .DS_Store
 .AppleDouble
 .LSOverride

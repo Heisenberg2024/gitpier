@@ -95,6 +95,34 @@ import SwiftUI
           exit(0)
         }
         #if DEBUG
+        if acceptanceScope == "quality-error-dismissal" {
+          window.close()
+          try await verifyErrorDismissalQuality(root: root, output: output)
+          store.shutdown()
+          print("Native error dismissal quality acceptance passed.")
+          exit(0)
+        }
+        if acceptanceScope == "quality-presentation" {
+          window.close()
+          try await verifyQualityPresentation(store: store, model: model, root: root, output: output)
+          store.shutdown()
+          print("Native v2 quality presentation acceptance passed.")
+          exit(0)
+        }
+        if acceptanceScope == "quality-diff-stale" || acceptanceScope == "quality-diff-burst" {
+          window.close()
+          try await verifyDiffQuality(root: root, output: output, burst: acceptanceScope == "quality-diff-burst")
+          store.shutdown()
+          print("Repository Diff quality acceptance passed (temporary local repositories).")
+          exit(0)
+        }
+        if acceptanceScope == "quality-commit-failure" || acceptanceScope == "quality-commit-cancel" {
+          window.close()
+          try await verifyPostCommitQuality(root: root, output: output, cancel: acceptanceScope == "quality-commit-cancel")
+          store.shutdown()
+          print("Native post-commit quality acceptance passed (temporary local repositories).")
+          exit(0)
+        }
         if acceptanceScope == "branch-health" {
           window.close()
           try await verifyBranchHealthVisualization(root: root, output: output)

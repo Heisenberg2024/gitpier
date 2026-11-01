@@ -42,6 +42,10 @@ struct OperationState {
     center?.update(id, cancellable: canCancel, phase: phase)
   }
   func markRunning() { center?.update(id, state: .running) }
+  func recordLocalCommit(_ hash: String) {
+    guard state?.result == .running else { return }
+    center?.update(id, localCommit: hash)
+  }
   func receiver() -> @Sendable (GitTransferProgress) -> Void {
     let expected = ticket
     return { [weak self] progress in
@@ -52,7 +56,8 @@ struct OperationState {
       }
     }
   }
-  func finish(_ result: OperationResult, ticket expected: OperationTicket, waitingForUser: Bool = false) {
+  func finish(_ result: OperationResult, ticket expected: OperationTicket, waitingForUser: Bool = false,
+    detail: String? = nil) {
     guard id == expected.id, state?.result == .running else { return }
     state?.title = originalTitle
     state?.result = result
@@ -66,7 +71,7 @@ struct OperationState {
     case .cancelled: outcome = .cancelled
     case .needsAttention: outcome = waitingForUser ? .waitingForUser : .needsAttention
     }
-    center?.update(id, state: outcome)
+    center?.update(id, state: outcome, detail: detail)
     let completed = id
     dismissal = Task { [weak self] in
       do { try await Task.sleep(for: .seconds(result == .succeeded ? 1.5 : 3)) } catch { return }
@@ -83,6 +88,8 @@ struct OperationProgressView: View {
   var body: some View {
     if let state = progress.state {
       HStack(spacing: 8) {
+        Image(systemName: OperationStatusPresentation(state.result).symbol)
+          .foregroundStyle(OperationStatusPresentation(state.result).color).accessibilityHidden(true)
         Text(label(state)).lineLimit(1).truncationMode(.middle).frame(
           maxWidth: 240, alignment: .leading)
         OperationBar(
@@ -133,10 +140,11 @@ struct OperationBar: NSViewRepresentable {
     view.controlSize = .small
     view.isDisplayedWhenStopped = true
     view.usesThreadedAnimation = true
-    view.setAccessibilityLabel("Git operation progress")
+    view.setAccessibilityLabel(localizedUI("Git operation progress"))
     return view
   }
   func updateNSView(_ view: NSProgressIndicator, context: Context) {
+    view.setAccessibilityLabel(localizedUI("Git operation progress"))
     if let value {
       if view.isIndeterminate {
         view.isIndeterminate = false

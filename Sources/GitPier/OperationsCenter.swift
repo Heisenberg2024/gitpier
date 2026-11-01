@@ -29,13 +29,16 @@ import SwiftUI
     pruneCallbacks()
   }
   func update(_ id: UUID, state: WorkflowOperationState? = nil, transfer: GitTransferProgress? = nil,
-    cancellable: Bool? = nil, phase: WorkflowOperationPhase? = nil, recovery: OperationRecoveryAction? = nil) {
+    cancellable: Bool? = nil, phase: WorkflowOperationPhase? = nil, recovery: OperationRecoveryAction? = nil,
+    localCommit: String? = nil, detail: String? = nil) {
     guard var record = records.first(where: { $0.id == id }), !record.state.finished else { return }
     if let state { record.state = state; record.phase = state.active ? (state == .queued ? .queued : .executing) : state == .resultUnknown ? .verification : .completed }
     if let phase { record.phase = phase; record.progress = nil; record.transferPhase = nil }
     if let transfer { record.progress = transfer.fraction; record.transferPhase = transfer.phase; record.phase = .transferring }
     if let cancellable { record.canCancel = cancellable && cancellations[id] != nil }
     if let recovery { record.recovery = recovery }
+    if let localCommit { record.localCommit = localCommit }
+    if let detail { record.setDetail(detail) }
     if record.cancellationRequested && record.state.active { record.phase = .cancelling; record.canCancel = false }
     if !record.state.active { cancellations[id] = nil; record.canCancel = false }
     if record.state.finished { record.completedAt = Date() }
@@ -91,6 +94,7 @@ struct OperationsCenterButton: View {
     Button { store.showOperationsCenter = true } label: {
       Label("\(center.activeCount)", systemImage: "list.bullet.rectangle")
     }.help(store.text("Operations Center", "操作中心"))
+      .accessibilityLabel(store.text("Operations Center, \(center.activeCount) active operations", "操作中心，\(center.activeCount) 个正在执行的操作"))
       .accessibilityIdentifier("gitpier.operations.open")
   }
 }
@@ -120,7 +124,8 @@ struct OperationsCenterView: View {
         }
       }
     }.padding(22).frame(minWidth: 660, idealWidth: 760, minHeight: 440, idealHeight: 580)
-      .background(Theme.editor(store.resolvedColorScheme))
+      .modifier(AppAppearance(store: store))
+      .presentationBackground(.regularMaterial)
       .accessibilityIdentifier("gitpier.operations.center")
   }
   private func section(_ title: String, _ values: [WorkflowOperationRecord]) -> some View {
@@ -133,10 +138,20 @@ struct OperationsCenterView: View {
           Text(operationTitle(record.kind, store: store)).fontWeight(.medium)
           Text(record.repositoryID.flatMap { id in store.repositories.first { $0.id == id }?.name } ?? (record.kind == .review ? store.text("Review history", "审查历史") : "GitPier")).foregroundStyle(.secondary).lineLimit(1)
           Spacer()
-          Text(operationStateTitle(record, store: store)).foregroundStyle(record.state.attention ? Color.orange : Color.secondary)
+          Label(operationStateTitle(record, store: store), systemImage: OperationStatusPresentation(record.state).symbol)
+            .foregroundStyle(OperationStatusPresentation(record.state).color).lineLimit(2)
           if record.state.active && record.canCancel && !record.cancellationRequested {
             Button(store.text("Cancel", "取消")) { center.cancel(record.id) }
           }
+        }
+        if let path = record.repositoryIdentity?.workingTree {
+          Text(path).font(.caption).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
+            .help(path).textSelection(.enabled)
+            .accessibilityLabel(store.text("Working tree", "工作树")).accessibilityValue(path)
+        }
+        if let hash = record.localCommit {
+          Label(store.text("Local commit created: ", "本地提交已创建：") + String(hash.prefix(8)), systemImage: "checkmark.circle")
+            .font(.caption).foregroundStyle(.green).help(hash).textSelection(.enabled)
         }
         if record.state.active {
           if let transfer = record.transferPhase {
@@ -144,6 +159,7 @@ struct OperationsCenterView: View {
           } else if record.phase == .refreshing { Text(store.text("Refreshing local status", "刷新本地状态")).font(.caption).foregroundStyle(.secondary) }
           OperationBar(value: record.progress).frame(height: 8)
         }
+        if let detail = record.detail { OperationDiagnosticView(detail: detail) }
         HStack {
           Text(record.startedAt, style: .time).font(.caption).foregroundStyle(.secondary)
           Spacer()
@@ -200,6 +216,10 @@ struct OperationsCenterView: View {
 }
 @MainActor func operationStateTitle(_ record: WorkflowOperationRecord, store: AppStore) -> String {
   if record.cancellationRequested && record.state.active { return store.text("Cancelling…", "取消中…") }
+  if record.kind == .commitAndPush, record.localCommit != nil {
+    if record.state == .failed { return store.text("Push failed · local commit preserved", "推送失败 · 本地提交已保留") }
+    if record.state == .cancelled { return store.text("Push cancelled · local commit preserved", "推送已取消 · 本地提交已保留") }
+  }
   switch record.state {
   case .queued: return store.text("Queued", "排队中")
   case .running: return store.text("Running", "执行中")

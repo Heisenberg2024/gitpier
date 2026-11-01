@@ -530,7 +530,12 @@ struct DiffTab: Identifiable, Equatable {
   @Published var committing = false
   @Published var refreshing = false
   @Published var available = false
-  @Published var error: String?
+  private var errorDismissalGeneration: UInt64 = 0
+  @Published var error: String? {
+    didSet {
+      if error == nil, oldValue != nil { errorDismissalGeneration &+= 1 }
+    }
+  }
   @Published var output: String?
   @Published var outputResult: OperationResult = .succeeded
   @Published var pushFailed = false
@@ -952,13 +957,21 @@ struct DiffTab: Identifiable, Equatable {
     let epoch = cacheEpoch
     let root = record.path
     let git = await git()
+    let changedMessage = store.text(
+      "The file changed while its Diff was loading. Select it again or refresh to review the latest contents.",
+      "文件在加载 Diff 期间发生了变化。请重新选择文件或刷新，审查最新内容。")
     diffReadCount += 1
     let task = Task<CachedDiff, Error> {
-      let stamp = FileStamp(root: root, path: file.path)
-      let bytes = try await git.patch(for: file, comparison: comparison, ignoreWhitespace: ignore)
-      let document = await Task.detached(priority: .userInitiated) { DiffParser.parse(bytes) }.value
-      try Task.checkCancellation()
-      return CachedDiff(bytes: bytes, document: document, stamp: stamp)
+      try await WorkspaceOperationBudget.shared.perform {
+        let stamp = FileStamp(root: root, path: file.path)
+        let bytes = try await git.patch(for: file, comparison: comparison, ignoreWhitespace: ignore)
+        let document = await Task.detached(priority: .userInitiated) { DiffParser.parse(bytes) }.value
+        try Task.checkCancellation()
+        guard comparison == .staged || stamp == FileStamp(root: root, path: file.path) else {
+          throw GitPierError.invalidInput(changedMessage)
+        }
+        return CachedDiff(bytes: bytes, document: document, stamp: stamp)
+      }
     }
     diffRequests[key] = task
     do {
@@ -1156,10 +1169,14 @@ struct DiffTab: Identifiable, Equatable {
         if output != nil { outputResult = .needsAttention }
         self.error = localizedUI(error.localizedDescription)
       }
+      // Preserve diagnostics separately from the user-dismissible error Sheet.
+      let operationError = error
+      let errorDismissal = errorDismissalGeneration
       await store.workspace.endManualOperation()
       activity.advance(store.text("Refreshing", "刷新仓库"), cancellable: false, phase: .refreshing)
       // A read started during the write may still contain an older snapshot.
       await refresh(afterCurrent: true)
+      if let operationError, errorDismissal == errorDismissalGeneration { error = operationError }
       if !hadConflicts, status.files.contains(where: \.isConflicted) {
         setPage("conflicts")
         let diagnosis = error.map { "\n\n" + $0 } ?? ""
@@ -1179,7 +1196,8 @@ struct DiffTab: Identifiable, Equatable {
         await captureOperationRecovery(progressTicket.id)
       }
       activity.finish(result, ticket: progressTicket,
-        waitingForUser: result == .needsAttention && (status.operation != nil || pendingPushRecovery != nil || pendingMergeReview != nil || needsUpstream))
+        waitingForUser: result == .needsAttention && (status.operation != nil || pendingPushRecovery != nil || pendingMergeReview != nil || needsUpstream),
+        detail: result == .succeeded ? nil : [output, operationError ?? error].compactMap { $0 }.joined(separator: "\n\n"))
       if notify, let output { store.notifyCompletion(output) }
     }
   }
@@ -1234,6 +1252,7 @@ struct DiffTab: Identifiable, Equatable {
       let result = try await git.commit(
         message: message, expected: expected, amend: amend, selection: selection,
         reviewedPatches: reviewed)
+      activity.recordLocalCommit(result.hash)
       await recordOwnCommitState(git, update: .commit(head: result.hash, branch: expected.branch, acceptsIndex: !result.indexChangedDuringCommit))
       lastCommit = result.hash
       includedPaths.subtract(selection.map(\.path))
@@ -1251,46 +1270,48 @@ struct DiffTab: Identifiable, Equatable {
         : ""
       pushFailed = false
       rejectedPush = nil
+      output = localOutput + indexNote
       if push {
-        let status = try await git.status()
-        if status.upstream == nil {
-          needsUpstream = true
-          outputResult = .needsAttention
-          output =
-            localOutput + store.text("\nChoose a remote and branch to push.", "\n请选择 Remote 和分支推送。")
-            + indexNote
-        } else {
-          activity.advance(store.text("Pushing", "推送"), cancellable: true)
-          let progress = activity.receiver()
-          do {
+        do {
+          // Preparing Push is already a separate phase after a successful local
+          // commit. Observation failures and cancellation must preserve that result.
+          let status = try await git.status()
+          if status.upstream == nil {
+            needsUpstream = true
+            outputResult = .needsAttention
+            output =
+              localOutput + store.text("\nChoose a remote and branch to push.", "\n请选择 Remote 和分支推送。")
+              + indexNote
+          } else {
+            activity.advance(store.text("Pushing", "推送"), cancellable: true)
+            let progress = activity.receiver()
             let details = GitOutputSummary.details(
               try await git.network("push", progress: progress))
             output =
               store.text("Commit & push completed: ", "提交并推送已完成：")
               + String(result.hash.prefix(8)) + indexNote
             if !details.isEmpty { output! += "\n" + details }
-          } catch let rejection as PushRejection {
-            queuePushRecovery(rejection)
-            output = localOutput + indexNote
-              + store.text("\nRemote commits must be merged before pushing.", "\n远程有尚未合并的提交，需要合并后推送。")
-          } catch is CancellationError {
-            outputResult = .needsAttention
-            output =
-              store.text("Local commit succeeded; push cancelled: ", "本地提交成功，推送已取消：")
-              + String(result.hash.prefix(8)) + indexNote
-          } catch {
-            pushFailed = true
-            output =
-              store.text("Local commit succeeded; push failed: ", "本地提交成功，推送失败：")
-              + String(result.hash.prefix(8)) + indexNote
-            self.error =
-              store.text(
-                "Local commit succeeded. Push failed; retrying will only push.\n",
-                "本地提交成功，推送失败；重试只会推送。\n") + error.localizedDescription
           }
+        } catch let rejection as PushRejection {
+          queuePushRecovery(rejection)
+          output = localOutput + indexNote
+            + store.text("\nRemote commits must be merged before pushing.", "\n远程有尚未合并的提交，需要合并后推送。")
+        } catch is CancellationError {
+          pushFailed = true
+          outputResult = .needsAttention
+          output =
+            store.text("Local commit succeeded; push cancelled: ", "本地提交成功，推送已取消：")
+            + String(result.hash.prefix(8)) + indexNote
+        } catch {
+          pushFailed = true
+          output =
+            store.text("Local commit succeeded; push failed: ", "本地提交成功，推送失败：")
+            + String(result.hash.prefix(8)) + indexNote
+          self.error =
+            store.text(
+              "Local commit succeeded. Push failed; retrying will only push.\n",
+              "本地提交成功，推送失败；重试只会推送。\n") + error.localizedDescription
         }
-      } else {
-        output = localOutput + indexNote
       }
     }
   }

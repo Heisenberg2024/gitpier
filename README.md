@@ -12,6 +12,12 @@ GitPier brings repository management, change review, commits, and an integrated 
 
 ![Commit workspace with tracked and untracked changes, side-by-side Diff, and terminal](docs/screenshots/commit-workspace.png)
 
+## Product quality and native experience — v2.0.0 (in development)
+
+The next milestone strengthens reviewed Index snapshots, preserves local Commit success through later Push failures or cancellation, and bounds rapid Diff reads using the existing workspace budget. Native refinements cover History selection and keyboard navigation, meaningful operation states, per-operation diagnostics and language-aware dates. Dashboard scheduling is measured against reproducible large inventories.
+
+The current stable release remains v1.9.0. Follow the [roadmap](ROADMAP.md), [implementation scope](docs/v2.0.0-plan.md) and [validation record](docs/v2.0.0-testing.md) for development status and RC gates. Trusted distribution is a separate future milestone.
+
 ## Features
 
 - **Multi-repository management.** Switch between repositories and worktrees, organize projects into collections, and drag repositories to save their order in the sidebar and organization pages. Opening a repository from an organization adds it to that organization.

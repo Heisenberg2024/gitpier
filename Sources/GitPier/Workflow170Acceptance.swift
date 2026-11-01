@@ -87,7 +87,11 @@ extension UIAcceptance {
     clonedModel.run(kind: .merge) { git in try await git.perform(["merge", "workflow-conflict"]) }
     try await waitFor { !clonedModel.busy }
     guard let conflict = center.records.first(where: { $0.kind == .merge && $0.repositoryID == clonedModel.record.id }) else { throw GitPierError.invalidInput("Missing conflict operation") }
-    try require(conflict.state == .needsAttention && conflict.recovery == .conflicts, "A real merge conflict is attention with original recovery routing")
+    let nativeConflict = try await clonedGit.status()
+    try require(nativeConflict.operation == .merge && nativeConflict.files.contains(where: \.isConflicted),
+      "The fixture retains real native merge metadata and unresolved Index stages")
+    try require(conflict.state == .waitingForUser && conflict.recovery == .conflicts,
+      "A real merge conflict waits for user action with original recovery routing (" + conflict.state.rawValue + "/" + conflict.recovery.rawValue + ")")
     await store.openOperation(conflict)
     try require(store.current === clonedModel && clonedModel.page == "conflicts" && store.error == nil, "Unchanged conflict recovery opens the existing editor")
     try Data("external staged change\n".utf8).write(to: cloned.appendingPathComponent("external.txt"))

@@ -102,6 +102,12 @@ public actor GitService {
       of: "((?:https?|ssh)://)[^\\s/@]+(?::[^\\s/@]*)?@", with: "$1[redacted]@", options: .regularExpression
     ).replacingOccurrences(of: "(?i)([?&](?:access_token|token|password|auth|key|signature)=)[^&\\s]+",
       with: "$1[redacted]", options: .regularExpression)
+      .replacingOccurrences(
+        of: #"(?im)(\b(?:(?:proxy-)?authorization|private-token|x-api-key)\s*:\s*)[^\r\n]+"#,
+        with: "$1[redacted]", options: .regularExpression)
+      .replacingOccurrences(
+        of: #"(?i)(["']?(?:access[_-]?token|refresh[_-]?token|id[_-]?token|client[_-]?secret|api[_-]?key|password|passwd|token)["']?\s*[:=]\s*)(?:"(?:\\.|[^"\\\r\n])*"|'(?:\\.|[^'\\\r\n])*'|[^\s&,}\r\n]+)"#,
+        with: "$1[redacted]", options: .regularExpression)
   }
   /// Git terminates path output with one LF. Whitespace and embedded/trailing LF can
   /// belong to the actual directory name and must never be trimmed as presentation.
@@ -229,14 +235,42 @@ public actor GitService {
     guard !state.files.contains(where: \.isConflicted) else {
       throw GitPierError.invalidInput("Resolve conflicts before committing.")
     }
-    let tree = try await indexTree()
+    // One immutable Index supplies every part of the review. Reading the live
+    // Index again for patch/paths can combine another client's staging with an
+    // older tree, even when each individual Git command succeeds.
+    let index = try await liveIndexURL()
+    let original = try operationFile(index, limit: 64 * 1024 * 1024)
+    let temporary = FileManager.default.temporaryDirectory.appendingPathComponent(
+      "GitPier-snapshot-" + UUID().uuidString)
+    try FileManager.default.createDirectory(at: temporary, withIntermediateDirectories: false,
+      attributes: [.posixPermissions: 0o700])
+    defer { try? FileManager.default.removeItem(at: temporary) }
+    let copy = temporary.appendingPathComponent("index")
+    if let original { try original.write(to: copy) }
+    let environment = ["GIT_INDEX_FILE": copy.path]
+    let tree = try await read(["write-tree"], environment: environment).text
+      .trimmingCharacters(in: .whitespacesAndNewlines)
+    // Pin the comparison base too: HEAD can move while the private Index is read.
+    let base: String
+    if let head = state.head { base = head }
+    else {
+      base = try await read(["hash-object", "-t", "tree", "--stdin"], input: Data()).text
+        .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
     // This patch is for text line statistics, not replay. Binary payloads can
     // exceed the display budget; the tree still identifies their exact content.
     let patch = try await read([
-      "diff", "--cached", "--full-index", "--no-ext-diff", "--no-textconv",
-    ]).stdout
-    let paths = try await read(["diff", "--cached", "--name-only", "-z"]).stdout.split(separator: 0)
+      "diff", "--cached", "--full-index", "--no-ext-diff", "--no-textconv", base, "--",
+    ], environment: environment).stdout
+    let paths = try await read(["diff", "--cached", "--name-only", "-z", base, "--"],
+      environment: environment).stdout.split(separator: 0)
       .map { String(decoding: $0, as: UTF8.self) }
+    let after = try await status()
+    guard after.head == state.head, after.branch == state.branch,
+      after.operation == state.operation, after.files == state.files,
+      try operationFile(index, limit: 64 * 1024 * 1024) == original else {
+      throw GitPierError.indexChanged
+    }
     return IndexSnapshot(
       tree: tree, head: state.head, branch: state.branch, paths: paths, patch: patch)
   }

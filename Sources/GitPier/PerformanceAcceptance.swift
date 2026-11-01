@@ -285,15 +285,25 @@ import SwiftUI
         try await wait {
           views(host, PerformancePageView.self).contains { $0.repositoryID == model.record.id }
         }
+        // A rendered repository page can precede its asynchronous activation.
+        // Measure a ready commit, never an early return from canCommit's guard.
+        await model.activate()
         let first = model.status.files.first { $0.path == "Sources/file_00000.swift" }!
         model.toggleIncluded(model.status.files.filter { model.includedPaths.contains($0.path) })
         model.toggleIncluded([first])
         model.editDraft("perf: selected fixture commit")
+        try await wait { model.canCommit }
+        let headBeforeCommit = try await git.resolveCommit("HEAD")
         try await measure("commit.selected-plus-refresh") {
           model.commit(push: false)
           try await wait { !model.busy }
           if let error = model.error { throw GitPierError.invalidInput(error) }
         }
+        let headAfterCommit = try await git.resolveCommit("HEAD")
+        guard headAfterCommit != headBeforeCommit, model.lastCommit == headAfterCommit else {
+          throw GitPierError.invalidInput("Performance commit did not create the selected local commit")
+        }
+        counters["commitHeadAdvanced"] = 1
         for operation in ["push", "fetch", "pull"] {
           try await measure("network.local-\(operation)-plus-refresh") {
             model.network(operation)

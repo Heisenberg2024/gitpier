@@ -13,6 +13,7 @@ struct HistoryView: View {
   @EnvironmentObject var store: AppStore
   @Environment(\.colorScheme) var scheme
   @FocusState private var searchFocused: Bool
+  @FocusState private var focusedCommit: String?
   @State private var search = ""
   @State private var fullHistory = false
   @State private var query = HistoryQuery()
@@ -42,6 +43,8 @@ struct HistoryView: View {
               model.commitReplayRequest = CommitReplayRequest(commits: replayHashes)
             }.disabled(replayHashes.isEmpty || replayHashes.count > 200 || model.busy || model.status.operation != nil)
               .accessibilityIdentifier("history.cherry-pick-selected")
+            Button(store.text("Clear Selection", "清除选择")) { replaySelection.removeAll() }
+              .disabled(replaySelection.isEmpty || model.busy).accessibilityIdentifier("history.clear-selection")
             Button(store.text("Compare Branches", "比较分支")) { model.setPage("compare") }
             Button(store.text("Interactive Rebase…", "交互式变基…")) {
               rebase = InteractiveRebaseRequest(upstream: model.status.upstream ?? "HEAD~1")
@@ -79,44 +82,11 @@ struct HistoryView: View {
             }.font(uiFont(size: 11)).textFieldStyle(.roundedBorder).padding(.horizontal, 12).padding(.bottom, 10)
           }
           Divider()
+          ScrollViewReader { proxy in
           ScrollView {
             LazyVStack(spacing: 0) {
               ForEach(records) { commit in
-                HStack(spacing: 0) {
-                  Toggle(store.text("Select commit", "选择提交") + " " + commit.subject, isOn: Binding(
-                    get: { replaySelection.contains(commit.hash) },
-                    set: { if $0 { replaySelection.insert(commit.hash) } else { replaySelection.remove(commit.hash) } }))
-                    .labelsHidden().toggleStyle(.checkbox).padding(.leading, 10).padding(.trailing, 4)
-                    .disabled(model.busy).accessibilityIdentifier("history.select." + commit.hash)
-                Button {
-                  model.selectedHistoryCommit =
-                    model.selectedHistoryCommit?.hash == commit.hash ? nil : commit
-                } label: {
-                  HStack(spacing: 12) {
-                    GraphRowView(row: graph[commit.hash]).frame(width: 92, height: 43)
-                    VStack(alignment: .leading, spacing: 4) {
-                      Text(commit.subject).font(uiFont(size: 12, weight: .medium)).lineLimit(1)
-                      if !commit.decorations.isEmpty {
-                        Text(commit.decorations).font(uiFont(size: 9)).foregroundStyle(.mint)
-                          .lineLimit(1)
-                      }
-                    }.frame(maxWidth: .infinity, alignment: .leading)
-                    Text(commit.author).font(uiFont(size: 11)).foregroundStyle(.secondary).frame(
-                      width: 125, alignment: .leading
-                    ).lineLimit(1)
-                    Text(commit.date, style: .date).font(uiFont(size: 10)).foregroundStyle(
-                      .secondary
-                    )
-                    .frame(width: 92)
-                    Text(String(commit.hash.prefix(8))).font(uiFont(size: 11, design: .monospaced))
-                      .foregroundStyle(.secondary).frame(width: 70)
-                  }.padding(.trailing, 12).frame(height: 43).background(
-                    model.selectedHistoryCommit?.hash == commit.hash
-                      ? Color.accentColor.opacity(0.14) : Color.clear
-                  ).contentShape(Rectangle())
-                }.buttonStyle(.workspace).accessibilityIdentifier("history-" + commit.hash)
-                  .contextMenu { historyMenu(commit) }
-                }
+                historyRow(commit, proxy: proxy)
               }
               if model.historyHasMore {
                 Button(store.text("Load more commits", "加载更多提交")) {
@@ -130,6 +100,7 @@ struct HistoryView: View {
                 EmptyState(symbol: "clock", title: store.text("No matching commits", "没有匹配的提交"), detail: "")
               }
             }
+          }
           }
         }.frame(maxWidth: .infinity, maxHeight: .infinity)
         if let selected = model.selectedHistoryCommit {
@@ -183,6 +154,53 @@ struct HistoryView: View {
       }
       Button(store.text("Cancel", "取消"), role: .cancel) { branchAt = nil }
     }
+  }
+  private func historyRow(_ commit: CommitRecord, proxy: ScrollViewProxy) -> some View {
+    HStack(spacing: 0) {
+      Toggle(store.text("Select commit", "选择提交") + " " + commit.subject, isOn: Binding(
+        get: { replaySelection.contains(commit.hash) },
+        set: { if $0 { replaySelection.insert(commit.hash) } else { replaySelection.remove(commit.hash) } }))
+        .labelsHidden().toggleStyle(.checkbox).padding(.leading, 10).padding(.trailing, 4)
+        .disabled(model.busy).accessibilityIdentifier("history.select." + commit.hash)
+      Button {
+        focusedCommit = commit.hash
+        model.selectedHistoryCommit = model.selectedHistoryCommit?.hash == commit.hash ? nil : commit
+      } label: {
+        HStack(spacing: 12) {
+          GraphRowView(row: graph[commit.hash]).frame(width: 92, height: 43)
+          VStack(alignment: .leading, spacing: 4) {
+            Text(commit.subject).font(uiFont(size: 12, weight: .medium)).lineLimit(1)
+            if !commit.decorations.isEmpty {
+              Text(commit.decorations).font(uiFont(size: 9)).foregroundStyle(.mint).lineLimit(1)
+            }
+          }.frame(maxWidth: .infinity, alignment: .leading)
+          Text(commit.author).font(uiFont(size: 11)).foregroundStyle(.secondary)
+            .frame(width: 125, alignment: .leading).lineLimit(1)
+          Text(commit.date, style: .date).font(uiFont(size: 10)).foregroundStyle(.secondary).frame(width: 92)
+          Text(String(commit.hash.prefix(8))).font(uiFont(size: 11, design: .monospaced))
+            .foregroundStyle(.secondary).frame(width: 70).help(commit.hash)
+        }.padding(.trailing, 12).frame(height: 43).background(
+          model.selectedHistoryCommit?.hash == commit.hash ? Color.accentColor.opacity(0.14) : .clear
+        ).contentShape(Rectangle())
+      }.buttonStyle(.workspace).focusable().focused($focusedCommit, equals: commit.hash)
+        .accessibilityIdentifier("history-" + commit.hash).accessibilityLabel(commit.subject)
+        .accessibilityValue(commit.author + ", " + commit.hash)
+        .onMoveCommand { direction in moveHistoryFocus(from: commit.hash, direction: direction, proxy: proxy) }
+        .contextMenu { historyMenu(commit) }
+    }.background(replaySelection.contains(commit.hash) ? Color.accentColor.opacity(0.07) : .clear)
+      .overlay(RoundedRectangle(cornerRadius: 3).stroke(focusedCommit == commit.hash ? Color.accentColor.opacity(0.65) : .clear).allowsHitTesting(false))
+      .id(commit.hash)
+  }
+  private func moveHistoryFocus(from hash: String, direction: MoveCommandDirection, proxy: ScrollViewProxy) {
+    let values = records
+    guard direction == .up || direction == .down,
+      let index = values.firstIndex(where: { $0.hash == hash }) else { return }
+    let next = index + (direction == .down ? 1 : -1)
+    guard values.indices.contains(next) else { return }
+    let commit = values[next]
+    focusedCommit = commit.hash
+    model.selectedHistoryCommit = commit
+    proxy.scrollTo(commit.hash)
   }
   @ViewBuilder func historyMenu(_ commit: CommitRecord) -> some View {
     Button(store.text("Export Commit Patch…", "导出提交补丁…")) { patchExport = PatchExportRequest(source: .commit(commit)) }
@@ -298,7 +316,9 @@ struct CommitDetailView: View {
           Text(commit.author + " <" + commit.email + ">").font(uiFont(size: 11)).foregroundStyle(
             .secondary
           ).textSelection(.enabled)
-          Text(commit.date.formatted()).font(uiFont(size: 10)).foregroundStyle(.secondary)
+          Text(commit.date, format: Date.FormatStyle(date: .abbreviated, time: .shortened)
+            .locale(Locale(identifier: store.settings.language == .english ? "en" : "zh_CN")))
+            .font(uiFont(size: 10)).foregroundStyle(.secondary)
           if !commit.body.isEmpty {
             ScrollView {
               Text(commit.body).font(uiFont(size: 11)).textSelection(.enabled).frame(

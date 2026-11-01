@@ -90,9 +90,11 @@ public actor WorkspaceStatusService {
   }
   private func pump() {
     while !stopped && running.count < concurrency {
-      let next = pending.values.filter { running[$0.record.id] == nil }.sorted {
+      // Only the next admission is needed. Sorting every pending repository on
+      // each completion adds avoidable O(n log n) work and temporary arrays.
+      let next = pending.values.lazy.filter { self.running[$0.record.id] == nil }.min {
         $0.priority == $1.priority ? $0.order < $1.order : $0.priority.rawValue > $1.priority.rawValue
-      }.first
+      }
       guard let next else { break }
       let id = next.record.id; pending[id] = nil; entries[id]?.state = .collecting
       let task = Task { [loader] in

@@ -6,6 +6,7 @@ struct AppAppearance: ViewModifier {
   @ObservedObject var store: AppStore
   func body(content: Content) -> some View {
     content.environment(\.colorScheme, store.resolvedColorScheme)
+      .environment(\.locale, Locale(identifier: store.settings.language == .english ? "en" : "zh_CN"))
       .menuIndicator(.hidden)
       .background(WindowAppearance(mode: store.settings.appearance))
       .background(UnifiedScrollbars())
