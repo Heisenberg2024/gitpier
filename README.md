@@ -12,11 +12,13 @@ GitPier brings repository management, change review, commits, and an integrated 
 
 ![Commit workspace with tracked and untracked changes, side-by-side Diff, and terminal](docs/screenshots/commit-workspace.png)
 
-## Product quality and native experience — v2.0.0 (in development)
+## Product quality and native experience — v2.0.0
 
-The next milestone strengthens reviewed Index snapshots, preserves local Commit success through later Push failures or cancellation, and bounds rapid Diff reads using the existing workspace budget. Native refinements cover History selection and keyboard navigation, meaningful operation states, per-operation diagnostics and language-aware dates. Dashboard scheduling is measured against reproducible large inventories.
+v2.0.0 strengthens reviewed Index snapshots, preserves local Commit success through later Push failures or cancellation, and bounds rapid Diff reads using the existing workspace budget. Native refinements cover History selection and keyboard navigation, meaningful operation states, per-operation diagnostics and language-aware dates. Dashboard scheduling is measured against reproducible large inventories.
 
-The current stable release remains v1.9.0. Follow the [roadmap](ROADMAP.md), [implementation scope](docs/v2.0.0-plan.md) and [validation record](docs/v2.0.0-testing.md) for development status and RC gates. Trusted distribution is a separate future milestone.
+Released [v2.0.0 (33)](https://github.com/Heisenberg2024/gitpier/releases/tag/v2.0.0) as **Latest** on 2026-11-02 from `b99f72f`. Same-source Swift 6.1.2 CI passed 1,065 Core tests with zero failures/errors/skips; Universal packaging, production update signatures, asset readbacks and public downloads/Latest Feed were verified. See [publication evidence and limits](docs/development.md#v200-publication--2026-11-02).
+
+The [roadmap](ROADMAP.md), [implementation record](docs/v2.0.0-plan.md) and [quality validation](docs/v2.0.0-testing.md) retain measured tradeoffs and unverified coverage. Developer ID and Apple notarization remain a separate future milestone.
 
 ## Features
 
@@ -81,7 +83,7 @@ Local scans stay offline. Dashboard distinguishes matching tracking references f
 
 **Released [v1.4.4](https://github.com/Heisenberg2024/gitpier/releases/tag/v1.4.4) (build 24).** Automatic Fetch reuses native Git authentication for HTTP, HTTPS, SSH, Git and local transports across GitHub, GitLab, Gitee and other hosts. Configured named, absolute-path and shell credential helpers retain their order, URL/account/path matching and protocol responses; automatic Git requests only get, never store/erase. There is no password or Agent prerequisite before Fetch: public repositories work anonymously, and the actual server decides whether authentication is needed. SSH keeps its original commands, config, Agent, file identities, providers and native Keychain behavior. Terminal clones, GitPier clones and init/push repositories use the same flow; Clone saves an explicitly selected account before automatic checks can start. HTTP remains unencrypted and settings show a warning; GitPier-managed HTTPS Tokens still refuse HTTP. Existing credentials must be accessible to the app's Git process; an unsaved password or environment confined to another terminal session cannot be recovered. See [security boundaries](SECURITY.md) and [validation details](docs/development.md#unified-native-authentication).
 
-**Workspace Search** searches names, paths, organizations, branches and remote names, plus tracked file paths and commit messages/hashes on demand. Choose all/current organization/current repository/selected repositories; results open the repository, existing Diff/file history or commit detail. Git queries are cancellable and paged, with bounded results and output; no source-content index or third-party upload is used. **⌘⇧P** opens Quick Open with recent/favorite repositories and organization matching, arrow navigation, Return and Esc; terminal focus retains its keys. The Universal DMG is the current stable download; release validation is recorded in the [development guide](docs/development.md#v144-release-validation--2026-10-16).
+**Workspace Search** searches names, paths, organizations, branches and remote names, plus tracked file paths and commit messages/hashes on demand. Choose all/current organization/current repository/selected repositories; results open the repository, existing Diff/file history or commit detail. Git queries are cancellable and paged, with bounded results and output; no source-content index or third-party upload is used. **⌘⇧P** opens Quick Open with recent/favorite repositories and organization matching, arrow navigation, Return and Esc; terminal focus retains its keys. The Universal DMG is the current stable download; release validation is recorded in the [development guide](docs/development.md#v200-publication--2026-11-02).
 
 ## Code hosting & credential storage — v1.5.0
 

@@ -1,6 +1,8 @@
 # OAuth setup — v1.5.1
 
-## v1.6.0 collaboration permissions (unreleased)
+Current release: [v2.0.0](https://github.com/Heisenberg2024/gitpier/releases/tag/v2.0.0). The provider scope, credential and authorization rules below remain unchanged; publication does not claim new private-account or real Review-write coverage. 当前为v2.0.0，平台权限、凭证与授权规则保持，发布不代表新增私有账号或真实审查写入验收。
+
+## v1.6.0 collaboration permissions (released)
 
 Review writes use the same account/token lifecycle. GitHub requires user-approved `public_repo` or broad `repo` access as appropriate; GitLab uses broad `api`, not a comment-only scope. Gitea repository reviews and issue conversations use separate permission categories: `write:repository` does not authorize ordinary Issue comments. The separate **Reviews + Issue Comments (Expanded Scope)** choice explicitly requests `read:user write:repository write:issue`; the default Read level and existing repository-only choices retain their original scopes. New review controls explain the missing permission and require explicit reauthorization or PAT replacement; existing grants are not silently expanded. An existing Gitea grant may reject a new scope set, so preserve its current session and let the owner choose a new grant, separate client or PAT. See [capabilities and API limitations](code-review.md). No new real-service v1.6.0 review authorization or write acceptance is claimed.
 

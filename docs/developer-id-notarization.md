@@ -1,6 +1,6 @@
 # Developer ID and notarization plan
 
-Status: planning only for v1.7.0–v2.0. Current distribution remains ad-hoc signed. No production signing identity, entitlement, certificate, private key or notarization submission is changed by this work.
+Status: **planned as a separate milestone after v2.0.0**. The current [v2.0.0 release](https://github.com/Heisenberg2024/gitpier/releases/tag/v2.0.0) remains ad-hoc signed and uses the existing production Sparkle EdDSA update trust. Developer ID, Apple notarization, production Hardened Runtime and real Gatekeeper/installation acceptance have not been completed. This plan changes no certificate, entitlement or private key.
 
 ## v1.9.0 offline preparation
 

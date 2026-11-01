@@ -2,7 +2,12 @@
 
 ## Unreleased
 
-### v2.0.0 — Production Quality & Native Experience (in development)
+## 2.0.0 — 2026-11-02 (33)
+
+- Published as Latest from `b99f72f`; exact-source Swift 6.1.2 CI passed 1,065 Core tests, and Tag CI ran the full macOS gates. Universal DMG, production update signatures, asset-ID readbacks and public downloads/Latest Feed were verified. See [publication evidence and limits](docs/development.md#v200-publication--2026-11-02).
+- 已从 `b99f72f` 正式发布为 Latest；同源 Swift 6.1.2 CI 通过 1,065 项 Core，Tag CI 完整执行 macOS 门槛。通用 DMG、生产更新签名、附件按 ID 回读与公开下载/Latest Feed 已核验，仍保留刷新成本和真实硬件、无障碍、服务、生产升级未验边界。
+
+### Production Quality & Native Experience
 
 - Build commit-review tree, text statistics and staged paths from one private Index against a fixed base; reject external Index/HEAD/branch changes during collection while preserving live Index bytes and partial staging.
 - Keep successful local commits visible when post-commit status collection or Push preparation fails/cancels. Retain push-only retry behavior and the original operation diagnosis through final refresh, while respecting an error Sheet the user has already closed.
@@ -12,9 +17,9 @@
 - Use the selected interface locale for native dates/numbers, localize operation progress accessibility and retain native sheet material with shared scrollbar installation.
 - Replace repeated full sorting in Dashboard scheduling with lazy minimum selection; record algorithm, native UI, memory and Git-process measurements separately.
 - Expand diagnostic redaction for authentication headers and named token/password fields. Existing credential storage, helpers and update trust remain unchanged.
-- Add deterministic real-Git, model/native UI and scheduler regressions, require real HEAD advancement in performance commit measurements, and add a public roadmap and v2.0.0 quality records. Final RC gates remain in the validation record.
+- Add deterministic real-Git, model/native UI and scheduler regressions, require real HEAD advancement in performance commit measurements, and add a public roadmap and v2.0.0 quality records. Release evidence and remaining validation limits are recorded separately.
 
-### v2.0.0 — 产品质量与原生体验（开发中）
+### 产品质量与原生体验
 
 - 在同一私有 Index 上以固定基准生成提交审查树、文本统计和暂存路径；采集期间外部 Index、HEAD 或分支变化会使审查失效，保留实时 Index 字节和部分暂存。
 - 本地提交成功后，即使状态采集或推送准备失败、取消，仍准确保留成功结果；重试只执行推送，最终刷新保留原操作诊断，同时尊重用户已关闭的错误弹窗。
@@ -24,7 +29,7 @@
 - 原生日期、数字跟随界面语言，补齐操作进度无障碍翻译；Sheet 采用原生材质并安装共用滚动条。
 - Dashboard 调度以惰性最小项选择替代反复全排序；算法、原生界面、内存和 Git 进程测量分别记录。
 - 诊断脱敏补充认证 Header 与具名 Token、密码字段；既有凭证存储、助手和更新信任链保持不变。
-- 增加确定性真实 Git、模型/原生 UI 与调度回归，性能提交测量增加就绪等待及真实 HEAD 前进断言，并整理公开路线图及 v2.0.0 质量记录；最终 RC 门槛以验收记录为准。
+- 增加确定性真实 Git、模型/原生 UI 与调度回归，性能提交测量增加就绪等待及真实 HEAD 前进断言，并整理公开路线图及 v2.0.0 质量记录；发布证据与剩余验收边界分别记录。
 
 ## 1.9.0 — 2026-11-01 (32)
 

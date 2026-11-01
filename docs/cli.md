@@ -1,4 +1,6 @@
-# GitPier CLI — v1.8.0 development
+# GitPier CLI
+
+Introduced in v1.8.0 and available in [v2.0.0](https://github.com/Heisenberg2024/gitpier/releases/tag/v2.0.0). Navigation/explicit installation boundaries below are unchanged. 本功能已随v1.8.0发布，并包含在当前v2.0.0中；导航与显式安装边界保持。
 
 The `gitpier` command opens a local repository or Worktree in your chosen GitPier application. It only navigates. Commit, Pull, Push, Merge, Rebase and other writes remain in their existing app workflows.
 

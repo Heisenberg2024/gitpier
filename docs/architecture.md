@@ -1,8 +1,8 @@
 # Architecture and security boundaries
 
-Current stable: [v1.9.0 (32)](https://github.com/Heisenberg2024/gitpier/releases/tag/v1.9.0), published on 2026-11-01. Ordered commit replay, unified Revert recovery and local Branch Health reuse the existing Git queues, native UI and update trust chain. See [publication validation and limits](development.md#v190-publication--2026-11-01). 当前稳定版为 v1.9.0（32），已于 2026-11-01 正式发布；提交重放、撤销恢复及分支健康复用既有 Git 队列、原生界面和更新信任边界。
+Current stable: [v2.0.0 (33)](https://github.com/Heisenberg2024/gitpier/releases/tag/v2.0.0), published on 2026-11-02. Coherent Index observations, retained local commit results and bounded diagnostics reuse the existing Git queues, native UI and update trust chain. See [publication validation and limits](development.md#v200-publication--2026-11-02). 当前稳定版为 v2.0.0（33），一致审查、操作结果与诊断继续复用既有 Git 队列、原生界面和更新信任边界。
 
-## Product quality observations (v2.0.0 development)
+## Product quality observations (v2.0.0 released)
 
 `snapshot(status:)` reads a regular Index bounded to 64 MiB through the existing descriptor-checked metadata reader, then uses one private copy for the tree, text-statistics patch and staged paths. The comparison base is the captured full HEAD or Git's native empty tree for the repository's object format. Final status and live Index bytes must still match. The live Index is neither locked nor replaced by observation; partial staging, native filters, hooks and signing retain their existing commit path. External changes invalidate collection instead of producing a mixed review. Split Index and large binary summaries remain covered.
 

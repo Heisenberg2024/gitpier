@@ -1,14 +1,28 @@
 # Development
 
+## v2.0.0 publication — 2026-11-02
+
+[GitPier v2.0.0 (33)](https://github.com/Heisenberg2024/gitpier/releases/tag/v2.0.0) was published as **Latest** at **2026-11-02 00:45:06 (Asia/Shanghai)**. Release **430695903**, source/tag **`b99f72fc3649c090127f39cf4ab3d9bc92c79483`**. The reviewed bilingual notes and three release assets were read back before publication.
+
+The [source CI](https://github.com/Heisenberg2024/gitpier/actions/runs/41322526175) and [Tag CI](https://github.com/Heisenberg2024/gitpier/actions/runs/41326048372) ran full macOS validation on the same SHA using **Swift 6.1.2**: **1,065 Core tests, zero failures/errors/skips**, 49 policy, 19 cache and 10 release-tool checks, application build, temporary DMG structure and development archive gates. The local Universal Release app uses Swift 6.4 from that same commit. Seven Mach-O components passed arm64/x86_64 and deep/strict ad-hoc checks. This records source compatibility and local packaging separately.
+
+DMG: **30,650,202 bytes**, SHA256 **`6304ce3baf537e530a6da22839eece160f981f95069afb5f07a8a9c0f37382f2`**. Signed feed: **8,927 bytes**, SHA256 **`53e7b92158c74286a715018db5f26f6bcc119c250de1f89ad5959ff0ab8d43ca`**. Production Sparkle EdDSA signatures verified for both; equal-length altered DMG/feed copies were rejected. Embedded Markdown matches the final bilingual release body. Asset IDs: feed **698848148**, DMG **698848177**, checksum **698848092**.
+
+The release/Latest pages, all three downloads and canonical Latest Feed returned HTTP 200 anonymously. Public byte lengths, digests, feed signatures, version 33/macOS 14 metadata and embedded notes match the checked draft. Existing release assets, configuration/trust fields and installed app were preserved. No application installation was performed.
+
+The [quality record](v2.0.0-testing.md) distinguishes independent source review, local native acceptance and CI. The final consistency checks retain a measured refresh cost of about **59 ms** (222.618 → 281.995 ms); scheduler improvements are not a general application-speed claim. Intel/macOS 14 hardware, complete spoken VoiceOver/keyboard-only journeys, long memory soak, private real services and production self-update remain unverified. **Developer ID, Apple notarization and production Hardened Runtime work remain a separate later milestone**; the application is ad-hoc signed.
+
+简体中文：v2.0.0（33）已于 **2026-11-02 00:45:06（Asia/Shanghai）**按维护者指令正式发布为 Latest，Release430695903，源/Tag固定 `b99f72f`。源码与Tag完整CI均为同SHA/Swift6.1.2，1065项Core零失败/错误/跳过及49/19/10和构建/临时DMG/归档门槛通过。本地Swift6.4通用包7个Mach-O双架构、ad-hoc深严格验证通过；DMG及Feed生产更新签名、等长篡改拒绝、三附件按ID回读、公开页面/下载/固定Latest Feed字节、元数据与正文均匹配。未安装应用，历史附件和更新信任字段保持。约+59ms刷新成本及真实硬件、完整无障碍、长时、私有服务和生产升级未验范围保留；Apple可信分发另列后续里程碑。
+
 ## v2.0.0 product quality development — 2026-11-01
 
-v2.0.0 is in development on the existing SwiftUI/AppKit architecture. Read the [audit and implementation plan](v2.0.0-plan.md), [quality evidence and remaining gates](v2.0.0-testing.md), and [public roadmap](../ROADMAP.md) before interpreting a local build as an RC.
+This historical development checkpoint preceded the v2.0.0 publication above. The [audit and implementation record](v2.0.0-plan.md), [quality evidence and remaining limits](v2.0.0-testing.md), and [public roadmap](../ROADMAP.md) distinguish local acceptance from subsequent CI and publication.
 
 New Debug acceptance scopes cover post-commit observation failure/cancellation, working-file changes during Diff, rapid Diff selection and native presentation. Use `quality-commit-failure`, `quality-commit-cancel`, `quality-diff-stale`, `quality-diff-burst` (with `GITPIER_PERFORMANCE_TRACE=1`), `quality-error-dismissal` (real Sheet Close during a gated final refresh), or `quality-presentation` through `Scripts/ui-acceptance.sh`. All Git writes use generated temporary repositories and local bare remotes. Supplied executables must be disposable copies with isolated configuration/identity.
 
 `WorkspaceSchedulingTests` can save repeated zero-I/O coordinator measurements through `GITPIER_QUALITY_BENCHMARK_OUTPUT`. Keep those algorithm timings separate from `workspace-performance` and `Scripts/performance.sh` native UI measurements. `GITPIER_PERFORMANCE_EXECUTABLE` accepts an already-built isolated executable for before/after runs; the normal script still builds with the existing build script.
 
-简体中文：当前为质量开发，计划、性能数据和未完成门槛见上述记录。新增验收通过既有脚本运行，只写入临时仓库和本地裸远端；算法调度与真实界面测量分别报告。正式分发、生产签名/公证、自动提交/推送/发布不属于本次开发授权。
+简体中文：此节记录发布前的质量开发阶段，计划、性能数据和当时未完成门槛见上述记录。新增验收通过既有脚本运行，只写入临时仓库和本地裸远端；算法调度与真实界面测量分别报告。正式分发、生产签名/公证、自动提交/推送/发布不属于本次开发授权。
 
 ## v1.9.0 publication — 2026-11-01
 

@@ -1,5 +1,11 @@
 # Security & privacy
 
+## v2.0.0 diagnostic retention
+
+Operations Center may retain redacted user-facing failure details in session memory: at most 4,096 characters and 16 KiB UTF-8 after truncation. The shared output redactor covers URL credentials/query secrets, common authentication headers and named token/password fields. No credential backend or durable Review Journal format changes. Unknown secret formats and private repository/path context can still require manual review before sharing a diagnostic; redaction is not a guarantee that every sensitive value is detected. See [operation history](docs/operations-center.md).
+
+简体中文：操作中心仅在会话内保留先脱敏再限4,096字符且16KiB UTF-8的失败详情，覆盖URL、常见认证Header和具名Token/密码字段；不改变凭证存储或持久审查日志。未知秘密格式及仓库/路径上下文仍需分享前人工核对，不能保证检测所有敏感值。
+
 ## v1.6.1 operation recovery (released 2026-10-18)
 
 Confirmed review writes require a durable local intent before HTTP mutation begins. `~/Library/Application Support/GitPier/workspace.review-operations/` holds versioned JSON batches (0700 directory, 0600 files); custom workspaces use the same `review-operations` extension beside their own workspace file. Identity, SHA/version, operation type/state, timestamps and opaque receipt/reviewer IDs are stored. No tokens, keys, headers, comment bodies, body hashes, source paths, Diff or code are recorded. This metadata can still reveal account/repository/request identities and activity; private file permissions do not provide cryptographic tamper resistance against the same user.

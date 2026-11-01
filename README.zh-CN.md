@@ -12,11 +12,13 @@ GitPier 将仓库管理、变更审查、提交和集成终端汇集在一个专
 
 ![提交工作台：已跟踪与未跟踪变更、双栏 Diff 和终端](docs/screenshots/commit-workspace.png)
 
-## 产品质量与原生体验 — v2.0.0（开发中）
+## 产品质量与原生体验 — v2.0.0
 
-下一里程碑加强 Index 审查快照的一致性，在后续推送失败或取消时保留本地提交成功结果，并复用现有工作空间预算限制快速切换 Diff 的并发。原生体验精修包括历史多选与键盘导航、明确的操作状态、每次操作的诊断详情，以及按界面语言显示日期；Dashboard 调度使用可复现的大规模数据测量。
+v2.0.0 加强 Index 审查快照的一致性，在后续推送失败或取消时保留本地提交成功结果，并复用现有工作空间预算限制快速切换 Diff 的并发。原生体验精修包括历史多选与键盘导航、明确的操作状态、每次操作的诊断详情，以及按界面语言显示日期；Dashboard 调度使用可复现的大规模数据测量。
 
-当前正式版仍为 v1.9.0。开发进度与 RC 门槛见[路线图](ROADMAP.md)、[实施范围](docs/v2.0.0-plan.md)和[验收记录](docs/v2.0.0-testing.md)。可信分发体系作为后续独立里程碑推进。
+已于 2026-11-02 从 `b99f72f` 将 [v2.0.0（33）](https://github.com/Heisenberg2024/gitpier/releases/tag/v2.0.0)正式发布为 **Latest**；同源 Swift 6.1.2 CI 通过 1,065 项 Core、零失败/错误/跳过，通用包、生产更新签名、附件回读与公开下载/Latest Feed 已核验。详见[发布证据与边界](docs/development.md#v200-publication--2026-11-02)。
+
+性能取舍与未验证范围见[路线图](ROADMAP.md)、[实施记录](docs/v2.0.0-plan.md)和[质量验收](docs/v2.0.0-testing.md)。Developer ID 与 Apple 公证继续作为后续独立里程碑。
 
 ## 功能
 
@@ -81,7 +83,7 @@ Git LFS 页面检测可选工具，展示规则 / 文件 / OID / Pointer，审�
 
 **已发布 [v1.4.4](https://github.com/Heisenberg2024/gitpier/releases/tag/v1.4.4)（构建号 24）。**自动获取统一复用 Git 原生认证，覆盖 HTTP、HTTPS、SSH、Git 和本地传输，不区分 GitHub、GitLab、Gitee 等平台。命名助手、绝对路径助手和 Shell 助手保留原顺序、URL/账号/路径匹配及完整协议响应；自动 Git 只请求 get，不调用 store/erase。不再把已保存密码或 Agent 当成获取前提：公开仓库可匿名获取，是否需要认证由实际服务器决定。SSH 保留原始命令、配置、Agent、文件私钥、Provider 和原生钥匙串行为。终端 Clone、GitPier Clone 以及 init/push 仓库使用相同流程；Clone 所选账号在自动检查前绑定。HTTP 仍是明文传输，设置中显示提示；GitPier 托管 HTTPS Token 仍拒绝 HTTP。既有凭证必须能被应用的 Git 进程访问，无法恢复未保存的密码或仅存在于另一个终端会话的环境变量。详见[安全边界](SECURITY.md)和[验证记录](docs/development.md#unified-native-authentication)。
 
-“工作空间搜索”支持名称、路径、组织、分支、远程名称，以及按需查询已跟踪文件路径和提交信息 / 哈希。范围可选全部 / 当前组织 / 当前仓库 / 已选仓库，结果打开仓库、已有 Diff / 文件历史或提交详情。Git 查询可取消、分页并限制结果及输出，不建立源码内容索引或上传到第三方。**⌘⇧P** 打开快速切换，支持最近 / 收藏仓库、组织匹配、上下方向键、回车和 Esc；终端焦点保留原有按键。Universal DMG 是当前正式下载，发布验证结果见[开发指南](docs/development.md#v144-release-validation--2026-10-16)。
+“工作空间搜索”支持名称、路径、组织、分支、远程名称，以及按需查询已跟踪文件路径和提交信息 / 哈希。范围可选全部 / 当前组织 / 当前仓库 / 已选仓库，结果打开仓库、已有 Diff / 文件历史或提交详情。Git 查询可取消、分页并限制结果及输出，不建立源码内容索引或上传到第三方。**⌘⇧P** 打开快速切换，支持最近 / 收藏仓库、组织匹配、上下方向键、回车和 Esc；终端焦点保留原有按键。Universal DMG 是当前正式下载，发布验证结果见[开发指南](docs/development.md#v200-publication--2026-11-02)。
 
 ## 代码托管与凭证存储 — v1.5.0
 

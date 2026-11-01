@@ -2,7 +2,7 @@
 
 **Native Git Client for macOS** · *All Your Repositories. One Workspace.*
 
-Reviewed: 2026-11-01. Current stable: [v1.9.0 (32)](https://github.com/Heisenberg2024/gitpier/releases/tag/v1.9.0). Next milestone: **v2.0.0 — Production Quality & Native Experience**, in development.
+Reviewed: 2026-11-02. Current stable: [v2.0.0 (33)](https://github.com/Heisenberg2024/gitpier/releases/tag/v2.0.0). Next milestone: **Trusted Distribution**, planned separately with no release date.
 
 GitPier develops the existing SwiftUI/AppKit workspace through focused, verifiable improvements. Milestones describe scope and acceptance conditions; they do not promise release dates. / GitPier 以现有原生工作空间为基础，持续改进可靠性、交互与性能；路线图说明范围和验收条件，不承诺发布日期。
 
@@ -21,14 +21,15 @@ GitPier develops the existing SwiftUI/AppKit workspace through focused, verifiab
 | [v1.8.0](https://github.com/Heisenberg2024/gitpier/releases/tag/v1.8.0) | Worktree Task Workspaces and optional Codex CLI through the existing user environment. 任务工作树与可选 Codex CLI。 |
 | [v1.8.1](https://github.com/Heisenberg2024/gitpier/releases/tag/v1.8.1) | Large staged assets, native file scrolling and merge/mainline reliability. 大资源、原生多文件滚动与合并可靠性。 |
 | [v1.9.0](https://github.com/Heisenberg2024/gitpier/releases/tag/v1.9.0) | Ordered Cherry-pick, unified Revert recovery, six-state Branch Health and large-history graph optimization. 有序重放、统一撤销恢复、分支健康与历史图优化。 |
+| [v2.0.0](https://github.com/Heisenberg2024/gitpier/releases/tag/v2.0.0) | Coherent Index review, retained local commit results, bounded Diff reads, operation diagnostics, native History/locale refinements and measured scheduling. 一致审查、部分成功反馈、有界 Diff、诊断和原生体验。 |
 
 Maintenance releases and exact changes are recorded in the [changelog](CHANGELOG.md). Released status does not imply all hardware, private accounts or distribution paths have been validated. / 维护版及具体差异见变更记录；已发布状态不等同于全部硬件、私有账号与分发路径均已验收。
 
 ## v2.0.0 — Production Quality & Native Experience
 
-**In development / 开发中.** [Implementation plan](docs/v2.0.0-plan.md) · [Validation and remaining gates](docs/v2.0.0-testing.md).
+**Released / 已发布：2026-11-02，2.0.0（33）.** [Release](https://github.com/Heisenberg2024/gitpier/releases/tag/v2.0.0) · [Implementation record](docs/v2.0.0-plan.md) · [Validation and remaining limits](docs/v2.0.0-testing.md).
 
-The milestone improves existing capabilities without introducing another Git engine, hosting platform or major business module. / 本版本打磨既有功能，不增加另一套 Git 引擎、新托管平台或大型业务模块。
+The release improves existing capabilities without introducing another Git engine, hosting platform or major business module. / 本版本打磨既有功能，不增加另一套 Git 引擎、新托管平台或大型业务模块。
 
 | Workstream | Intended user result |
 | --- | --- |
@@ -38,7 +39,7 @@ The milestone improves existing capabilities without introducing another Git eng
 | Measured performance / 量化性能 | Bounded work and fewer scheduling allocations with reproducible algorithm and real UI measurements. 有界任务、更少调度开销及可复现测量。 |
 | Quality evidence / 质量证据 | Real temporary Git scenarios, full Core/native acceptance, stable-source Universal builds and an honest RC decision. 真实临时 Git、完整回归、固定源码通用构建与可信 RC 判断。 |
 
-RC acceptance requires confirmed high-priority defects to be fixed and verified, appropriate independent review, complete local regression, a matching source/build record and explicit disclosure of unverified services/hardware/VoiceOver/CI. Merely passing commands is insufficient. / RC 必须解决并验证高优先级问题，完成适当独立审核和本地回归，明确源码与构建对应关系，如实披露未验证项。
+Release acceptance includes independent source review, full same-source Swift 6.1.2 CI and the verified Universal/ad-hoc DMG with production Sparkle signatures. Final snapshot checks retain about 59 ms of measured refresh cost. Intel/macOS 14 hardware, full VoiceOver, long soak, private services and production self-update remain unverified. / 独立源码审核、同源完整 CI、通用包及生产更新签名已核实；保留约 59 ms 刷新成本，并明确硬件、完整无障碍、长时、私有服务和生产升级未验范围。
 
 ## Later: Trusted Distribution / 后续独立工作：可信分发
 

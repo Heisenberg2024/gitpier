@@ -1,5 +1,11 @@
 # Hosting credential storage
 
+## v2.0.0 diagnostic boundary
+
+The credential backends, account lifecycle and migration rules below are unchanged. Session operation diagnostics add bounded output redaction; they do not read stored credentials or introduce another credential store. See [security and diagnostic retention](../SECURITY.md#v200-diagnostic-retention).
+
+简体中文：v2.0.0保留以下凭证介质、生命周期和迁移规则；操作诊断只增加有界输出脱敏，不读取已存凭证或新增凭证存储。
+
 ## v1.6.0 disconnect recovery and review drafts (released)
 
 Review APIs continue through `OAuthTokenManager`; they do not read or write storage directly. Unpublished review text stays in memory and is excluded from hosting metadata, credentials, disconnect journals and logs. Closing does not publish it.

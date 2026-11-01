@@ -1,12 +1,20 @@
 # Operations Center — v1.7.0
 
+## v2.0.0 diagnostics and native presentation
+
+Operations capture the working-tree path and a successful local commit's full-hash checkpoint, so later Push failure/cancellation retains its local result. **Details** can retain each operation's user-facing diagnostic, redacted before truncation to both 4,096 characters and 16 KiB UTF-8. Later successful work preserves that earlier cause. Closing a visible error Sheet remains respected after final refresh. These records stay session-only.
+
+Shared state symbols preserve the distinctions between success, failure, cancellation, waiting and attention; Branch Health keeps its separate synchronization/ancestry model. Progress labels, dates and numbers follow the selected interface language. Native sheets and nested diagnostic views use the existing overlay scrollbars on both axes.
+
+简体中文：v2.0.0记录实际工作树和本地提交完整Hash；推送准备失败或取消仍保留本地结果。每次操作的详情先脱敏，再同时限4,096字符和16KiB UTF-8；后续成功操作保留原诊断，最终刷新尊重已关闭的错误弹窗。普通历史仍只在会话内；图标、语言适配、原生弹窗和双轴嵌套滚动复用既有实现。
+
 Open **Operations Center** from the main toolbar's task-count button or **Quick Open → Commands**. It shows Active, Attention and Recent records shared by all workspace windows. Opening or closing this panel does not start, repeat or stop Git work.
 
 The center observes existing Clone, repository Git actions, manual/batch/automatic Fetch, Commit, Pull, Push, Merge, Rebase, Worktree creation/removal and confirmed Review submissions. Local status/Diff/history scans do not create user task records. Automatic Fetch replaces its previous completed summary for the same repository to avoid a periodic history flood.
 
 Queued and running tasks are distinct. A cancellation request remains **Cancelling…** until the existing execution owner finishes. The final result can still be success, failure, cancellation or a request for attention. Cancellation does not promise rollback of local changes or non-delivery of remote writes. Non-cancellable commit phases remain protected. There is no generic replay button.
 
-Recent non-sensitive summaries are bounded to 100 in memory. Active/waiting tasks and unresolved Review journal entries are retained while needed. Normal transient tasks are not restored as running after restart. Review recovery uses the existing v1.6.1 journal alone; the center neither copies bodies/commands/tokens into history nor creates a second journal. Unknown Review results link to the existing **Review History** inspection and acknowledgement UI, with no automatic replay.
+Recent non-sensitive summaries are bounded to 100 in memory. Active/waiting tasks and unresolved Review journal entries are retained while needed. Normal transient tasks are not restored as running after restart. Review recovery uses the existing v1.6.1 journal alone; the center does not copy Review request bodies, commands or stored credential data into history or create a second journal. Unknown Review results link to the existing **Review History** inspection and acknowledgement UI, with no automatic replay.
 
 **Open Repository** returns to the existing repository workflow. Conflict/Rebase/upstream recovery snapshots revalidate repository root, Common Directory, HEAD/Index/operation identity and remotes before reuse. Changed contexts require a fresh repository review. Mutating buttons continue to perform their original confirmations and in-queue checks. Ahead/behind counts describe local tracking references from Fetch snapshots, not live server state.
 
@@ -28,7 +36,7 @@ Confirmed remote Review writes have a different recovery requirement: an interru
 
 取消中仍等待执行方返回最终结果；成功、失败、取消或需要处理均可能成为最终状态。取消不表示本地变更已回滚，也不能证明远端未收到写入。提交原子阶段不可取消，没有通用“重放上次命令”。
 
-内存保留最近100条普通摘要；活动/等待任务和未决审查日志按需要保留。重启不恢复普通运行中假象，审查继续复用v1.6.1唯一持久化日志，正文/命令/凭证不进入操作摘要。结果未知只能进入既有审查历史核查，不自动重发。
+内存保留最近100条普通摘要；活动/等待任务和未决审查日志按需要保留。重启不恢复普通运行中假象，审查继续复用v1.6.1唯一持久化日志，审查请求正文/命令或已存凭证不复制到操作摘要；有界脱敏的用户可见诊断按上述会话规则保留。结果未知只能进入既有审查历史核查，不自动重发。
 
 恢复入口复核仓库、Common Directory、HEAD、Index、Git操作身份和Remote；变化后要求重新审查。原写入确认与队列检查保持。[仓库上下文建议](context-workflow.md)解释当前状态、原因并复用既有审查与确认；远程跟踪计数明确来自 Fetch 快照。
 
