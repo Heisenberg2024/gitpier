@@ -14,6 +14,9 @@ struct BranchesView: View {
   @State private var renamed = ""
   @State private var upstreamFor: String?
   @State private var upstreamName = ""
+  @StateObject private var health = BranchHealthReader()
+  @State private var healthTarget = ""
+  @State private var healthOwner: UUID?
   var body: some View {
     VStack(spacing: 0) {
       HStack {
@@ -23,6 +26,8 @@ struct BranchesView: View {
         Button(store.text("Compare Branches", "比较分支")) { model.setPage("compare") }
         Button(store.text("New Branch…", "新建分支…")) { workflowContext = nil; retainingHead = nil; creating = true }
       }.padding(18)
+      Divider()
+      BranchHealthPanel(model: model, health: health, target: $healthTarget)
       Divider()
       if let retainingHead {
         HStack {
@@ -50,6 +55,16 @@ struct BranchesView: View {
       }.listStyle(.inset).disabled(model.busy)
     }
     .onAppear { consumeWorkflowRequest() }
+    .onAppear { loadHealth() }
+    .onDisappear { health.invalidate() }
+    .onChange(of: model.record.id) { _, _ in loadHealth() }
+    .onChange(of: health.snapshot?.suggestedTargetReference) { _, suggested in
+      if healthTarget.isEmpty, let suggested { healthTarget = suggested }
+    }
+    .onChange(of: model.hasExternalChanges) { _, stale in if stale { health.invalidate() } }
+    .onChange(of: model.branches) { _, _ in health.load(model, target: validHealthTarget) }
+    .onChange(of: model.status.operation) { _, _ in health.load(model, target: validHealthTarget) }
+    .onChange(of: model.refreshing) { _, refreshing in if !refreshing { health.load(model, target: validHealthTarget) } }
     .onChange(of: model.workflowBranchRequest?.id) { _, _ in consumeWorkflowRequest() }
     .alert(store.text("Create Branch", "创建分支"), isPresented: $creating) {
       TextField(store.text("Branch name", "分支名称"), text: $name)
@@ -104,6 +119,13 @@ struct BranchesView: View {
       Button(store.text("Cancel", "取消"), role: .cancel) { renaming = nil }
     }
   }
+  private var validHealthTarget: String {
+    model.branches.contains { !$0.remote && $0.reference == healthTarget } ? healthTarget : ""
+  }
+  private func loadHealth() {
+    if healthOwner != model.record.id { healthTarget = ""; healthOwner = model.record.id; health.invalidate() }
+    health.load(model, target: "", force: true)
+  }
   private func consumeWorkflowRequest() {
     guard let request = model.workflowBranchRequest else { return }
     model.workflowBranchRequest = nil
@@ -122,22 +144,29 @@ struct BranchesView: View {
     HStack(spacing: 12) {
       Image(systemName: branch.current ? "checkmark.circle.fill" : "arrow.triangle.branch")
         .foregroundStyle(branch.current ? Color.mint : .secondary)
+        .accessibilityLabel(branch.current ? store.text("Current branch", "当前分支") : store.text("Branch", "分支"))
       VStack(alignment: .leading, spacing: 4) {
-        Text(branch.name).font(uiFont(size: 13, weight: .medium))
+        Text(branch.name).font(uiFont(size: 13, weight: .medium)).lineLimit(1).truncationMode(.middle).help(branch.name)
         if !branch.upstream.isEmpty {
-          Text(branch.upstream + " " + branch.tracking).font(uiFont(size: 10)).foregroundStyle(
-            .secondary)
+          Text(branch.upstream).font(uiFont(size: 10)).foregroundStyle(.secondary)
+            .lineLimit(1).truncationMode(.middle).help(branch.upstream)
         }
+      }.frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
+      if !branch.remote {
+        if !model.hasExternalChanges, !model.refreshing,
+          let value = health.byReference[branch.reference], let snapshot = health.snapshot {
+          BranchHealthBadge(value: value, collectedAt: snapshot.collectedAt, targetReference: health.analyzedTarget)
+        } else { BranchSyncBadge(state: .unknown) }
       }
-      Spacer()
       Text(String(branch.hash.prefix(8))).font(uiFont(size: 11, design: .monospaced))
         .foregroundStyle(.secondary)
       if !branch.current {
         Button(store.text("Switch", "切换")) {
           model.run(updatesCommitState: .checkout) { git in try await git.switchBranch(branch.name, remote: branch.remote) }
-        }.controlSize(.small)
-      }
+        }.controlSize(.small).frame(width: 60, alignment: .trailing)
+      } else { Color.clear.frame(width: 60, height: 18).accessibilityHidden(true) }
     }.padding(.vertical, 8)
+      .alignmentGuide(.listRowSeparatorLeading) { _ in 0 }
       .contextMenu {
         if !branch.current {
           Button(store.text("Switch", "切换")) {

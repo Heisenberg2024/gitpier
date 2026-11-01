@@ -2,6 +2,16 @@
 
 Status: planning only for v1.7.0–v2.0. Current distribution remains ad-hoc signed. No production signing identity, entitlement, certificate, private key or notarization submission is changed by this work.
 
+## v1.9.0 offline preparation
+
+Local candidates can now set an absolute `GITPIER_APP_OUTPUT_DIR` for `Scripts/build-app.sh` and `Scripts/performance.sh`; temporary staging remains under `.cache`, and the default is still `dist`. Use `CODE_SIGN_IDENTITY=-` explicitly for offline acceptance. This isolates the candidate from an earlier distribution without changing the installed application, Bundle Identifier, production update public key or feed.
+
+The script audit confirms that `CODE_SIGN_IDENTITY` is already parameterized, Sparkle's executable/helper/XPC bundles are signed inside out, the navigation CLI is signed before the outer application, and existing vendor entitlements are preserved. The current scripts do **not** supply Hardened Runtime or secure timestamp options, and this development work does not add runtime exceptions. Existing behavior must not be labeled Developer ID ready merely because deep ad-hoc verification passes.
+
+Before an authorized production signing stage, retain an immutable manifest of every Mach-O and bundle, architectures, identifiers, team, flags and effective entitlements. Compare those observations with the final tested candidate. Test the actual Git, PTY, configured SSH/credential providers, OAuth callback, Sparkle helpers and CLI under the selected hardened identity before deciding whether any entitlement exception is necessary. Do not copy a blanket exception list into the application. Main app/CLI Universal slices and nested signature verification are separate recorded build checks; they do not prove Intel/macOS 14 runtime behavior.
+
+The DMG → approved notarization submission → accepted result/log → Staple → Gatekeeper/offline quarantine checks below remain gated. Production Sparkle EdDSA signs only the final immutable artifact after any stapling/packaging changes. No production certificate enumeration, private-key read, signing, submission, Staple or feed replacement is part of this offline preparation.
+
 Three checks have different purposes: Developer ID signs executable identity; Apple notarization evaluates a submitted distribution and issues a ticket; Sparkle EdDSA authenticates the update archive and signed feed. None replaces the other two. [Apple Developer ID](https://developer.apple.com/developer-id/), [Sparkle documentation](https://sparkle-project.org/documentation/).
 
 The maintainer needs a Developer ID Application certificate/private key in an authorized build environment and separately authorized notarytool credentials. Do not export these into this repository. Hardened Runtime and secure timestamping are required for distribution signing; audit entitlements against actual PTY, System Git child processes, OAuth callbacks, networking and Sparkle behavior before enabling them. Avoid adding broad runtime exceptions without an observed requirement. [Apple distribution signing](https://developer.apple.com/documentation/xcode/creating-distribution-signed-code-for-the-mac/), [notarization requirements](https://developer.apple.com/documentation/security/notarizing-macos-software-before-distribution).

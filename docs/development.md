@@ -1,5 +1,15 @@
 # Development
 
+## v1.9.0 workflow and health development — 2026-10-31
+
+The [implementation plan](v1.9.0-plan.md) records the main-branch audit, reuse decisions, phased work and safety boundaries. [Validation and remaining RC gates](v1.9.0-testing.md) separates temporary-repository Core tests, actual macOS native UI, deterministic graph/branch measurements, Universal build checks and unrun device/distribution acceptance. The public stable download remains 1.8.1 (31); the maintainer-requested local build now uses 1.9.0 (32). Development does not publish a release.
+
+For the completed Branch Health UI refinement, see [state mapping, changed files, screenshot acceptance and limits](branch-health-visualization.md). Its isolated native scope is `GITPIER_UI_ACCEPTANCE_SCOPE=branch-health Scripts/ui-acceptance.sh <output>`.
+
+Use `GITPIER_UI_ACCEPTANCE_SCOPE=replay Scripts/ui-acceptance.sh <output>` for ordered History selection, full-ID/Diff review, native recovery and Branch Health. Existing `merge-revert`, `confirmations` and full UI/PTY scopes remain applicable. `GITPIER_APP_OUTPUT_DIR=/absolute/isolated/directory CODE_SIGN_IDENTITY=- UNIVERSAL=1 Scripts/build-app.sh` prepares a separate local ad-hoc candidate; the same output override is honored by `Scripts/performance.sh`.
+
+简体中文：本轮扩展原 Git 队列、原生 Sequencer 与既有 Diff/确认/冲突页面，健康分析只读本地引用；按计划分阶段保留真实测试和性能证据，剩余 RC 条件单独列出。本地构建版本为 1.9.0（32），生产更新身份不变，不自动发布或使用生产签名。
+
 ## v1.8.1 publication — 2026-10-29
 
 [GitPier v1.8.1 (31)](https://github.com/Heisenberg2024/gitpier/releases/tag/v1.8.1) was published as **Latest** at **2026-10-29 14:38:31 (Asia/Shanghai)** after maintainer approval of the exact bilingual notes and the verified Draft. Release ID **427530895**, source/tag **`6c90015dc509f1ce26e641f2d8da4eed45583d74`**, approved notes and all three attachment IDs remained fixed.

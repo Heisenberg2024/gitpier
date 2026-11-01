@@ -12,12 +12,17 @@ struct RepositoryWorkspace: View {
   @EnvironmentObject var store: AppStore
   @Environment(\.colorScheme) var scheme
   @State private var importedPatch: PatchImportRequest?
+  @State private var reviewDiff: CommitRecord?
   var body: some View {
     VStack(spacing: 0) {
       toolbar
       Divider()
       if model.status.operation == .merge {
         MergeStateBanner(model: model)
+        Divider()
+      }
+      if model.status.operation == .cherryPick || model.status.operation == .revert {
+        SequencerBanner(model: model)
         Divider()
       }
       if let output = model.output {
@@ -88,6 +93,8 @@ struct RepositoryWorkspace: View {
       PushUpstreamSheet(model: model).environmentObject(store)
     }
     .sheet(isPresented: $model.showRebaseRecovery) { RebaseRecoveryView(model: model).environmentObject(store) }
+    .sheet(item: $model.commitReplayRequest) { CommitReplayView(model: model, input: $0).environmentObject(store) }
+    .sheet(isPresented: $model.showSequencerRecovery) { SequencerRecoveryView(model: model).environmentObject(store) }
     .sheet(item: $importedPatch) { PatchImportView(model: model, input: $0).environmentObject(store) }
     .sheet(isPresented: Binding(
       get: { model.confirmation != nil },
@@ -143,6 +150,10 @@ struct RepositoryWorkspace: View {
         VStack(alignment: .leading, spacing: 14) {
           Text(model.confirmation?.detail ?? "").font(.callout).textSelection(.enabled)
             .frame(maxWidth: .infinity, alignment: .leading)
+          if let commit = model.confirmation?.diffCommit {
+            Button(store.text("Review Commit Changes…", "审查提交改动…")) { reviewDiff = commit }
+              .accessibilityIdentifier("replay.revert.diff")
+          }
           if let parents = model.confirmation?.mainlineParents, !parents.isEmpty {
             MergeRevertParentPicker(model: model, parents: parents)
           }
@@ -170,12 +181,22 @@ struct RepositoryWorkspace: View {
       }
     }.padding(24).frame(width: 560).frame(maxHeight: 420)
       .modifier(AppAppearance(store: store))
+      .sheet(item: $reviewDiff) { commit in
+        VStack {
+          CommitDetailView(model: model, commit: commit,
+            initialParent: model.confirmation?.mainlineParent.flatMap { number in commit.parents.indices.contains(number - 1) ? commit.parents[number - 1] : nil },
+            replayReview: model.confirmation?.replayReview,
+            onClose: { reviewDiff = nil })
+          Button(store.text("Close", "关闭")) { reviewDiff = nil }.keyboardShortcut(.cancelAction)
+        }.padding(12).frame(width: 1000, height: 600).modifier(AppAppearance(store: store))
+      }
+      .onDisappear { reviewDiff = nil }
       .onExitCommand { model.confirmation = nil }
       .onChange(of: store.selectionIdentity) { _, _ in
-        if model.confirmation?.mainlineParents != nil { model.confirmation = nil }
+        if model.confirmation?.asynchronousReview == true { model.confirmation = nil }
       }
       .onChange(of: model.pageIdentity) { _, _ in
-        if model.confirmation?.mainlineParents != nil { model.confirmation = nil }
+        if model.confirmation?.asynchronousReview == true { model.confirmation = nil }
       }
   }
   var toolbar: some View {

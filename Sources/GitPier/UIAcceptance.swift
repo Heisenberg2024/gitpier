@@ -94,6 +94,22 @@ import SwiftUI
           print("Native merge revert acceptance passed (temporary repository).")
           exit(0)
         }
+        #if DEBUG
+        if acceptanceScope == "branch-health" {
+          window.close()
+          try await verifyBranchHealthVisualization(root: root, output: output)
+          store.shutdown()
+          print("Native Branch Health visualization acceptance passed (temporary repositories).")
+          exit(0)
+        }
+        #endif
+        if acceptanceScope == "replay" {
+          window.close()
+          try await verifyCommitReplay(root: root, output: output)
+          store.shutdown()
+          print("Native commit replay and branch health acceptance passed (temporary repository).")
+          exit(0)
+        }
         if acceptanceScope == "confirmations" {
           window.close()
           try await verifyConfirmations(root: root, output: output)

@@ -109,17 +109,18 @@ public struct ContextWorkflowAdvice: Equatable, Sendable {
     if input.remoteCount == 0 { return Self(.localOnly, [.addRemote]) }
     if input.remotePhase == .authenticationRequired { return Self(.authentication, [.reviewAuthentication]) }
     if input.remotePhase == .checking || input.remotePhase == .queued { return Self(.checkingRemote) }
-    if state.upstream == nil { return Self(.noUpstream, [.setUpstream, .reviewFetch]) }
+    if state.syncState == .noUpstream { return Self(.noUpstream, [.setUpstream, .reviewFetch]) }
     if input.remotePhase == .failed { return Self(.fetchFailed, [.reviewFetch]) }
     // Never promote a cached ahead/behind count into a claim about a live server.
     if !input.remoteFresh || input.remotePhase == .skipped || input.remotePhase == .notChecked { return Self(.verifyRemote, [.reviewFetch]) }
-    if !state.upstreamComparable { return Self(.missingUpstream, [.setUpstream, .reviewFetch]) }
-    if state.ahead > 0 && state.behind > 0 {
-      return Self(.diverged, [.compareIncoming, .mergeUpstream, .rebaseUpstream])
+    switch state.syncState {
+    case .unknown: return Self(.missingUpstream, [.setUpstream, .reviewFetch])
+    case .diverged: return Self(.diverged, [.compareIncoming, .mergeUpstream, .rebaseUpstream])
+    case .behind: return Self(.incoming, [.compareIncoming, .reviewPull])
+    case .ahead: return Self(.outgoing, [.compareOutgoing, .reviewPush])
+    case .noUpstream: return Self(.noUpstream, [.setUpstream, .reviewFetch])
+    case .synced: return Self(.aligned)
     }
-    if state.behind > 0 { return Self(.incoming, [.compareIncoming, .reviewPull]) }
-    if state.ahead > 0 { return Self(.outgoing, [.compareOutgoing, .reviewPush]) }
-    return Self(.aligned)
   }
 }
 

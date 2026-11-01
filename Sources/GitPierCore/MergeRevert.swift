@@ -7,4 +7,5 @@ public struct MergeRevertReview: Sendable {
   public let operation: GitOperationReview
   public let commit: CommitRecord
   public let parents: [CommitRecord]
+  let replay: CommitReplayReview
 }

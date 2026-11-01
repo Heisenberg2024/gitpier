@@ -21,6 +21,7 @@ struct HistoryView: View {
   @State private var blame: BlameRequest?
   @State private var rebase: InteractiveRebaseRequest?
   @State private var patchExport: PatchExportRequest?
+  @State private var replaySelection: Set<String> = []
   var records: [CommitRecord] {
     model.history.filter {
       fullHistory || search.isEmpty || $0.subject.localizedCaseInsensitiveContains(search)
@@ -30,12 +31,17 @@ struct HistoryView: View {
   var graph: [String: GraphRow] { model.historyGraph }
   var body: some View {
     GeometryReader { geometry in
+      let replayHashes = model.history.reversed().filter { replaySelection.contains($0.hash) }.map(\.hash)
       VStack(spacing: 0) {
         VStack(spacing: 0) {
           ScrollView(.horizontal, showsIndicators: false) {
           HStack {
             Text(store.text("History", "历史")).font(uiFont(size: 13, weight: .semibold))
             Button(store.text("Reflog", "引用日志")) { model.setPage("reflog") }
+            Button(store.text("Cherry-pick Selected (\(replayHashes.count))…", "Cherry-pick 所选提交（\(replayHashes.count)）…")) {
+              model.commitReplayRequest = CommitReplayRequest(commits: replayHashes)
+            }.disabled(replayHashes.isEmpty || replayHashes.count > 200 || model.busy || model.status.operation != nil)
+              .accessibilityIdentifier("history.cherry-pick-selected")
             Button(store.text("Compare Branches", "比较分支")) { model.setPage("compare") }
             Button(store.text("Interactive Rebase…", "交互式变基…")) {
               rebase = InteractiveRebaseRequest(upstream: model.status.upstream ?? "HEAD~1")
@@ -76,6 +82,12 @@ struct HistoryView: View {
           ScrollView {
             LazyVStack(spacing: 0) {
               ForEach(records) { commit in
+                HStack(spacing: 0) {
+                  Toggle(store.text("Select commit", "选择提交") + " " + commit.subject, isOn: Binding(
+                    get: { replaySelection.contains(commit.hash) },
+                    set: { if $0 { replaySelection.insert(commit.hash) } else { replaySelection.remove(commit.hash) } }))
+                    .labelsHidden().toggleStyle(.checkbox).padding(.leading, 10).padding(.trailing, 4)
+                    .disabled(model.busy).accessibilityIdentifier("history.select." + commit.hash)
                 Button {
                   model.selectedHistoryCommit =
                     model.selectedHistoryCommit?.hash == commit.hash ? nil : commit
@@ -104,6 +116,7 @@ struct HistoryView: View {
                   ).contentShape(Rectangle())
                 }.buttonStyle(.workspace).accessibilityIdentifier("history-" + commit.hash)
                   .contextMenu { historyMenu(commit) }
+                }
               }
               if model.historyHasMore {
                 Button(store.text("Load more commits", "加载更多提交")) {
@@ -189,10 +202,8 @@ struct HistoryView: View {
           + String(commit.hash.prefix(8)))
     }
     Button(localizedUI("Cherry-pick…")) {
-      model.perform(
-        ["cherry-pick", commit.hash],
-        confirmation: store.text("Apply this commit to the current branch?", "将此提交应用到当前分支？"))
-    }
+      model.commitReplayRequest = CommitReplayRequest(commits: [commit.hash])
+    }.disabled(model.busy || model.status.operation != nil)
     Button(localizedUI("Revert…")) {
       model.revert(commit)
     }
@@ -253,17 +264,19 @@ struct CommitDetailView: View {
   @ObservedObject var panels: WorkspacePanels
   let commit: CommitRecord
   let initialPath: String?
+  let replayReview: CommitReplayReview?
   var onClose: (() -> Void)?
   var onBlame: ((String, String) -> Void)?
-  init(model: RepositoryModel, commit: CommitRecord, initialPath: String? = nil, onClose: (() -> Void)? = nil, onBlame: ((String, String) -> Void)? = nil) {
+  init(model: RepositoryModel, commit: CommitRecord, initialPath: String? = nil, initialParent: String? = nil, replayReview: CommitReplayReview? = nil, onClose: (() -> Void)? = nil, onBlame: ((String, String) -> Void)? = nil) {
     self.initialPath = initialPath
     self.onClose = onClose
     self.onBlame = onBlame
     self.model = model
     self.commit = commit
+    self.replayReview = replayReview
     panels = model.panels
-    _parent = State(initialValue: commit.parents.first ?? "")
-    _customParent = State(initialValue: commit.parents.first ?? "")
+    _parent = State(initialValue: initialParent ?? commit.parents.first ?? "")
+    _customParent = State(initialValue: initialParent ?? commit.parents.first ?? "")
   }
   @EnvironmentObject var store: AppStore
   @Environment(\.colorScheme) var scheme
@@ -396,8 +409,10 @@ struct CommitDetailView: View {
     filesLoading = true
     let requestedParent = parent
     do {
+      if let replayReview { try await model.git().validateCommitReplaySource(replayReview) }
       let result = try await model.git().commitFiles(
-        commit.hash, parent: requestedParent.isEmpty ? nil : requestedParent)
+        commit.hash, parent: requestedParent.isEmpty ? nil : requestedParent, localOnly: replayReview != nil)
+      if let replayReview { try await model.git().validateCommitReplaySource(replayReview) }
       try Task.checkCancellation()
       guard requestedParent == parent else { return }
       files = result
@@ -418,13 +433,15 @@ struct CommitDetailView: View {
     problem = nil
     loading = true
     do {
+      if let replayReview { try await model.git().validateCommitReplaySource(replayReview) }
       let bytes = try await model.git().commitPatch(
-        commit.hash, path: selected, parent: requestedParent.isEmpty ? nil : requestedParent)
+        commit.hash, path: selected, parent: requestedParent.isEmpty ? nil : requestedParent, localOnly: replayReview != nil)
       try Task.checkCancellation()
       guard self.selected == selected, parent == requestedParent else { return }
       oversized = bytes.count > 2 * 1024 * 1024 || bytes.reduce(into: 0) { if $1 == 10 { $0 += 1 } } > 40000
       let large = oversized
       let parsed = await Task.detached(priority: .userInitiated) { large ? DiffDocument.empty : DiffParser.parse(bytes) }.value
+      if let replayReview { try await model.git().validateCommitReplaySource(replayReview) }
       try Task.checkCancellation()
       guard self.selected == selected, parent == requestedParent else { return }
       diff = parsed

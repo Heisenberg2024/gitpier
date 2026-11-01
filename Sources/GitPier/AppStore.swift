@@ -541,6 +541,9 @@ struct DiffTab: Identifiable, Equatable {
   lazy var conflictEditor = ConflictEditorModel(repository: self)
   @Published private(set) var networkFetching = false
   @Published var showRebaseRecovery = false
+  @Published var commitReplayRequest: CommitReplayRequest?
+  @Published var showSequencerRecovery = false
+  @Published var sequencer: GitSequencerState?
   @Published var workflowFilesystem: WorkflowFilesystem?
   @Published var workflowPreparing = false
   @Published var workflowMessage: String?
@@ -808,6 +811,7 @@ struct DiffTab: Identifiable, Equatable {
       }
       let newIdentity = try await git.identity()
       if identity != newIdentity { identity = newIdentity }
+      sequencer = (new.operation == .cherryPick || new.operation == .revert) ? try await git.sequencerState() : nil
       let newBranches = try await git.branches()
       if branches != newBranches { branches = newBranches }
       let newRemotes = try await git.remotes()
@@ -1167,11 +1171,15 @@ struct DiffTab: Identifiable, Equatable {
         error = nil
         result = .needsAttention
       }
+      if status.operation != nil {
+        result = .needsAttention
+        outputResult = .needsAttention
+      }
       if result == .needsAttention || status.operation != nil || status.files.contains(where: \.isConflicted) {
         await captureOperationRecovery(progressTicket.id)
       }
       activity.finish(result, ticket: progressTicket,
-        waitingForUser: result == .needsAttention && (pendingPushRecovery != nil || pendingMergeReview != nil || needsUpstream))
+        waitingForUser: result == .needsAttention && (status.operation != nil || pendingPushRecovery != nil || pendingMergeReview != nil || needsUpstream))
       if notify, let output { store.notifyCompletion(output) }
     }
   }
@@ -1647,19 +1655,15 @@ struct DiffTab: Identifiable, Equatable {
     }
   }
   func revert(_ commit: CommitRecord) {
-    guard commit.parents.count > 1 else {
-      perform(["revert", "--no-edit", commit.hash],
-        confirmation: store.text("Create a new commit reversing this commit?", "创建反向提交以撤销此提交？"))
-      return
-    }
     guard !busy, store.current === self, !store.showDashboard else { return }
     let id = UUID(), selection = store.selectionIdentity, page = pageIdentity
     let path = record.path, executable = store.settings.gitPath, expectedIndex = snapshot
+    let title = store.text(commit.parents.count > 1 ? "Revert Merge" : "Revert Commit", commit.parents.count > 1 ? "撤销合并" : "撤销提交")
     confirmationReviewID = id
     confirmationReviewTask?.cancel()
     error = nil
-    confirmation = PendingAction(id: id, title: store.text("Revert Merge", "撤销合并"),
-      detail: store.text("Reading the merge and its ordered parents…", "正在读取合并提交及按序排列的父提交…"),
+    confirmation = PendingAction(id: id, title: title,
+      detail: store.text("Reading the commit and target working tree…", "正在读取提交及目标工作树…"),
       canConfirm: false, asynchronousReview: true, mainlineParents: []) {}
     let isCurrent = { [weak self] in
       guard let self else { return false }
@@ -1670,29 +1674,31 @@ struct DiffTab: Identifiable, Equatable {
     confirmationReviewTask = Task { [weak self] in
       guard let self else { return }
       do {
-        let review = try await git().reviewMergeRevert(commit.hash, expectedIndex: expectedIndex)
+        let review = try await git().reviewCommitReplay(.revert, commits: [commit.hash], expectedIndex: expectedIndex)
+        let reviewedCommit = review.commits[0]
+        let title = store.text(review.parents.isEmpty ? "Revert Commit" : "Revert Merge", review.parents.isEmpty ? "撤销提交" : "撤销合并")
         try Task.checkCancellation()
         guard isCurrent(), confirmationReviewID == id, confirmation?.id == id, !busy else {
-          if confirmation?.id == id { confirmation = nil }
-          return
+          if confirmation?.id == id { confirmation = nil }; return
         }
-        confirmation = PendingAction(id: id, title: store.text("Revert Merge", "撤销合并"),
-          detail: review.commit.subject + "\n" + review.commit.hash + "\n\n"
+        let execute: (Int?) -> Void = { [weak self] mainline in
+          guard let self else { return }
+          guard isCurrent() else { self.error = self.store.text("The repository context changed. Review the commit again.", "仓库上下文已改变，请重新审查提交。"); return }
+          self.run(label: title, kind: .git, updatesCommitState: .history) { git in
+            self.output = try await git.executeCommitReplay(review, mainline: mainline)
+          }
+        }
+        confirmation = PendingAction(id: id, title: title,
+          detail: reviewedCommit.subject + "\n" + reviewedCommit.hash + "\n\n" + review.workingTree + "\n" + review.gitDirectory + "\n"
             + review.operation.branch + " · HEAD " + (review.operation.head ?? "") + "\n\n"
-            + store.text("Choose the parent to use as the mainline. A new commit reverses the merge's changes relative to that parent. Hooks and signing remain enabled. No push will run.",
-              "请选择作为主线的父提交。将创建新提交，撤销合并相对于该父提交的改动。保留 Hooks 和签名，不会执行推送。"),
+            + store.text(review.parents.isEmpty
+              ? "Create a new commit reversing these changes. Hooks and signing remain enabled. No Push follows."
+              : "Choose the parent to use as the mainline. A new commit reverses changes relative to that parent. Hooks and signing remain enabled. No Push follows.",
+              review.parents.isEmpty ? "创建新提交以撤销这些改动，保留 Hooks 和签名，不会接着推送。"
+              : "请选择作为主线的父提交，创建新提交以撤销相对于该父提交的改动。保留 Hooks 和签名，不会接着推送。"),
           confirmTitle: store.text("Create Revert Commit", "创建撤销提交"), asynchronousReview: true,
-          mainlineParents: review.parents, mainlineAction: { [weak self] mainline in
-            guard let self else { return }
-            guard isCurrent() else {
-              self.error = self.store.text("The repository context changed. Review the merge again.", "仓库上下文已改变，请重新审查合并提交。")
-              return
-            }
-            self.run(label: self.store.text("Reverting merge", "撤销合并"), kind: .git, updatesCommitState: .history) { git in
-              guard isCurrent() else { throw GitPierError.indexChanged }
-              self.output = try await git.revertMerge(review, mainline: mainline)
-            }
-          }) {}
+          diffCommit: reviewedCommit, replayReview: review, mainlineParents: review.parents.isEmpty ? nil : review.parents,
+          mainlineAction: review.parents.isEmpty ? nil : { execute($0) }) { execute(nil) }
       } catch {
         if !Task.isCancelled, confirmationReviewID == id, confirmation?.id == id {
           confirmation = nil
@@ -1703,6 +1709,11 @@ struct DiffTab: Identifiable, Equatable {
   }
   func perform(_ args: [String], confirmation detail: String? = nil, context: ContextWorkflowReview? = nil) {
     guard !busy else { return }
+    if detail != nil, args.count == 2, ["cherry-pick", "revert"].contains(args[0]),
+      ["--continue", "--skip", "--abort"].contains(args[1]) {
+      showSequencerRecovery = true
+      return
+    }
     confirmationReviewID = UUID()
     confirmationReviewTask?.cancel()
     let action: (GitOperationReview?) -> Void = { [weak self] review in
@@ -1888,6 +1899,8 @@ struct PendingAction: Identifiable {
   var canConfirm = true
   var asynchronousReview = false
   var reviewedAction: (() -> Void)? = nil
+  var diffCommit: CommitRecord? = nil
+  var replayReview: CommitReplayReview? = nil
   var mainlineParents: [CommitRecord]? = nil
   var mainlineParent: Int? = nil
   var mainlineAction: ((Int) -> Void)? = nil

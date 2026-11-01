@@ -33,6 +33,14 @@ English and Simplified Chinese interfaces, light and dark themes, and system app
 
 Opening or selecting a repository always shows the Commit page; the current page is not persisted. Collapse or expand all organization repositories with one sidebar button.
 
+## Professional workflows and repository health — v1.9.0 development
+
+Local development adds an ordered review for 1–200 History commits, full commit IDs, target Worktree/branch/HEAD and the existing Diff. Cherry-pick uses Git's native sequencer; duplicate patches and empty results stop for explicit recovery, and merge commits are refused rather than guessing a mainline. Ordinary and merge Revert share a bounded confirmation and Diff entry; merge Revert still requires an explicit parent. Continue, Skip and Abort recheck the original repository and reviewed state, and confirmed writes survive page dismissal.
+
+Branches adds read-only local health: upstream existence, ahead/behind/divergence, recent activity, occupied Worktrees and optional ancestor-based merged-into analysis against a selected existing local branch (with a validated remote-HEAD suggestion). Observation time and the last app Fetch (or Unknown) describe provenance; no Fetch or cleanup runs implicitly. Inactivity does not establish deletion safety. Branches, Dashboard and contextual guidance share typed Synced / Ahead / Behind / Diverged / No upstream / Unknown labels and accessible counts; merged, unmerged, unproven and not-analyzed ancestry remain separate. Native status symbols use green for synced/merged, adaptive primary text for ahead, blue for behind, orange for divergence and neutral gray for unknown/no upstream; checkout, sync and merge have distinct icons. Dashboard and contextual guidance retain their existing local snapshot collectors and recovery links.
+
+The stable download remains **v1.8.1 (31)**. See the [implementation plan](docs/v1.9.0-plan.md) and [validation / remaining RC gates](docs/v1.9.0-testing.md). Development does not authorize publication.
+
 ## Professional Git workflows — v1.2.0
 
 Released [v1.2.0](https://github.com/Heisenberg2024/gitpier/releases/tag/v1.2.0) adds Reflog recovery, guarded Worktree lifecycle management, arbitrary local/remote-tracking branch comparison, and Git Blame. These use native Git queries and the existing macOS panels; recovery defaults to a new branch, comparison/Blame are read-only, and unknown or dirty worktree directories cannot be deleted. Blame supports UTF-8 text up to 4 MiB with 400-line pages. See the [changelog](CHANGELOG.md) and [development validation](docs/development.md). Install from GitHub Latest Release or use Check for Updates from v1.1.0.

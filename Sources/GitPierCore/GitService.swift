@@ -23,6 +23,7 @@ public actor GitService {
   private var authenticationRevision = UUID()
   private var writeBusy = false
   private var writeWaiters: [(UUID, CheckedContinuation<Void, Error>)] = []
+  private var replayExecutions: [UUID] = []
   // Different working-tree actors can share info/exclude. Hold only across synchronous file I/O.
   private static let localExcludeLock = NSLock()
   public init(root: URL, gitPath: String = "/usr/bin/git", runner: ProcessRunner = ProcessRunner(), sshConfigurationPath: String? = nil)
@@ -133,18 +134,7 @@ public actor GitService {
       await read(["status", "--porcelain=v2", "-z", "--branch", "--untracked-files=all"],
         environment: localOnly ? ["GIT_NO_LAZY_FETCH": "1"] : [:]).stdout)
     let dir = try await metadataDirectories()[0]
-    let fm = FileManager.default
-    if fm.fileExists(atPath: dir.appendingPathComponent("rebase-merge").path)
-      || fm.fileExists(atPath: dir.appendingPathComponent("rebase-apply").path)
-    {
-      status.operation = .rebase
-    } else if fm.fileExists(atPath: dir.appendingPathComponent("MERGE_HEAD").path) {
-      status.operation = .merge
-    } else if fm.fileExists(atPath: dir.appendingPathComponent("CHERRY_PICK_HEAD").path) {
-      status.operation = .cherryPick
-    } else if fm.fileExists(atPath: dir.appendingPathComponent("REVERT_HEAD").path) {
-      status.operation = .revert
-    }
+    status.operation = try nativeOperation(in: dir)
     return status
   }
   /// Dashboard reads only porcelain counts, local tracking refs and repository identity.
@@ -173,12 +163,7 @@ public actor GitService {
             environment: ["GIT_NO_LAZY_FETCH": "1"], limit: 16 * 1024 * 1024, timeout: 20).stdout)
           let collectedAt = Date(), collectedUptime = ProcessInfo.processInfo.systemUptime
           let dir = directories[0]
-          let fm = FileManager.default
-          if fm.fileExists(atPath: dir.appendingPathComponent("rebase-merge").path)
-            || fm.fileExists(atPath: dir.appendingPathComponent("rebase-apply").path) { state.operation = .rebase }
-          else if fm.fileExists(atPath: dir.appendingPathComponent("MERGE_HEAD").path) { state.operation = .merge }
-          else if fm.fileExists(atPath: dir.appendingPathComponent("CHERRY_PICK_HEAD").path) { state.operation = .cherryPick }
-          else if fm.fileExists(atPath: dir.appendingPathComponent("REVERT_HEAD").path) { state.operation = .revert }
+          state.operation = try nativeOperation(in: dir)
           let names = try await read(["remote"], limit: 256 * 1024, timeout: 15).text
             .split(separator: "\n").map(String.init)
           let target: WorkspaceFetchTarget?
@@ -284,6 +269,9 @@ public actor GitService {
   }
   private func conflictOperationIdentity() async throws -> Data {
     let directory = try await metadataDirectories()[0]
+    return try operationIdentity(in: directory)
+  }
+  private func operationIdentity(in directory: URL) throws -> Data {
     var bytes = Data()
     for name in [
       "MERGE_HEAD", "CHERRY_PICK_HEAD", "REVERT_HEAD", "rebase-merge/head-name",
@@ -294,16 +282,59 @@ public actor GitService {
       "rebase-apply/next", "rebase-apply/last", "rebase-apply/patch",
       "rebase-merge/author-script", "rebase-merge/gpg_sign_opt", "rebase-merge/message-squash",
       "rebase-merge/message-fixup", "rebase-merge/current-fixups", "rebase-merge/rewritten-list",
-      "gitpier-rebase-messages.json",
+      "gitpier-rebase-messages.json", "sequencer/head", "sequencer/todo",
+      "sequencer/opts", "sequencer/abort-safety", "MERGE_MSG",
     ] {
       bytes.append(Data(name.utf8))
       bytes.append(0)
-      if let data = try? Data(contentsOf: directory.appendingPathComponent(name)) {
-        bytes.append(data)
-      }
+      if let data = try operationFile(directory.appendingPathComponent(name), limit: name == "gitpier-rebase-messages.json" ? 16 * 1024 * 1024 : 2 * 1024 * 1024) { bytes.append(data) }
       bytes.append(0)
+      guard bytes.count <= 32 * 1024 * 1024 else {
+        throw GitPierError.invalidInput("Git operation metadata exceeds the supported total size. Recover in the repository terminal.")
+      }
     }
     return bytes
+  }
+  /// Bounded metadata reads also refuse links, devices and FIFOs. Missing files are normal.
+  private func operationFile(_ url: URL, limit: Int = 2 * 1024 * 1024) throws -> Data? {
+    let fd = open(url.path, O_RDONLY | O_NOFOLLOW | O_NONBLOCK)
+    if fd < 0 {
+      if errno == ENOENT { return nil }
+      throw GitPierError.invalidInput("Git operation metadata is unavailable or unsafe. Inspect it in the repository terminal.")
+    }
+    let handle = FileHandle(fileDescriptor: fd, closeOnDealloc: true)
+    defer { try? handle.close() }
+    var info = stat()
+    guard fstat(fd, &info) == 0, info.st_mode & S_IFMT == S_IFREG, info.st_size <= limit,
+      info.st_size >= 0 else {
+      throw GitPierError.invalidInput("Git operation metadata exceeds the supported size or file type. Use the repository terminal to recover.")
+    }
+    let data = try handle.read(upToCount: limit + 1) ?? Data()
+    var after = stat(), live = stat()
+    func same(_ value: stat) -> Bool {
+      value.st_dev == info.st_dev && value.st_ino == info.st_ino && value.st_mode == info.st_mode
+        && value.st_size == info.st_size && value.st_mtimespec.tv_sec == info.st_mtimespec.tv_sec
+        && value.st_mtimespec.tv_nsec == info.st_mtimespec.tv_nsec
+        && value.st_ctimespec.tv_sec == info.st_ctimespec.tv_sec && value.st_ctimespec.tv_nsec == info.st_ctimespec.tv_nsec
+    }
+    guard data.count == info.st_size, data.count <= limit, fstat(fd, &after) == 0, same(after),
+      lstat(url.path, &live) == 0, same(live) else { throw GitPierError.indexChanged }
+    return data
+  }
+  private func nativeOperation(in directory: URL) throws -> GitOperation? {
+    let fm = FileManager.default
+    if ["rebase-merge", "rebase-apply"].contains(where: { fm.fileExists(atPath: directory.appendingPathComponent($0).path) }) { return .rebase }
+    if fm.fileExists(atPath: directory.appendingPathComponent("MERGE_HEAD").path) { return .merge }
+    if fm.fileExists(atPath: directory.appendingPathComponent("CHERRY_PICK_HEAD").path) { return .cherryPick }
+    if fm.fileExists(atPath: directory.appendingPathComponent("REVERT_HEAD").path) { return .revert }
+    if fm.fileExists(atPath: directory.appendingPathComponent("sequencer").path) {
+      let todo = try operationFile(directory.appendingPathComponent("sequencer/todo")) ?? Data()
+      let command = String(decoding: todo, as: UTF8.self).split(whereSeparator: \.isWhitespace).first
+      if command == "pick" { return .cherryPick }
+      if command == "revert" { return .revert }
+      throw GitPierError.invalidInput("An unfinished Git sequencer could not be identified. Inspect it in the repository terminal before starting another operation.")
+    }
+    return nil
   }
   private func conflictURL(_ path: String) throws -> URL {
     try InputValidation.repositoryPath(path)
@@ -1555,6 +1586,93 @@ public actor GitService {
         tracking: f[3], hash: f[4])
     }
   }
+  /// One bounded ref inventory and one native merged query, never a process per branch.
+  public func branchHealth(mergedInto target: String? = nil, record: RepositoryRecord? = nil) async throws -> BranchHealthSnapshot {
+    try await lifecycleWrite {
+      try await requireLocalWorkspaceQueries()
+      let directories = try await replayDirectories(), executable = gitPath
+      let args = ["for-each-ref", "--count=10001",
+        "--format=%(refname)%00%(objectname)%00%(HEAD)%00%(upstream)%00%(upstream:track)%00%(committerdate:unix)%00%(symref)%00%(upstream:short)", "refs/heads", "refs/remotes"]
+      let inventory = try await read(args, environment: ["GIT_NO_LAZY_FETCH": "1"], limit: 8 * 1024 * 1024).stdout
+      guard let text = String(data: inventory, encoding: .utf8) else {
+        throw GitPierError.invalidInput("Branch health requires UTF-8 reference names. Inspect unsupported refs in the repository terminal.")
+      }
+      let rows = text.split(separator: "\n").map {
+        $0.split(separator: "\0", omittingEmptySubsequences: false).map(String.init)
+      }
+      guard rows.count <= 10000, rows.allSatisfy({ $0.count == 8 }) else {
+        throw GitPierError.invalidInput("Branch health supports up to 10,000 local and tracking references. Narrow the repository's references in Git before retrying.")
+      }
+      let targets = rows.filter { $0[0].hasPrefix("refs/heads/") && $0[6].isEmpty }.map { $0[0] }
+      if let target, !targets.contains(target) { throw GitPierError.invalidInput("The merge target no longer exists. Choose an existing local branch and analyze again.") }
+      // Remote HEAD is local metadata. Only suggest its matching, existing local
+      // branch, and refuse conflicting defaults rather than guessing main/origin.
+      let currentUpstream = rows.first { $0[2] == "*" }?[3] ?? ""
+      let defaults = rows.compactMap { row -> (local: String, preferred: Bool)? in
+        guard row[0].hasPrefix("refs/remotes/"), row[0].hasSuffix("/HEAD"),
+          row[6].hasPrefix("refs/remotes/"), rows.contains(where: { $0[0] == row[6] && $0[6].isEmpty }) else { return nil }
+        let prefix = String(row[0].dropLast("HEAD".count))
+        guard row[6].hasPrefix(prefix) else { return nil }
+        let local = "refs/heads/" + row[6].dropFirst(prefix.count)
+        guard targets.contains(local) else { return nil }
+        return (local, currentUpstream.hasPrefix(prefix))
+      }
+      let preferredDefaults = defaults.filter(\.preferred)
+      let candidates = Set((preferredDefaults.isEmpty ? defaults : preferredDefaults).map(\.local))
+      let suggestedTarget = candidates.count == 1 ? candidates.first : nil
+      let branchResult = try await read(["symbolic-ref", "--quiet", "--short", "HEAD"], allowFailure: true)
+      let branch = branchResult.code == 0 ? branchResult.text.trimmingCharacters(in: .newlines) : nil
+      let headResult = try await read(["rev-parse", "--verify", "HEAD"], environment: ["GIT_NO_LAZY_FETCH": "1"], allowFailure: true)
+      let head = headResult.code == 0 ? headResult.text.trimmingCharacters(in: .newlines) : nil
+      let directory = try await metadataDirectories()[0]
+      let operation = try nativeOperation(in: directory)
+      let shallow = try await read(["rev-parse", "--is-shallow-repository"]).text.trimmingCharacters(in: .newlines) == "true"
+      let targetHash = target.flatMap { target in rows.first { $0[0] == target }?[1] }
+      var merged = Set<String>()
+      if let targetHash {
+        merged = Set(try await read(["for-each-ref", "--count=10001", "--merged=" + targetHash, "--format=%(refname)", "refs/heads"],
+          environment: ["GIT_NO_LAZY_FETCH": "1"], limit: 2 * 1024 * 1024).text.split(separator: "\n").map(String.init))
+      }
+      let worktrees = try await worktrees(includeStatus: false)
+      var fetchTarget: WorkspaceFetchTarget?
+      if let record { fetchTarget = try? await upstreamFetchTarget(record) }
+      let health = rows.filter { $0[0].hasPrefix("refs/heads/") }.map { row -> BranchHealth in
+        let upstream = row[3].isEmpty ? nil : row[3]
+        // Native tracking resolves arbitrary fetch destinations, including refs
+        // outside refs/remotes. Absence is reported by Git's [gone] marker.
+        let exists = upstream.map { _ in row[4] != "[gone]" }
+        var ahead: Int? = exists == true ? 0 : nil, behind: Int? = exists == true ? 0 : nil
+        if exists == true {
+          var seen = Set<String>()
+          for field in row[4].trimmingCharacters(in: CharacterSet(charactersIn: "[]")).split(separator: ",") {
+            let bits = field.split(whereSeparator: \.isWhitespace)
+            guard bits.count == 2, ["ahead", "behind"].contains(String(bits[0])),
+              let count = Int(bits[1]), count > 0, seen.insert(String(bits[0])).inserted else {
+              ahead = nil; behind = nil; break
+            }
+            if bits[0] == "ahead" { ahead = count } else { behind = count }
+          }
+        }
+        let paths = worktrees.filter { $0.branch == row[0] || $0.branch == String(row[0].dropFirst("refs/heads/".count)) }.map(\.path)
+        return BranchHealth(reference: row[0], name: String(row[0].dropFirst("refs/heads/".count)), hash: row[1], current: row[2] == "*",
+          upstream: upstream, upstreamShort: row[7], tracking: row[4], upstreamExists: exists, ahead: ahead, behind: behind,
+          mergedIntoTarget: target == nil ? nil : merged.contains(row[0]) ? true : shallow ? nil : false,
+          lastCommit: TimeInterval(row[5]).map { Date(timeIntervalSince1970: $0) }, worktreePaths: paths)
+      }
+      if let record {
+        let current = try? await upstreamFetchTarget(record)
+        guard current?.id == fetchTarget?.id else { throw GitPierError.indexChanged }
+      }
+      guard try await replayDirectories() == directories, gitPath == executable,
+        try await read(args, environment: ["GIT_NO_LAZY_FETCH": "1"], limit: 8 * 1024 * 1024).stdout == inventory,
+        try await read(["symbolic-ref", "--quiet", "--short", "HEAD"], allowFailure: true).stdout == branchResult.stdout,
+        try await read(["rev-parse", "--verify", "HEAD"], environment: ["GIT_NO_LAZY_FETCH": "1"], allowFailure: true).stdout == headResult.stdout,
+        try nativeOperation(in: directory) == operation else { throw GitPierError.indexChanged }
+      return BranchHealthSnapshot(branches: health, currentBranch: branch, head: head, detached: branch == nil && head != nil,
+        operation: operation, targetReference: target, targetHash: targetHash, availableTargets: targets, suggestedTargetReference: suggestedTarget, shallow: shallow, collectedAt: Date(),
+        fetchTargetID: fetchTarget?.id, fetchRemoteName: fetchTarget?.remote.name)
+    }
+  }
   public func remotes() async throws -> [GitRemote] {
     let names = try await read(["remote"]).text.split(separator: "\n").map(String.init)
     var result: [GitRemote] = []
@@ -2386,58 +2504,226 @@ public actor GitService {
     return GitOperationReview(head: state.head, branch: state.branch,
                               indexFingerprint: Data(SHA256.hash(data: entries)), operationIdentity: operation)
   }
-  public func reviewMergeRevert(_ hash: String, expectedIndex: IndexSnapshot? = nil) async throws -> MergeRevertReview {
-    guard [40, 64].contains(hash.count), hash.allSatisfy(\.isHexDigit) else {
-      throw GitPierError.invalidInput("Select a full merge commit ID.")
-    }
-    return try await writing {
-      let executable = gitPath
-      let operation = try await reviewOperation(expectedIndex: expectedIndex, localOnly: true)
-      try await requireCleanMergeRevert(expected: operation)
-      let commit = try await mergeRevertCommit(hash)
-      guard commit.parents.count > 1 else {
-        throw GitPierError.invalidInput("Select a merge commit with at least two parents.")
-      }
-      var parents: [CommitRecord] = []
-      for parent in commit.parents { parents.append(try await mergeRevertCommit(parent)) }
-      guard try await reviewOperation(localOnly: true) == operation else { throw GitPierError.indexChanged }
-      try await requireCleanMergeRevert(expected: operation)
-      guard executable == gitPath else { throw GitPierError.indexChanged }
-      return MergeRevertReview(workingTree: root.path, executable: executable, operation: operation, commit: commit, parents: parents)
-    }
+  private func replayDirectories() async throws -> ReplayRepositoryIdentity {
+    try await validateWorkspaceRoot()
+    let metadata = try await metadataDirectories()
+    let paths = ([root] + metadata).map { $0.resolvingSymlinksInPath().path }
+    return try ReplayRepositoryIdentity(paths: paths, identities: paths.map { try TaskDirectoryIdentity.read($0) },
+      gitEntry: ReplayRepositoryIdentity.readGitEntry(root.path))
   }
-  public func revertMerge(_ review: MergeRevertReview, mainline: Int) async throws -> String {
-    try await writing {
-      guard review.workingTree == root.path, review.executable == gitPath,
-        review.parents.count > 1, mainline > 0, mainline <= review.parents.count,
-        review.parents.map(\.hash) == review.commit.parents else {
-        throw GitPierError.invalidInput("Choose a valid mainline parent from this working tree's merge review.")
-      }
-      guard try await reviewOperation(localOnly: true) == review.operation else { throw GitPierError.indexChanged }
-      try await requireCleanMergeRevert(expected: review.operation)
-      let commit = try await mergeRevertCommit(review.commit.hash)
-      guard commit.parents == review.commit.parents else { throw GitPierError.indexChanged }
-      // Recheck after object reads, immediately before the native write. No resets, staging,
-      // hook/signing overrides or push; Git retains a conflicted revert for normal recovery.
-      guard try await reviewOperation(localOnly: true) == review.operation else { throw GitPierError.indexChanged }
-      try await requireCleanMergeRevert(expected: review.operation)
-      guard review.executable == gitPath else { throw GitPierError.indexChanged }
-      let result = try await read(["revert", "--no-edit", "--mainline", String(mainline), review.commit.hash])
-      return Self.redact(result.text + result.errorText)
-    }
-  }
-  private func requireCleanMergeRevert(expected: GitOperationReview) async throws {
+  private func requireCleanReplay(_ expected: GitOperationReview) async throws {
     let state = try await status(localOnly: true)
     guard state.head == expected.head, state.branch == expected.branch else { throw GitPierError.indexChanged }
     guard state.head != nil, state.operation == nil, state.tracked.isEmpty else {
-      throw GitPierError.invalidInput("Commit or stash tracked changes and finish the current Git operation before reverting a merge.")
+      throw GitPierError.invalidInput("Commit or stash tracked changes and finish the current Git operation before applying or reverting commits.")
     }
   }
-  private func mergeRevertCommit(_ hash: String) async throws -> CommitRecord {
-    let data = try await read(["show", "--no-patch", "--format=%H%x00%P%x00%an%x00%ae%x00%at%x00%s%x00%b%x00%D%x00", hash],
-      environment: ["GIT_NO_LAZY_FETCH": "1"]).stdout
+  private func replayObjectView() async throws -> ReplayObjectView {
+    var environment: [String: String] = [:]
+    for name in ["GIT_REPLACE_REF_BASE", "GIT_NO_REPLACE_OBJECTS", "GIT_GRAFT_FILE", "GIT_SHALLOW_FILE"] {
+      if let value = authEnvironment[name] ?? ProcessInfo.processInfo.environment[name] { environment[name] = value }
+    }
+    let namespace = environment["GIT_REPLACE_REF_BASE"] ?? "refs/replace/"
+    guard namespace.hasPrefix("refs/"), namespace.hasSuffix("/"), namespace.utf8.count <= 4096,
+      !namespace.contains(".."), !namespace.contains("//"),
+      !namespace.contains(where: { $0.isWhitespace || $0.isNewline || "~^:?*[\\\0".contains($0) }) else {
+      throw GitPierError.invalidInput("This replacement-ref namespace cannot be reviewed safely. Use the repository terminal.")
+    }
+    let replacements = try await read(["for-each-ref", "--count=10001", "--format=%(refname)%00%(objectname)", namespace],
+      environment: ["GIT_NO_LAZY_FETCH": "1"], limit: 2 * 1024 * 1024).stdout
+    guard replacements.split(separator: 10).count <= 10000 else { throw GitPierError.outputLimit }
+    let config = try await read(["config", "--null", "--get-regexp", "^(core\\.(usereplacerefs|worktree)|extensions\\.worktreeconfig)$"],
+      allowFailure: true, limit: 65536)
+    guard config.code == 0 || config.code == 1 else { throw GitPierError.command("config", config.code, config.errorText) }
+    var paths: [String] = []
+    for (name, relative) in [("GIT_GRAFT_FILE", "info/grafts"), ("GIT_SHALLOW_FILE", "shallow")] {
+      let native = try await read(["rev-parse", "--git-path", relative], limit: 65536).text.trimmingCharacters(in: .newlines)
+      for path in [native, environment[name]].compactMap({ $0 }).filter({ !$0.isEmpty }) {
+        let absolute = (path.hasPrefix("/") ? URL(fileURLWithPath: path) : root.appendingPathComponent(path)).standardizedFileURL.path
+        if !paths.contains(absolute) { paths.append(absolute) }
+      }
+    }
+    return try ReplayObjectView(replacements: replacements, configuration: config.stdout, environment: environment,
+      files: paths.map { ReplayObjectView.File(path: $0, bytes: try operationFile(URL(fileURLWithPath: $0))) })
+  }
+  private func validateReplayObjectFiles(_ view: ReplayObjectView) throws {
+    for file in view.files {
+      guard try operationFile(URL(fileURLWithPath: file.path)) == file.bytes else { throw GitPierError.indexChanged }
+    }
+  }
+  /// Shared Diff reads validate before loading and again before publishing their result.
+  public func validateCommitReplaySource(_ review: CommitReplayReview) async throws {
+    guard review.workingTree == root.path, review.executable == gitPath, review.authenticationRevision == authenticationRevision,
+      try await replayDirectories() == review.directories, try await replayObjectView() == review.objectView else { throw GitPierError.indexChanged }
+    try review.directories.validate()
+    try validateReplayObjectFiles(review.objectView)
+    guard review.executable == gitPath, review.authenticationRevision == authenticationRevision else { throw GitPierError.indexChanged }
+  }
+  public func reviewCommitReplay(_ kind: CommitReplayKind, commits hashes: [String], expectedIndex: IndexSnapshot? = nil) async throws -> CommitReplayReview {
+    guard (1...200).contains(hashes.count), Set(hashes).count == hashes.count,
+      kind != .revert || hashes.count == 1,
+      hashes.allSatisfy({ [40, 64].contains($0.count) && $0.allSatisfy(\.isHexDigit) }) else {
+      throw GitPierError.invalidInput("Select 1–200 distinct full commit IDs for Cherry-pick, or one commit for Revert.")
+    }
+    return try await lifecycleWrite {
+      let directories = try await replayDirectories(), executable = gitPath, authentication = authenticationRevision
+      let objectView = try await replayObjectView()
+      let operation = try await reviewOperation(expectedIndex: expectedIndex, localOnly: true)
+      try await requireCleanReplay(operation)
+      var commits: [CommitRecord] = [], parents: [CommitRecord] = [], reachable = Set<String>()
+      var metadataBytes = 0
+      func account(_ commit: CommitRecord) throws {
+        metadataBytes += commit.subject.utf8.count + commit.body.utf8.count + commit.author.utf8.count
+          + commit.email.utf8.count + commit.hash.utf8.count + commit.parents.reduce(0) { $0 + $1.utf8.count }
+        guard metadataBytes <= 8 * 1024 * 1024 else {
+          throw GitPierError.invalidInput("Commit metadata exceeds the 8 MiB review budget. Select fewer commits or use the repository terminal.")
+        }
+      }
+      for hash in hashes {
+        try Task.checkCancellation()
+        let commit = try await localReplayCommit(hash)
+        try account(commit)
+        guard kind != .cherryPick || commit.parents.count <= 1 else {
+          throw GitPierError.invalidInput("Cherry-pick of merge commits is not supported. A mainline parent is never guessed. Select ordinary commits instead.")
+        }
+        commits.append(commit)
+        if kind == .revert && commit.parents.count > 1 {
+          guard commit.parents.count <= 64 else {
+            throw GitPierError.invalidInput("This merge exceeds 64 parents. Review and revert it explicitly in the repository terminal.")
+          }
+          for parent in commit.parents {
+            let record = try await localReplayCommit(parent)
+            try account(record); parents.append(record)
+          }
+        }
+        if kind == .cherryPick {
+          let result = try await read(["merge-base", "--is-ancestor", hash, operation.head!],
+            environment: ["GIT_NO_LAZY_FETCH": "1"], allowFailure: true, timeout: 10)
+          if result.code == 0 { reachable.insert(hash) }
+          else if result.code != 1 { throw GitPierError.command("merge-base", result.code, result.errorText) }
+        }
+      }
+      guard try await replayDirectories() == directories, gitPath == executable, authenticationRevision == authentication,
+        try await reviewOperation(localOnly: true) == operation else { throw GitPierError.indexChanged }
+      try await requireCleanReplay(operation)
+      guard try await replayObjectView() == objectView else { throw GitPierError.indexChanged }
+      return CommitReplayReview(id: UUID(), kind: kind, workingTree: root.path,
+        gitDirectory: directories.paths[1], operation: operation, commits: commits,
+        parents: parents, alreadyReachable: reachable, executable: executable, authenticationRevision: authentication, directories: directories, objectView: objectView)
+    }
+  }
+  public func executeCommitReplay(_ review: CommitReplayReview, mainline: Int? = nil) async throws -> String {
+    try await lifecycleWrite {
+      guard review.workingTree == root.path, review.executable == gitPath,
+        review.authenticationRevision == authenticationRevision, !replayExecutions.contains(review.id),
+        try await replayDirectories() == review.directories else { throw GitPierError.indexChanged }
+      var arguments = [review.kind.command, "--no-edit"]
+      if !review.parents.isEmpty {
+        guard review.kind == .revert, let mainline, (1...review.parents.count).contains(mainline) else {
+          throw GitPierError.invalidInput("Choose an explicit mainline parent before reverting a merge commit.")
+        }
+        arguments += ["--mainline", String(mainline)]
+      } else if mainline != nil { throw GitPierError.invalidInput("This commit has no mainline choice.") }
+      guard try await reviewOperation(localOnly: true) == review.operation else { throw GitPierError.indexChanged }
+      try await requireCleanReplay(review.operation)
+      guard try await replayObjectView() == review.objectView else { throw GitPierError.indexChanged }
+      // Final checks follow all async reads. Git owns the sequencer, hooks and signing.
+      guard review.executable == gitPath, review.authenticationRevision == authenticationRevision,
+        try await replayDirectories() == review.directories,
+        try await reviewOperation(localOnly: true) == review.operation else { throw GitPierError.indexChanged }
+      guard try await replayObjectView() == review.objectView else { throw GitPierError.indexChanged }
+      try await requireCleanReplay(review.operation)
+      try review.directories.validate()
+      try validateReplayObjectFiles(review.objectView)
+      guard try operationIdentity(in: URL(fileURLWithPath: review.gitDirectory)) == review.operation.operationIdentity else { throw GitPierError.indexChanged }
+      guard review.executable == gitPath, review.authenticationRevision == authenticationRevision else { throw GitPierError.indexChanged }
+      replayExecutions.append(review.id)
+      if replayExecutions.count > 256 { replayExecutions.removeFirst(replayExecutions.count - 256) }
+      let result = try await read(arguments + review.commits.map(\.hash), environment: ["GIT_NO_LAZY_FETCH": "1"])
+      return Self.redact(result.text + result.errorText)
+    }
+  }
+  public func sequencerState() async throws -> GitSequencerState? {
+    let status = try await status(localOnly: true)
+    guard status.operation == .cherryPick || status.operation == .revert else { return nil }
+    let objectView = try await replayObjectView()
+    let review = try await reviewOperation(localOnly: true), fingerprint = try await rebaseWorkingFingerprint(expected: review)
+    let directory = try await metadataDirectories()[0]
+    let todo = try operationFile(directory.appendingPathComponent("sequencer/todo")) ?? Data()
+    let lines = String(decoding: todo, as: UTF8.self).split(separator: "\n")
+    guard lines.count <= 200 else { throw GitPierError.invalidInput("This native sequence exceeds 200 commits. Recover it in the repository terminal.") }
+    let kind = status.operation == .cherryPick ? "pick" : "revert"
+    let remaining = try lines.map { line -> GitSequencerStep in
+      let fields = line.split(maxSplits: 2, whereSeparator: \.isWhitespace)
+      guard fields.count >= 2, fields[0] == kind else { throw GitPierError.indexChanged }
+      let hash = String(fields[1])
+      guard (4...64).contains(hash.count), hash.allSatisfy(\.isHexDigit) else { throw GitPierError.indexChanged }
+      return GitSequencerStep(hash: hash, subject: fields.count == 3 ? String(fields[2]) : "")
+    }
+    let marker = status.operation == .cherryPick ? "CHERRY_PICK_HEAD" : "REVERT_HEAD"
+    let current = try operationFile(directory.appendingPathComponent(marker)).flatMap { String(data: $0, encoding: .utf8) }?
+      .trimmingCharacters(in: .whitespacesAndNewlines) ?? remaining.first?.hash
+    let hash: String?
+    if let current { hash = try await localComparisonCommit(current) } else { hash = nil }
+    guard try await reviewOperation(localOnly: true) == review,
+      try await rebaseWorkingFingerprint(expected: review) == fingerprint,
+      try await replayObjectView() == objectView else { throw GitPierError.indexChanged }
+    return GitSequencerState(operation: status.operation!, currentHash: hash, remaining: remaining, review: review, workingFingerprint: fingerprint, objectView: objectView)
+  }
+  public func reviewSequencerControl(_ action: SequencerControl) async throws -> SequencerControlReview {
+    try await lifecycleWrite {
+      let directories = try await replayDirectories(), executable = gitPath, authentication = authenticationRevision
+      guard let state = try await sequencerState() else { throw GitPierError.invalidInput("No Cherry-pick or Revert is in progress.") }
+      if action == .continue, try await status(localOnly: true).files.contains(where: \.isConflicted) {
+        throw GitPierError.invalidInput("Resolve and stage every conflict before continuing. Empty results require an explicit Skip or Abort.")
+      }
+      guard try await replayDirectories() == directories, gitPath == executable, authenticationRevision == authentication else { throw GitPierError.indexChanged }
+      return SequencerControlReview(action: action, state: state, workingTree: root.path, executable: executable,
+        authenticationRevision: authentication, directories: directories)
+    }
+  }
+  public func controlSequencer(_ expected: SequencerControlReview) async throws -> String {
+    try await lifecycleWrite {
+      guard expected.workingTree == root.path, expected.executable == gitPath,
+        expected.authenticationRevision == authenticationRevision, try await replayDirectories() == expected.directories,
+        let actual = try await sequencerState(), actual == expected.state else { throw GitPierError.indexChanged }
+      if expected.action == .continue, try await status(localOnly: true).files.contains(where: \.isConflicted) { throw GitPierError.conflictChanged }
+      guard expected.executable == gitPath, expected.authenticationRevision == authenticationRevision,
+        try await reviewOperation(localOnly: true) == actual.review else { throw GitPierError.indexChanged }
+      guard try await replayObjectView() == expected.state.objectView,
+        try await rebaseWorkingFingerprint(expected: expected.state.review) == expected.state.workingFingerprint else { throw GitPierError.indexChanged }
+      try expected.directories.validate()
+      try validateReplayObjectFiles(expected.state.objectView)
+      guard try operationIdentity(in: URL(fileURLWithPath: expected.directories.paths[1])) == expected.state.review.operationIdentity else { throw GitPierError.indexChanged }
+      guard expected.executable == gitPath, expected.authenticationRevision == authenticationRevision else { throw GitPierError.indexChanged }
+      let command = actual.operation == .cherryPick ? "cherry-pick" : "revert"
+      let result = try await read([command, "--" + expected.action.rawValue] + (expected.action == .continue ? ["--no-edit"] : []),
+        environment: ["GIT_NO_LAZY_FETCH": "1"])
+      return Self.redact(result.text + result.errorText)
+    }
+  }
+  /// Compatibility facade; ordinary/merge Revert share the reviewed replay executor.
+  public func reviewMergeRevert(_ hash: String, expectedIndex: IndexSnapshot? = nil) async throws -> MergeRevertReview {
+    let review = try await reviewCommitReplay(.revert, commits: [hash], expectedIndex: expectedIndex)
+    guard let commit = review.commits.first, commit.parents.count > 1 else {
+      throw GitPierError.invalidInput("Select a merge commit with at least two parents.")
+    }
+    return MergeRevertReview(workingTree: review.workingTree, executable: review.executable,
+      operation: review.operation, commit: commit, parents: review.parents, replay: review)
+  }
+  public func revertMerge(_ review: MergeRevertReview, mainline: Int) async throws -> String {
+    guard review.parents.count > 1, mainline > 0, mainline <= review.parents.count,
+      review.parents.map(\.hash) == review.commit.parents else {
+      throw GitPierError.invalidInput("Choose a valid mainline parent from this working tree's merge review.")
+    }
+    return try await executeCommitReplay(review.replay, mainline: mainline)
+  }
+  private func localReplayCommit(_ hash: String) async throws -> CommitRecord {
+    // Review needs immutable metadata, not an unbounded list of decorating refs.
+    let data = try await read(["show", "--no-patch", "--format=%H%x00%P%x00%an%x00%ae%x00%at%x00%s%x00%b%x00%x00", hash],
+      environment: ["GIT_NO_LAZY_FETCH": "1"], limit: 1024 * 1024).stdout
     guard let commit = Self.parseHistory(data).first, commit.hash == hash else {
-      throw GitPierError.invalidInput("The merge commit or one of its parents is unavailable locally.")
+      throw GitPierError.invalidInput("The selected commit or one of its parents is unavailable locally.")
     }
     return commit
   }
@@ -2489,14 +2775,21 @@ public actor GitService {
     }
     return text
   }
-  private func rebaseWorkingFingerprint() async throws -> Data {
-    var data = try await read(["status", "--porcelain=v2", "-z", "--untracked-files=all"]).stdout
-    for file in try await status().files {
+  private func rebaseWorkingFingerprint(expected: GitOperationReview? = nil) async throws -> Data {
+    let arguments = ["status", "--porcelain=v2", "-z", "--branch", "--untracked-files=all"]
+    let original = try await read(arguments, environment: ["GIT_NO_LAZY_FETCH": "1"]).stdout
+    let status = try StatusParser.parse(original)
+    if let expected {
+      guard status.head == expected.head, status.branch == expected.branch else { throw GitPierError.indexChanged }
+    }
+    var data = original
+    for file in status.files {
       for path in file.paths {
         let state = try conflictWorkingFile(path).0
         data.append(Data((path + "\0" + String(describing: state) + "\0").utf8))
       }
     }
+    guard try await read(arguments, environment: ["GIT_NO_LAZY_FETCH": "1"]).stdout == original else { throw GitPierError.indexChanged }
     return Data(SHA256.hash(data: data))
   }
   public func rebaseState() async throws -> RebaseState? {
@@ -2598,6 +2891,14 @@ public actor GitService {
       if let context { try await validateContextWorkflow(context) }
       if let expected, try await reviewOperation() != expected { throw GitPierError.indexChanged }
       if ["reset", "switch", "checkout", "merge", "rebase", "cherry-pick", "revert"].contains(arguments.first ?? "") {
+        if arguments.count == 2, ["--continue", "--skip", "--abort"].contains(arguments[1]),
+          ["merge", "rebase", "cherry-pick", "revert"].contains(arguments[0]) {
+          let operation = try await status().operation
+          let command = operation == .cherryPick ? "cherry-pick" : operation?.rawValue
+          guard command == arguments[0] else {
+            throw GitPierError.invalidInput("This recovery control does not match the unfinished Git operation. Refresh and review its recovery actions.")
+          }
+        }
         let nativeControl = arguments.count == 2 && arguments[0] == "rebase"
           && ["--continue", "--skip", "--abort"].contains(arguments[1])
         if try await status().operation == .rebase, !nativeControl {

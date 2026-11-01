@@ -108,6 +108,15 @@ import SwiftUI
         _ = try control("gitpier.revert.parent.1"); _ = try control("gitpier.revert.parent.2")
         try assistantPress(control("gitpier.revert.parent.2")); try await settle()
         try require((try control("gitpier.workflow.review.confirm")).value(forKey: "accessibilityEnabled") as? Bool == true, "Selecting a parent enables confirmation")
+        if language == .english && appearance == .light {
+          try assistantPress(control("replay.revert.diff"))
+          try await waitFor { window.attachedSheet?.attachedSheet != nil }
+          guard let diff = window.attachedSheet?.attachedSheet?.contentView else { throw GitPierError.indexChanged }
+          let parentFields = descendants(diff).compactMap { $0 as? NSTextField }.map(\.stringValue)
+          try require(parentFields.contains(commit.parents[1]), "Revert Diff starts from the explicitly selected mainline")
+          try pressNativeButton(diff, title: store.text("Close", "关闭"))
+          try await waitFor { window.attachedSheet?.attachedSheet == nil }
+        }
         let parentText = assistantElements(window.attachedSheet!.contentView!).map { assistantString($0, "accessibilityLabel") + assistantString($0, "accessibilityValue") }.joined(separator: "\n")
         try require(commit.parents.allSatisfy { parentText.contains($0) }, "Review identifies parents with full hashes")
         if language == .english, let content = window.attachedSheet?.contentView {

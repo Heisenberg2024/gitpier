@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+### v1.9.0 development — Professional Git Workflows & Repository Health
+
+- Review and reorder 1–200 selected History commits with full IDs, original Worktree/branch/HEAD and shared Diff. Run native Cherry-pick with fresh identity/Index checks; refuse merge mainline guessing and stop duplicate/empty results for explicit recovery.
+- Unify ordinary/merge Revert review with a Diff entry and explicit merge parent; add native sequencer Continue/Skip/Abort review and retain pending operations across pages, hook/signing failures and marker-free sequencer states.
+- Add local Branch Health with shared six-state sync badges across Branches/Dashboard/context, a real local merge-target picker using validated remote HEAD metadata, separate ancestor-based merge relations, activity, Worktree occupancy and detached HEAD. Show observation / app Fetch provenance, preserve unknown shallow ancestry and perform no implicit network or cleanup.
+- Unify native Branch Health symbol colors: green sync/merge, adaptive ahead, blue behind, orange divergence and neutral unknown/no upstream. Keep checkout distinct and workflow/Fetch risk separate.
+- Optimize wide-history graph lane lookup while preserving geometry; record reproducible algorithm measurements and native performance limits.
+- 从 History 有序审查并调整 1–200 个所选提交，展示完整 Hash、原工作树/分支/HEAD，复用 Diff；原生 Cherry-pick 执行前重新核验身份与 Index，不猜测合并主线，重复/空结果等待明确恢复。
+- 普通与合并 Revert 共用含 Diff 入口的审查确认，合并须选择父提交；新增 Sequencer 继续/跳过/中止审查，跨页面及 Hook/签名失败保留原生待恢复状态，覆盖无 HEAD 标记的待办序列。
+- 新增只读本地分支健康：Branches/Dashboard/上下文共用六态同步标签，依据有效远端 HEAD 提供真实本地合并目标选择，祖先合并关系独立显示，并保留活动、工作树占用和分离 HEAD；显示观察/应用获取来源，浅历史保留未知，不隐式联网或清理。
+- 统一原生分支状态图标颜色：同步／合并为绿色、领先为自适应文本色、落后为蓝色、分叉为橙色、未知／无上游为中性灰；当前检出图标及工作流／获取风险保持独立。
+- 优化大型历史图的轨道查找并保持图形几何，记录可复现的算法测量和原生性能边界。
+
+Validation and remaining RC gates: [v1.9.0 development validation](docs/v1.9.0-testing.md). The requested local build uses 1.9.0 (32); production update identity is unchanged and no release has been published.
+
 ## 1.8.1 — 2026-10-29 (31)
 
 - Published [v1.8.1](https://github.com/Heisenberg2024/gitpier/releases/tag/v1.8.1) as Latest from `6c90015`. Exact-source full CI passed 1010 Core tests; Tag CI verified reuse of that complete run. Universal DMG, production update signatures, three asset-ID readbacks and anonymous public downloads/Latest Feed were verified. See [publication evidence and limits](docs/development.md#v181-publication--2026-10-29).

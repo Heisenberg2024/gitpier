@@ -2,6 +2,10 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 task_root="$PWD"
+task_output="${GITPIER_APP_OUTPUT_DIR:-$task_root/dist}"
+if [[ "$task_output" != /* ]]; then
+  echo "GITPIER_APP_OUTPUT_DIR must be an absolute directory." >&2; exit 1
+fi
 configuration="${CONFIGURATION:-release}"
 task_config="${GITPIER_TEST_RELEASE_CONFIG:-Sources/GitPier/Resources/ReleaseConfiguration.json}"
 bundle_id="${BUNDLE_IDENTIFIER:-$(python3 Scripts/release_metadata.py --config "$task_config" --field bundleIdentifier)}"
@@ -15,7 +19,7 @@ swift Scripts/generate-branding.swift
 swift build --build-system native --disable-sandbox --cache-path "$task_root/.cache/swiftpm" -c "$configuration" --product GitPier
 swift build --build-system native --disable-sandbox --cache-path "$task_root/.cache/swiftpm" -c "$configuration" --product GitPierCommandLine
 task_bin="$(swift build --build-system native --disable-sandbox --cache-path "$task_root/.cache/swiftpm" -c "$configuration" --show-bin-path)"
-mkdir -p "$task_root/dist"
+mkdir -p "$task_output"
 task_stage="$(mktemp -d "$task_root/.cache/app-build.XXXXXX")"
 trap 'rm -rf "$task_stage"' EXIT
 task_app="$task_stage/GitPier.app"
@@ -72,7 +76,7 @@ codesign --force --sign "${CODE_SIGN_IDENTITY:--}" "$task_app"
 codesign --verify --deep --strict "$task_app"
 python3 Scripts/verify-bundle.py "$task_app" --config "$task_config" "${UNIVERSAL:-0}"
 touch "$task_app"
-rm -rf "$task_root/dist/GitPier.app"
-mv "$task_app" "$task_root/dist/GitPier.app"
-task_app="$task_root/dist/GitPier.app"
+rm -rf "$task_output/GitPier.app"
+mv "$task_app" "$task_output/GitPier.app"
+task_app="$task_output/GitPier.app"
 printf 'Built %s\n' "$task_app"

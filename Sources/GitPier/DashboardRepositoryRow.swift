@@ -113,8 +113,9 @@ struct DashboardRepositoryRow: View {
   }
   private var accessibleStatus: String {
     guard let value = entry.usable else { return entry.failure?.summary ?? store.text("Not scanned", "尚未采集") }
-    return value.branch + ", " + store.text("\(value.tracked + value.untracked) modified, \(value.staged) staged, \(value.conflicts) conflicts, \(value.ahead) ahead, \(value.behind) behind",
-      "\(value.tracked + value.untracked) 项修改，\(value.staged) 项暂存，\(value.conflicts) 个冲突，领先 \(value.ahead)，落后 \(value.behind)")
+    return value.branch + ", " + store.text("\(value.tracked + value.untracked) modified, \(value.staged) staged, \(value.conflicts) conflicts",
+      "\(value.tracked + value.untracked) 项修改，\(value.staged) 项暂存，\(value.conflicts) 个冲突")
+      + ", " + BranchSyncPresentation(state: value.syncState, store: store).accessibleText
   }
   private var sync: some View {
     RepositorySyncStatus(entry: entry, workspace: store.workspace)

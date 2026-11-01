@@ -140,8 +140,7 @@ struct WorkflowComparisonRequest: Identifiable {
       case .rebase: showRebaseRecovery = true
       case .merge: reviewMergeContinuation()
       case .cherryPick, .revert:
-        let command = context.status.operation == .cherryPick ? "cherry-pick" : "revert"
-        perform([command, "--continue"], confirmation: workflowReviewDetails(context), context: context)
+        showSequencerRecovery = true
       case nil: workflowChanged()
       }
     case .createBranch, .chooseBranch, .setUpstream:

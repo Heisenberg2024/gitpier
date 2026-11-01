@@ -46,30 +46,20 @@ struct RepositorySyncStatus: View {
     let check = RemoteCheckText(workspace: workspace, id: entry.record.id)
     VStack(alignment: .leading, spacing: 4) {
       if let value = entry.usable {
-        if value.upstream == nil { Text(store.text("No upstream", "无上游")) }
-        else if !value.upstreamComparable { Text(store.text("Upstream unavailable", "上游引用不可用")) }
-        else if value.ahead == 0 && value.behind == 0 {
-          // A successful custom/manual fetch need not cover every upstream ref. Keep this
-          // branch comparison literal; the separate line reports remote-check freshness.
-          Text(store.text("Tracking refs match", "跟踪引用一致"))
-        } else {
-          HStack(spacing: 6) {
-            if value.ahead > 0 { Text("↑\(value.ahead)").foregroundStyle(Color.accentColor) }
-            if value.behind > 0 { Text("↓\(value.behind)").foregroundStyle(.orange) }
-          }.monospacedDigit()
+        BranchSyncBadge(state: value.syncState, stacked: true)
+        if entry.state == .stale {
+          Text(store.text("Snapshot outdated", "快照已过期")).font(uiFont(size: 10)).foregroundStyle(.orange)
         }
         if value.upstream != nil {
-          if value.ahead > 0 && value.behind > 0 { Text(store.text("Diverged", "已分叉")).foregroundStyle(.orange) }
-          else {
-            HStack(spacing: 4) {
-              if check.value.phase == .checking { ProgressView().controlSize(.mini) }
-              if check.warning { Image(systemName: "exclamationmark.triangle") }
-              Text(check.title).lineLimit(1)
-            }.font(uiFont(size: 10)).foregroundStyle(check.warning ? .orange : .secondary)
-          }
+          HStack(spacing: 4) {
+            if check.value.phase == .checking { ProgressView().controlSize(.mini) }
+            if check.warning { Image(systemName: "exclamationmark.triangle") }
+            Text(check.title).lineLimit(1)
+          }.font(uiFont(size: 10)).foregroundStyle(check.warning ? .orange : .secondary)
         }
-      } else { Text("—") }
+      } else { BranchSyncBadge(state: .unknown, stacked: true) }
     }.font(uiFont(size: 12)).foregroundStyle(.secondary).help(check.help)
+      .accessibilityElement(children: .combine).accessibilityHint(check.help)
   }
 }
 
@@ -79,6 +69,7 @@ struct RepositoryNetworkToolbar: View {
   @ObservedObject var workspace: WorkspaceModel
   var body: some View {
     let check = RemoteCheckText(workspace: workspace, id: model.record.id)
+    let sync = BranchSyncPresentation(state: model.status.syncState, store: store)
     HStack(spacing: 12) {
       Button { model.network("fetch") } label: {
         HStack(spacing: 4) {
@@ -88,17 +79,23 @@ struct RepositoryNetworkToolbar: View {
         }
       }.accessibilityLabel(store.text("Fetch", "获取")).accessibilityValue(model.networkFetching ? store.text("Fetching", "正在获取") : check.title).help(check.help)
       Button { model.network("pull") } label: {
-        Label(store.text("Pull", "拉取") + (model.status.behind > 0 ? " ↓\(model.status.behind)" : ""),
-          systemImage: diverged ? "arrow.triangle.branch" : "arrow.down")
-          .foregroundStyle(model.status.behind > 0 ? Color.orange : .primary)
+        Label {
+          Text(store.text("Pull", "拉取") + (model.status.behind > 0 ? " ↓\(model.status.behind)" : ""))
+        } icon: {
+          Image(systemName: diverged ? "arrow.triangle.branch" : "arrow.down")
+            .symbolRenderingMode(.monochrome).foregroundStyle(sync.incomingColor)
+        }
       }.help(trackingHelp + "\n" + check.help)
       Button {
         if model.status.upstream == nil { model.needsUpstream = true }
         else { model.network("push") }
       } label: {
-        Label(store.text("Push", "推送") + (model.status.ahead > 0 ? " ↑\(model.status.ahead)" : ""),
-          systemImage: diverged ? "arrow.triangle.branch" : "arrow.up")
-          .foregroundStyle(diverged ? Color.orange : model.status.ahead > 0 ? Color.accentColor : .primary)
+        Label {
+          Text(store.text("Push", "推送") + (model.status.ahead > 0 ? " ↑\(model.status.ahead)" : ""))
+        } icon: {
+          Image(systemName: diverged ? "arrow.triangle.branch" : "arrow.up")
+            .symbolRenderingMode(.monochrome).foregroundStyle(sync.outgoingColor)
+        }
       }.disabled(model.status.operation != nil || model.status.files.contains(where: \.isConflicted))
         .help(trackingHelp + "\n" + check.help)
     }.font(uiFont(size: 11)).buttonStyle(.plain).disabled(model.busy || !model.available)

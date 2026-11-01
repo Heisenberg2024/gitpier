@@ -16,27 +16,30 @@ public enum CommitGraph {
   public static func layout(_ records: [CommitRecord]) -> [GraphRow] {
     var lanes: [String] = []
     var rows: [GraphRow] = []
+    rows.reserveCapacity(records.count)
     for commit in records {
       if !lanes.contains(commit.hash) { lanes.append(commit.hash) }
       let node = lanes.firstIndex(of: commit.hash)!
       let incoming = lanes
       lanes.remove(at: node)
-      for (offset, parent) in commit.parents.enumerated() where !lanes.contains(parent) {
+      var active = Set(lanes)
+      for (offset, parent) in commit.parents.enumerated() where active.insert(parent).inserted {
         lanes.insert(parent, at: min(node + offset, lanes.count))
       }
+      let destinations = Dictionary(uniqueKeysWithValues: lanes.enumerated().map { ($0.element, $0.offset) })
       var edges: [GraphEdge] = []
       for (index, hash) in incoming.enumerated() {
         if hash == commit.hash {
           edges.append(
             GraphEdge(from: index, to: node, color: index, startsAtNode: false, endsAtNode: true))
-        } else if let destination = lanes.firstIndex(of: hash) {
+        } else if let destination = destinations[hash] {
           edges.append(
             GraphEdge(
               from: index, to: destination, color: index, startsAtNode: false, endsAtNode: false))
         }
       }
       for parent in commit.parents {
-        if let index = lanes.firstIndex(of: parent) {
+        if let index = destinations[parent] {
           edges.append(
             GraphEdge(from: node, to: index, color: index, startsAtNode: true, endsAtNode: false))
         }

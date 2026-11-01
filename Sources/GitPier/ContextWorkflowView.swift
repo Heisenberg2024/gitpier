@@ -59,6 +59,7 @@ struct ContextWorkflowView: View {
         Text((input.linkedWorktree ? store.text("Linked Worktree", "关联工作树") : store.text("Working tree", "工作树")) + ": " + input.workingTree)
           .font(.caption).foregroundStyle(.secondary).lineLimit(2).truncationMode(.middle).help(input.workingTree)
         if input.status.upstream != nil && !advice.isRoutineChangeReview && !input.busy && !input.refreshing {
+          BranchSyncBadge(state: input.stale || !input.available ? .unknown : input.status.syncState)
           Text(trackingLabel(input)).font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
           Text(store.text("Last Fetch", "上次获取") + ": " + fetchDate).font(.caption).foregroundStyle(.secondary)
         }
