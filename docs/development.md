@@ -1,5 +1,15 @@
 # Development
 
+## v1.9.0 Swift 6.1 CI compatibility — 2026-11-01
+
+[Validate macOS run 41283907949](https://github.com/Heisenberg2024/gitpier/actions/runs/41283907949) failed while compiling pushed source `7886166`, before Core tests executed, on macOS 15.8.2 / Swift 6.1.2. Four diagnostics concerned type-checking timeouts in Branch Health and replay/recovery views; the fifth concerned exhaustive matching of `Bool?`.
+
+The repair separates the existing view builders and string assembly into smaller expressions, and explicitly matches `.some(true)`, `.some(false)` and `.none`. It preserves cache-key separators, displayed text, layout containers, actions, Git behavior and the CI toolchain. Local validation uses macOS 27.0.1 / Swift 6.4; an exact Swift 6.1.2 CI rerun remains necessary after the repair is pushed.
+
+Local validation passed 1056 Core tests with the CI command (zero failures/errors/skips), 420 Branch Health native assertions with 40 system-window captures, the replay/recovery native scope (38 recorded checks), 10 release-tool checks and isolated Debug/Release arm64 application builds with bundle/signature verification. Evidence is under `.cache/ci-fix-20261101`; the 312 frozen source/test/script/resource inputs remained unchanged throughout validation.
+
+简体中文：已根据实际失败日志修复 Swift 6.1.2 下的四处类型推断超时和一处可选布尔值穷尽性检查错误，只拆分现有视图和字符串表达式，并显式匹配可选值。不改变布局、文字、操作、缓存键格式、Git 逻辑或 CI 编译器版本。本机 Swift 6.4 已通过相同 CI 命令的 1056 项 Core、分支健康 420 条原生断言和 40 张系统截图、重放/恢复 38 条结果、10 项发布工具检查及隔离 Debug/Release arm64 构建和包/签名校验；推送修复后仍需核对真实 Swift 6.1.2 CI。
+
 ## v1.9.0 workflow and health development — 2026-10-31
 
 The [implementation plan](v1.9.0-plan.md) records the main-branch audit, reuse decisions, phased work and safety boundaries. [Validation and remaining RC gates](v1.9.0-testing.md) separates temporary-repository Core tests, actual macOS native UI, deterministic graph/branch measurements, Universal build checks and unrun device/distribution acceptance. The public stable download remains 1.8.1 (31); the maintainer-requested local build now uses 1.9.0 (32). Development does not publish a release.

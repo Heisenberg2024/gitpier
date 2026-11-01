@@ -13,9 +13,13 @@ import SwiftUI
     let store = model.store, selection = model.store.selectionIdentity, page = model.pageIdentity
     let path = model.record.path, executable = store.settings.gitPath
     let observedStatus = model.status, observedBranches = model.branches, refresh = model.refreshCount
-    let nextKey = selection.uuidString + "\0" + page.uuidString + "\0" + path + "\0" + executable + "\0" + target + "\0" + model.status.branch + "\0" + (model.status.head ?? "")
-      + "\0" + String(model.refreshCount)
-      + "\0" + (model.status.operation?.rawValue ?? "") + "\0" + model.branches.map { $0.reference + ":" + $0.hash + ":" + $0.upstream + ":" + $0.tracking }.joined(separator: "\0")
+    let branchKeys = observedBranches.map { branch in
+      [branch.reference, branch.hash, branch.upstream, branch.tracking].joined(separator: ":")
+    }
+    let keyParts: [String] = [selection.uuidString, page.uuidString, path, executable, target,
+      observedStatus.branch, observedStatus.head ?? "", String(refresh),
+      observedStatus.operation?.rawValue ?? "", branchKeys.joined(separator: "\0")]
+    let nextKey = keyParts.joined(separator: "\0")
     if !force, key == nextKey, request.loading || snapshot != nil { return }
     key = nextKey
     snapshot = nil; byReference = [:]; analyzedTarget = nil
@@ -58,49 +62,59 @@ struct BranchHealthPanel: View {
   }
   var body: some View {
     VStack(alignment: .leading, spacing: 6) {
-      HStack {
-        Text(store.text("Branch Health", "分支健康")).font(.callout.weight(.semibold))
-        if request.loading { ProgressView().controlSize(.small) }
-        if let snapshot = health.snapshot {
-          if snapshot.detached { Text(store.text("Detached HEAD", "分离 HEAD")).foregroundStyle(.orange) }
-          if let operation = snapshot.operation { Text(operation == .cherryPick ? "Cherry-pick" : operation.rawValue.capitalized).foregroundStyle(.orange) }
-        }
-        Spacer()
-        Picker(store.text("Merge target", "合并目标"), selection: $target) {
-          Text(store.text("Choose a local branch…", "请选择本地分支…")).tag("")
-          if !target.isEmpty && !localTargets.contains(target) {
-            Text(store.text("Missing: ", "引用缺失：") + target).tag(target)
-          }
-          ForEach(localTargets, id: \.self) { reference in
-            Text(String(reference.dropFirst("refs/heads/".count))).tag(reference)
-          }
-        }.frame(maxWidth: 310).accessibilityIdentifier("health.target")
-          .onChange(of: target) { _, _ in health.cancelAnalysis() }
-        Button(store.text("Analyze", "分析")) { health.load(model, target: target, force: true) }.disabled(model.busy || request.loading || target.isEmpty || !localTargets.contains(target))
-          .accessibilityIdentifier("health.analyze")
-      }
+      header
       WorkflowProblem(request: request)
       if !target.isEmpty && !localTargets.contains(target) {
         Text(store.text("The merge target no longer exists. Choose an existing local branch and analyze again.",
           "合并目标已不存在，请选择已有本地分支并重新分析。")).font(.caption).foregroundStyle(.orange)
       }
-      if let value = health.snapshot {
-        Text(store.text("Local references · observed ", "本地引用 · 观察时间 ") + formattedDate(value.collectedAt)
-          + " · " + store.text("Last app Fetch for current remote", "当前远程上次应用获取") + " " + (value.fetchRemoteName ?? "") + ": "
-          + (fetchDate(value).map(formattedDate) ?? store.text("Unknown", "未知")))
-          .font(.caption).foregroundStyle(.secondary).textSelection(.enabled)
-        if let reference = health.analyzedTarget, let hash = value.targetHash {
-          Text(store.text("Merged status compares to ", "已合并状态比较目标：") + reference + " · " + hash)
-            .font(.caption.monospaced()).foregroundStyle(.secondary).textSelection(.enabled)
-        }
-        if value.shallow {
-          Text(store.text("Shallow history: unproven ancestry is Unknown.", "浅克隆历史：无法证明的祖先关系显示未知。")).font(.caption).foregroundStyle(.orange)
-        }
-      }
+      provenance
       Text(store.text("No server contact. Sync compares local tracking references. Select a target and Analyze to check ancestry; inactivity does not establish that deletion is safe.",
         "未联系服务器。同步状态比较本地跟踪引用。选择目标并分析可检查祖先关系；长期未活动不代表可以安全删除。"))
         .font(.caption).foregroundStyle(.secondary)
     }.padding(.horizontal, 18).padding(.vertical, 10)
+  }
+  private var header: some View {
+    HStack {
+      Text(store.text("Branch Health", "分支健康")).font(.callout.weight(.semibold))
+      if request.loading { ProgressView().controlSize(.small) }
+      if let snapshot = health.snapshot {
+        if snapshot.detached { Text(store.text("Detached HEAD", "分离 HEAD")).foregroundStyle(.orange) }
+        if let operation = snapshot.operation { Text(operation == .cherryPick ? "Cherry-pick" : operation.rawValue.capitalized).foregroundStyle(.orange) }
+      }
+      Spacer()
+      Picker(store.text("Merge target", "合并目标"), selection: $target) {
+        Text(store.text("Choose a local branch…", "请选择本地分支…")).tag("")
+        if !target.isEmpty && !localTargets.contains(target) {
+          Text(store.text("Missing: ", "引用缺失：") + target).tag(target)
+        }
+        ForEach(localTargets, id: \.self) { reference in
+          Text(String(reference.dropFirst("refs/heads/".count))).tag(reference)
+        }
+      }.frame(maxWidth: 310).accessibilityIdentifier("health.target")
+        .onChange(of: target) { _, _ in health.cancelAnalysis() }
+      Button(store.text("Analyze", "分析")) { health.load(model, target: target, force: true) }.disabled(model.busy || request.loading || target.isEmpty || !localTargets.contains(target))
+        .accessibilityIdentifier("health.analyze")
+    }
+  }
+  @ViewBuilder private var provenance: some View {
+    if let value = health.snapshot {
+      Text(provenanceText(value))
+        .font(.caption).foregroundStyle(.secondary).textSelection(.enabled)
+      if let reference = health.analyzedTarget, let hash = value.targetHash {
+        Text(store.text("Merged status compares to ", "已合并状态比较目标：") + reference + " · " + hash)
+          .font(.caption.monospaced()).foregroundStyle(.secondary).textSelection(.enabled)
+      }
+      if value.shallow {
+        Text(store.text("Shallow history: unproven ancestry is Unknown.", "浅克隆历史：无法证明的祖先关系显示未知。")).font(.caption).foregroundStyle(.orange)
+      }
+    }
+  }
+  private func provenanceText(_ value: BranchHealthSnapshot) -> String {
+    let fetched = fetchDate(value).map(formattedDate) ?? store.text("Unknown", "未知")
+    let parts: [String] = [store.text("Local references · observed ", "本地引用 · 观察时间 "), formattedDate(value.collectedAt),
+      " · ", store.text("Last app Fetch for current remote", "当前远程上次应用获取"), " ", value.fetchRemoteName ?? "", ": ", fetched]
+    return parts.joined()
   }
   private var localTargets: [String] { model.branches.filter { !$0.remote }.map(\.reference) }
   private func formattedDate(_ date: Date) -> String {
@@ -218,9 +232,9 @@ struct BranchSyncBadge: View {
   var symbol: String {
     guard targetReference != nil else { return "circle.dashed" }
     switch merged {
-    case true: return "arrow.triangle.merge"
-    case false: return "arrow.triangle.branch"
-    case nil: return "questionmark.circle"
+    case .some(true): return "arrow.triangle.merge"
+    case .some(false): return "arrow.triangle.branch"
+    case .none: return "questionmark.circle"
     }
   }
   var color: Color { targetReference != nil && merged == true ? .green : .secondary }
