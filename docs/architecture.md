@@ -1,8 +1,8 @@
 # Architecture and security boundaries
 
-Current stable: [v1.8.1 (31)](https://github.com/Heisenberg2024/gitpier/releases/tag/v1.8.1), published on 2026-10-29. The maintenance release includes compact binary snapshot statistics, native reusable Commit rows, empty-diff merge completion and reviewed merge-revert mainlines within the existing Git and update trust boundaries. See [publication validation and limits](development.md#v181-publication--2026-10-29). 当前稳定版为 v1.8.1（31），已于 2026-10-29 正式发布；既有 Git 写入与更新信任边界保持，验收范围见发布记录。
+Current stable: [v1.9.0 (32)](https://github.com/Heisenberg2024/gitpier/releases/tag/v1.9.0), published on 2026-11-01. Ordered commit replay, unified Revert recovery and local Branch Health reuse the existing Git queues, native UI and update trust chain. See [publication validation and limits](development.md#v190-publication--2026-11-01). 当前稳定版为 v1.9.0（32），已于 2026-11-01 正式发布；提交重放、撤销恢复及分支健康复用既有 Git 队列、原生界面和更新信任边界。
 
-## Commit replay and local Branch Health (v1.9.0 development)
+## Commit replay and local Branch Health (v1.9.0 released)
 
 `CommitReplay.swift` contains immutable full-object reviews and native sequencer/control values; Git commands remain in `GitService.swift`. Review and execution use the existing canonical-worktree FIFO and common-directory queue. Reviews bind filesystem device/inode identities, Git executable/authentication generation, HEAD, branch, Index stages, native operation metadata and the effective replace-ref/graft/shallow object view. Shared replay Diff validates this view before reading and before publication; native configured semantics remain enabled. Cherry-pick accepts at most 200 distinct commits and refuses merge commits; Revert accepts one ordinary/root/merge commit with an explicit mainline for merges. No signing/hook override, automatic skip, stash, reset or Push is introduced.
 

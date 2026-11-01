@@ -2,7 +2,10 @@
 
 ## Unreleased
 
-### v1.9.0 development — Professional Git Workflows & Repository Health
+## 1.9.0 — 2026-11-01 (32)
+
+- Published [v1.9.0](https://github.com/Heisenberg2024/gitpier/releases/tag/v1.9.0) as Latest from `9df9364`. Exact-source Swift 6.1.2 CI passed 1056 Core tests; Tag CI reused that full run. Universal DMG, production update signatures, asset-ID readbacks and public downloads/Latest Feed were verified. See [publication evidence and limits](docs/development.md#v190-publication--2026-11-01).
+- 已从 `9df9364` 正式发布为 Latest；同源码 Swift 6.1.2 CI 通过 1056 项 Core，Tag CI 复用完整主运行。通用 DMG、生产更新签名、附件按 ID 回读及公开下载/Latest Feed 已核验，范围与边界见[发布记录](docs/development.md#v190-publication--2026-11-01)。
 
 - Review and reorder 1–200 selected History commits with full IDs, original Worktree/branch/HEAD and shared Diff. Run native Cherry-pick with fresh identity/Index checks; refuse merge mainline guessing and stop duplicate/empty results for explicit recovery.
 - Unify ordinary/merge Revert review with a Diff entry and explicit merge parent; add native sequencer Continue/Skip/Abort review and retain pending operations across pages, hook/signing failures and marker-free sequencer states.
@@ -15,7 +18,7 @@
 - 统一原生分支状态图标颜色：同步／合并为绿色、领先为自适应文本色、落后为蓝色、分叉为橙色、未知／无上游为中性灰；当前检出图标及工作流／获取风险保持独立。
 - 优化大型历史图的轨道查找并保持图形几何，记录可复现的算法测量和原生性能边界。
 
-Validation and remaining RC gates: [v1.9.0 development validation](docs/v1.9.0-testing.md). The requested local build uses 1.9.0 (32); production update identity is unchanged and no release has been published.
+Development validation and unrun hardware/distribution checks: [v1.9.0 validation](docs/v1.9.0-testing.md). Version 1.9.0 (32) is released; the production update identity is unchanged. 应用仍为 ad-hoc 签名，未做 Apple 公证；真实硬件与最终生产包升级边界单独记录。
 
 ## 1.8.1 — 2026-10-29 (31)
 

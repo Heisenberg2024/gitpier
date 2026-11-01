@@ -33,13 +33,13 @@ English and Simplified Chinese interfaces, light and dark themes, and system app
 
 Opening or selecting a repository always shows the Commit page; the current page is not persisted. Collapse or expand all organization repositories with one sidebar button.
 
-## Professional workflows and repository health — v1.9.0 development
+## Professional workflows and repository health — v1.9.0
 
-Local development adds an ordered review for 1–200 History commits, full commit IDs, target Worktree/branch/HEAD and the existing Diff. Cherry-pick uses Git's native sequencer; duplicate patches and empty results stop for explicit recovery, and merge commits are refused rather than guessing a mainline. Ordinary and merge Revert share a bounded confirmation and Diff entry; merge Revert still requires an explicit parent. Continue, Skip and Abort recheck the original repository and reviewed state, and confirmed writes survive page dismissal.
+v1.9.0 adds an ordered review for 1–200 History commits, full commit IDs, target Worktree/branch/HEAD and the existing Diff. Cherry-pick uses Git's native sequencer; duplicate patches and empty results stop for explicit recovery, and merge commits are refused rather than guessing a mainline. Ordinary and merge Revert share a bounded confirmation and Diff entry; merge Revert still requires an explicit parent. Continue, Skip and Abort recheck the original repository and reviewed state, and confirmed writes survive page dismissal.
 
 Branches adds read-only local health: upstream existence, ahead/behind/divergence, recent activity, occupied Worktrees and optional ancestor-based merged-into analysis against a selected existing local branch (with a validated remote-HEAD suggestion). Observation time and the last app Fetch (or Unknown) describe provenance; no Fetch or cleanup runs implicitly. Inactivity does not establish deletion safety. Branches, Dashboard and contextual guidance share typed Synced / Ahead / Behind / Diverged / No upstream / Unknown labels and accessible counts; merged, unmerged, unproven and not-analyzed ancestry remain separate. Native status symbols use green for synced/merged, adaptive primary text for ahead, blue for behind, orange for divergence and neutral gray for unknown/no upstream; checkout, sync and merge have distinct icons. Dashboard and contextual guidance retain their existing local snapshot collectors and recovery links.
 
-The stable download remains **v1.8.1 (31)**. See the [implementation plan](docs/v1.9.0-plan.md) and [validation / remaining RC gates](docs/v1.9.0-testing.md). Development does not authorize publication.
+Released [v1.9.0 (32)](https://github.com/Heisenberg2024/gitpier/releases/tag/v1.9.0) as **Latest** on 2026-11-01 from `9df9364`. Exact-source Swift 6.1.2 CI passed 1056 Core tests; the Universal DMG, production update signatures and public downloads/Latest Feed were verified. See [publication evidence and limits](docs/development.md#v190-publication--2026-11-01) and [development validation / unrun hardware and distribution checks](docs/v1.9.0-testing.md).
 
 ## Professional Git workflows — v1.2.0
 

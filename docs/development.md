@@ -1,18 +1,30 @@
 # Development
 
+## v1.9.0 publication — 2026-11-01
+
+[GitPier v1.9.0 (32)](https://github.com/Heisenberg2024/gitpier/releases/tag/v1.9.0) was published as **Latest** at **2026-11-01 19:35:00 (Asia/Shanghai)** after approval of the exact bilingual notes, verified Draft and production-signed update assets. Release **430536712**, source/tag **`9df93646e6099269abc861c2a547c3270a1cfd53`**, approved notes and all three attachment IDs remained fixed.
+
+The [same-source full CI](https://github.com/Heisenberg2024/gitpier/actions/runs/41286713764) passed **1056 Core tests**, zero failures/errors/skips, on Swift 6.1.2, plus 49 policy, 19 cache-input and 10 release-tool checks and all macOS build/package gates. [Tag CI](https://github.com/Heisenberg2024/gitpier/actions/runs/41301899807) explicitly reused that exact run/attempt. The Universal DMG is **30,568,000 bytes**, SHA256 `d6180417b38f1dcef6c3b909460f4a7298ff8fea06ded79fc52912de730024c4`; its seven Mach-O files contain arm64 and x86_64 slices. Bundle/deep ad-hoc signatures, DMG structure, mounted app bytes/modes/links and actual Finder layout passed preparation checks.
+
+The release/Latest pages, three public assets and canonical Latest Feed returned HTTP 200 anonymously; downloaded bytes, SHA256, production EdDSA signatures, version 32/macOS 14 metadata and embedded Markdown notes match the approved Draft. The authenticated Latest API confirms v1.9.0. The additional anonymous Latest API check returned HTTP 403 after bounded retries; its response confirms exhausted GitHub anonymous rate limits. This is recorded as an unverified anonymous API endpoint, not a successful check. No network or security settings were changed.
+
+Evidence is local under `.cache/releases/v1.9.0/prepare-9df9364-20261101`, `draft-9df9364-20261101` and `publish-9df9364-20261101`. Build inputs, installed app, dist, existing refs and historical assets remained unchanged; only local post-publication documentation changed. Native acceptance is reused only for matching inputs. Distribution remains **ad-hoc signed, without Developer ID or Apple notarization**; actual Intel/macOS 14 hardware, full VoiceOver, private authentication/custom signing and the final production Sparkle installation path are not claimed as newly validated.
+
+简体中文：v1.9.0（32）已于 **2026-11-01 19:35:00（Asia/Shanghai）**按批准的正文和附件正式发布为 Latest，Release430536712，源/Tag为 `9df9364`。同源码 Swift6.1.2完整CI通过 **1056项Core、零失败/错误/跳过**及49/19/10策略、缓存和发布工具门控，Tag CI复用该完整运行。通用DMG为30,568,000字节，SHA256如上，7个Mach-O均为双架构；包签名、DMG结构及Finder安装布局通过。生产更新签名、等长篡改拒绝、三附件按ID回读，以及发布后六个匿名公开页面/下载/固定Feed的字节、签名、版本与内嵌说明均核实。认证Latest API确认新版本；额外匿名API因配额耗尽返回403，未计为成功，诊断与重试保留且未改网络/安全配置。未更新本机安装，历史资产保持；仍为ad-hoc签名、未Apple公证，真实硬件、完整辅助功能和最终生产包实际升级等边界单独记录。
+
 ## v1.9.0 Swift 6.1 CI compatibility — 2026-11-01
 
 [Validate macOS run 41283907949](https://github.com/Heisenberg2024/gitpier/actions/runs/41283907949) failed while compiling pushed source `7886166`, before Core tests executed, on macOS 15.8.2 / Swift 6.1.2. Four diagnostics concerned type-checking timeouts in Branch Health and replay/recovery views; the fifth concerned exhaustive matching of `Bool?`.
 
-The repair separates the existing view builders and string assembly into smaller expressions, and explicitly matches `.some(true)`, `.some(false)` and `.none`. It preserves cache-key separators, displayed text, layout containers, actions, Git behavior and the CI toolchain. Local validation uses macOS 27.0.1 / Swift 6.4; an exact Swift 6.1.2 CI rerun remains necessary after the repair is pushed.
+The repair separates the existing view builders and string assembly into smaller expressions, and explicitly matches `.some(true)`, `.some(false)` and `.none`. It preserves cache-key separators, displayed text, layout containers, actions, Git behavior and the CI toolchain. Local validation uses macOS 27.0.1 / Swift 6.4; the repair was subsequently pushed as `9df9364`, whose complete Swift 6.1.2 CI passed, as recorded in the publication section above.
 
 Local validation passed 1056 Core tests with the CI command (zero failures/errors/skips), 420 Branch Health native assertions with 40 system-window captures, the replay/recovery native scope (38 recorded checks), 10 release-tool checks and isolated Debug/Release arm64 application builds with bundle/signature verification. Evidence is under `.cache/ci-fix-20261101`; the 312 frozen source/test/script/resource inputs remained unchanged throughout validation.
 
-简体中文：已根据实际失败日志修复 Swift 6.1.2 下的四处类型推断超时和一处可选布尔值穷尽性检查错误，只拆分现有视图和字符串表达式，并显式匹配可选值。不改变布局、文字、操作、缓存键格式、Git 逻辑或 CI 编译器版本。本机 Swift 6.4 已通过相同 CI 命令的 1056 项 Core、分支健康 420 条原生断言和 40 张系统截图、重放/恢复 38 条结果、10 项发布工具检查及隔离 Debug/Release arm64 构建和包/签名校验；推送修复后仍需核对真实 Swift 6.1.2 CI。
+简体中文：已根据实际失败日志修复 Swift 6.1.2 下的四处类型推断超时和一处可选布尔值穷尽性检查错误，只拆分现有视图和字符串表达式，并显式匹配可选值。不改变布局、文字、操作、缓存键格式、Git 逻辑或 CI 编译器版本。本机 Swift 6.4 已通过相同 CI 命令的 1056 项 Core、分支健康 420 条原生断言和 40 张系统截图、重放/恢复 38 条结果、10 项发布工具检查及隔离 Debug/Release arm64 构建和包/签名校验；修复随后提交为 `9df9364`，其完整 Swift 6.1.2 CI 已通过，见上方发布记录。
 
 ## v1.9.0 workflow and health development — 2026-10-31
 
-The [implementation plan](v1.9.0-plan.md) records the main-branch audit, reuse decisions, phased work and safety boundaries. [Validation and remaining RC gates](v1.9.0-testing.md) separates temporary-repository Core tests, actual macOS native UI, deterministic graph/branch measurements, Universal build checks and unrun device/distribution acceptance. The public stable download remains 1.8.1 (31); the maintainer-requested local build now uses 1.9.0 (32). Development does not publish a release.
+The [implementation plan](v1.9.0-plan.md) records the main-branch audit, reuse decisions, phased work and safety boundaries. [Validation and remaining RC gates](v1.9.0-testing.md) separates temporary-repository Core tests, actual macOS native UI, deterministic graph/branch measurements, Universal build checks and unrun device/distribution acceptance. The public stable download is now 1.9.0 (32), published on 2026-11-01 under separate maintainer approval; the development evidence below retains its original scope.
 
 For the completed Branch Health UI refinement, see [state mapping, changed files, screenshot acceptance and limits](branch-health-visualization.md). Its isolated native scope is `GITPIER_UI_ACCEPTANCE_SCOPE=branch-health Scripts/ui-acceptance.sh <output>`.
 
