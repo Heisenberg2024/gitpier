@@ -2,7 +2,7 @@ import AppKit
 import GitPierCore
 import SwiftUI
 
-enum OperationResult: Equatable { case running, succeeded, needsAttention, failed, cancelled }
+enum OperationResult: Equatable { case running, succeeded, needsAttention, failed, cancelled, resultUnknown }
 struct OperationTicket: Sendable, Equatable {
   let id: UUID
   let stage: Int
@@ -69,6 +69,7 @@ struct OperationState {
     case .succeeded: outcome = .succeeded
     case .failed: outcome = .failed
     case .cancelled: outcome = .cancelled
+    case .resultUnknown: outcome = .resultUnknown
     case .needsAttention: outcome = waitingForUser ? .waitingForUser : .needsAttention
     }
     center?.update(id, state: outcome, detail: detail)
@@ -115,6 +116,7 @@ struct OperationProgressView: View {
     case .needsAttention: return state.title + store.text(" · Needs attention", " · 需要处理")
     case .failed: return state.title + store.text(" · Failed", " · 失败")
     case .cancelled: return state.title + store.text(" · Cancelled", " · 已取消")
+    case .resultUnknown: return state.title + store.text(" · Result unknown", " · 结果未知")
     case .running:
       guard let transfer = state.transfer else { return state.title }
       let phase: String

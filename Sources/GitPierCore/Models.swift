@@ -84,6 +84,35 @@ public struct CommitResult: Sendable {
   public let hash: String
   public let output: String
   public let indexChangedDuringCommit: Bool
+  /// Native completion is proven, but subsequent observation/command reporting
+  /// was incomplete. Retain the hash and require attention before further work.
+  public let observationWarning: String?
+}
+
+public struct CommitCompletionUnverified: LocalizedError, Sendable {
+  public let diagnostic: String
+  public var errorDescription: String? {
+    "The native commit result could not be verified. "
+      + "Inspect History or Reflog before committing again.\n" + diagnostic
+  }
+}
+
+/// Native recovery Push was attempted; a client error cannot establish that
+/// the remote rejected it. The source is captured before the native call.
+public struct PushResultUnverified: LocalizedError, Sendable {
+  public let localHead: String
+  public let diagnostic: String
+  public let cancelled: Bool
+  public var errorDescription: String? { "Push result unverified.\n" + diagnostic }
+}
+
+/// A value wrapper keeps the existing single trailing phase/progress closure
+/// source-compatible while delivering the verified local checkpoint.
+public struct PushRecoveryObserver: Sendable {
+  public let localCommit: @Sendable (String) async -> Void
+  public init(localCommit: @escaping @Sendable (String) async -> Void) {
+    self.localCommit = localCommit
+  }
 }
 
 /// The single current-branch destination actually rejected by Git's porcelain push output.

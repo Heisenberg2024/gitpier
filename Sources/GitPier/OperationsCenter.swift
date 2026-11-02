@@ -228,7 +228,13 @@ struct OperationsCenterView: View {
   case .failed: return store.text("Failed · Open repository for details", "失败 · 打开仓库查看详情")
   case .cancelled: return store.text("Cancelled · changes may remain", "已取消 · 可能保留部分修改")
   case .needsAttention: return store.text("Needs attention", "需要处理")
-  case .resultUnknown: return store.text("Result unknown · verify in Review history", "结果未知 · 请在审查历史核实")
+  case .resultUnknown:
+    switch record.kind {
+    case .review: return store.text("Result unknown · verify in Review history", "结果未知 · 请在审查历史核实")
+    case .push, .commitAndPush, .mergeAndPush:
+      return store.text("Result unknown · verify the remote", "结果未知 · 请核实远端")
+    default: return store.text("Result unknown", "结果未知")
+    }
   case .agentExited: return store.text("Agent exited · review changes and tests", "Agent 已退出 · 请审查变更及测试")
   }
 }

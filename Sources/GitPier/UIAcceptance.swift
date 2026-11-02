@@ -95,6 +95,27 @@ import SwiftUI
           exit(0)
         }
         #if DEBUG
+        if let acceptanceScope, acceptanceScope.hasPrefix("stability-recovery-") {
+          window.close()
+          try await verifyRecoveryStability(root: root, output: output,
+            scenario: String(acceptanceScope.dropFirst("stability-recovery-".count)))
+          store.shutdown()
+          print("Native recovery Push stability acceptance passed.")
+          exit(0)
+        }
+        if acceptanceScope == "stability-operation-guidance" {
+          try verifyOperationGuidance(store: store, output: output)
+          window.close(); store.shutdown()
+          print("Bilingual operation recovery guidance passed.")
+          exit(0)
+        }
+        if acceptanceScope == "stability-soak" {
+          try await verifyStabilitySoak(root: root, output: output, store: store, window: window, original: model)
+          window.close()
+          store.shutdown()
+          print("Short native stability soak passed.")
+          exit(0)
+        }
         if acceptanceScope == "quality-error-dismissal" {
           window.close()
           try await verifyErrorDismissalQuality(root: root, output: output)
@@ -114,6 +135,13 @@ import SwiftUI
           try await verifyDiffQuality(root: root, output: output, burst: acceptanceScope == "quality-diff-burst")
           store.shutdown()
           print("Repository Diff quality acceptance passed (temporary local repositories).")
+          exit(0)
+        }
+        if let acceptanceScope, acceptanceScope.hasPrefix("stability-commit-") {
+          try await verifyCommitStability(root: root, output: output,
+            scenario: String(acceptanceScope.dropFirst("stability-commit-".count)))
+          store.shutdown()
+          print("Native commit stability acceptance passed (temporary repositories/local bare remote).")
           exit(0)
         }
         if acceptanceScope == "quality-commit-failure" || acceptanceScope == "quality-commit-cancel" {
@@ -1588,11 +1616,16 @@ import SwiftUI
     model.toggleIncluded([pendingFile])
     model.editDraft("test: preserve commit on failed push")
     if let snapshot = model.snapshot { model.indexReview.acknowledge(snapshot) }
+    let headBeforeFailedPush = model.status.head
     model.commit(push: true)
     try await waitFor { !model.busy }
-    guard model.pushFailed, model.error != nil, model.outputResult == .needsAttention,
-      model.output?.hasPrefix("本地提交成功，推送失败：") == true,
-      model.lastCommit == model.status.head, model.activity.state?.result == .failed
+    guard model.pushFailed, model.error != nil, model.outputResult == .resultUnknown,
+      model.output?.hasPrefix("本地提交成功：") == true,
+      model.output?.contains("推送结果尚未核实") == true,
+      let failedCommit = model.lastCommit, failedCommit != headBeforeFailedPush,
+      failedCommit == model.status.head, model.activity.state?.result == .resultUnknown,
+      let failedOperation = store.operations.records.first(where: { $0.localCommit == failedCommit }),
+      failedOperation.state == .resultUnknown, failedOperation.detail?.contains("推送结果尚未核实") == true
     else {
       throw GitPierError.invalidInput("Failed push lost its local commit or showed success")
     }
@@ -1603,7 +1636,9 @@ import SwiftUI
     ])
     model.network("push")
     try await waitFor { !model.busy }
-    guard !model.pushFailed, model.output?.hasPrefix("推送已完成。") == true else {
+    guard !model.pushFailed, model.output?.hasPrefix("推送已完成。") == true,
+      model.status.head == failedCommit, model.lastCommit == failedCommit,
+      store.operations.records.first(where: { $0.id == failedOperation.id })?.detail == failedOperation.detail else {
       throw GitPierError.invalidInput("Retrying failed push did not report completion")
     }
     store.removeOrganization(organization.id)

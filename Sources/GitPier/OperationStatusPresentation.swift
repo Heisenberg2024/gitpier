@@ -13,6 +13,7 @@ struct OperationStatusPresentation {
     case .needsAttention: state = .needsAttention
     case .failed: state = .failed
     case .cancelled: state = .cancelled
+    case .resultUnknown: state = .resultUnknown
     }
   }
   var symbol: String {

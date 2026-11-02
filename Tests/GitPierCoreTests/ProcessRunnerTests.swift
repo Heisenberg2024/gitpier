@@ -13,7 +13,41 @@ private final class OutputCallbackProbe: @unchecked Sendable {
   var hasReturned: Bool { lock.lock(); defer { lock.unlock() }; return returned }
 }
 
+private final class StreamCallbackCapture: @unchecked Sendable {
+  private let lock = NSLock()
+  private var data = Data()
+  func append(_ bytes: Data) { lock.lock(); defer { lock.unlock() }; data.append(bytes) }
+  var text: String { lock.lock(); defer { lock.unlock() }; return String(decoding: data, as: UTF8.self) }
+}
+
 final class ProcessRunnerTests: XCTestCase {
+  func testUnlabelledTrailingCallbackStillReceivesStderr() async throws {
+    let capture = StreamCallbackCapture()
+    let result = try await ProcessRunner().run(executable: "/bin/sh",
+      arguments: ["-c", "printf stdout; printf stderr >&2"], directory: nil) { bytes in
+      capture.append(bytes)
+    }
+    XCTAssertEqual(result.code, 0)
+    XCTAssertEqual(result.text, "stdout")
+    XCTAssertEqual(capture.text, "stderr")
+  }
+
+  func testGitReadUnlabelledTrailingCallbackStillReceivesStderr() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent("GitPier-read-callback-" + UUID().uuidString)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: false)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let executable = root.appendingPathComponent("git-fixture")
+    try Data("#!/bin/sh\nprintf stdout; printf stderr >&2\n".utf8).write(to: executable)
+    try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: executable.path)
+    let capture = StreamCallbackCapture()
+    let result = try await GitService(root: root, gitPath: executable.path).read(["--version"]) { bytes in
+      capture.append(bytes)
+    }
+    XCTAssertEqual(result.code, 0)
+    XCTAssertEqual(result.text, "stdout")
+    XCTAssertEqual(capture.text, "stderr")
+  }
+
   func testBlockingProcessDoesNotStarveCooperativeTasks() async throws {
     let probeKey = "GITPIER_COOPERATIVE_PROCESS_PROBE"
     if ProcessInfo.processInfo.environment[probeKey] == "1" {

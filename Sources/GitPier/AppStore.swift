@@ -776,11 +776,13 @@ struct DiffTab: Identifiable, Equatable {
           .value
         fileGeneration += 1
       }
+      let wasMerging = status.operation == .merge
       if status != new {
         status = new
         if !busy { store.workspace.invalidate(record.id, collect: true) }
       }
-      if let target = conflictPush, new.operation == nil, new.head == target.localHead {
+      if wasMerging, let target = conflictPush, new.operation == nil,
+        new.head == target.localHead {
         conflictPush = nil
       }
       if snapshot != snap {
@@ -1148,7 +1150,9 @@ struct DiffTab: Identifiable, Equatable {
         }
         try Task.checkCancellation()
         try await action(git)
-        if error != nil {
+        if outputResult == .resultUnknown {
+          result = .resultUnknown
+        } else if error != nil {
           result = .failed
         } else if outputResult == .needsAttention {
           result = .needsAttention
@@ -1160,13 +1164,22 @@ struct DiffTab: Identifiable, Equatable {
             + store.text(" · Completed", " · 已完成")) : ""
         output = [summary, details].filter { !$0.isEmpty }.joined(separator: "\n")
         if result == .failed { outputResult = .needsAttention }
+      } catch let unverified as CommitCompletionUnverified {
+        result = .needsAttention
+        outputResult = .needsAttention
+        lastCommit = nil
+        output = unverifiedCommitOutput(unverified)
       } catch is CancellationError {
-        result = .cancelled
-        outputResult = .cancelled
-        output = store.text("Operation cancelled.", "操作已取消。")
+        if outputResult == .resultUnknown {
+          result = .resultUnknown
+        } else {
+          result = .cancelled
+          outputResult = .cancelled
+          output = store.text("Operation cancelled.", "操作已取消。")
+        }
       } catch {
-        result = .failed
-        if output != nil { outputResult = .needsAttention }
+        result = outputResult == .resultUnknown ? .resultUnknown : .failed
+        if output != nil, result != .resultUnknown { outputResult = .needsAttention }
         self.error = localizedUI(error.localizedDescription)
       }
       // Preserve diagnostics separately from the user-dismissible error Sheet.
@@ -1192,7 +1205,7 @@ struct DiffTab: Identifiable, Equatable {
         result = .needsAttention
         outputResult = .needsAttention
       }
-      if result == .needsAttention || status.operation != nil || status.files.contains(where: \.isConflicted) {
+      if result == .needsAttention || result == .resultUnknown || status.operation != nil || status.files.contains(where: \.isConflicted) {
         await captureOperationRecovery(progressTicket.id)
       }
       activity.finish(result, ticket: progressTicket,
@@ -1212,6 +1225,11 @@ struct DiffTab: Identifiable, Equatable {
     guard !committing else { return }
     activity.advance(store.text("Cancelling", "取消中"), cancellable: false, phase: .cancelling)
     activeTask?.cancel()
+  }
+  private func unverifiedCommitOutput(_ issue: CommitCompletionUnverified) -> String {
+    store.text(
+      "Local commit result unverified. Inspect History or Reflog before committing or pushing again.",
+      "本地提交结果尚未核实。再次提交或推送前，请在历史或引用日志中检查。") + "\n" + issue.diagnostic
   }
   func commit(push: Bool) {
     guard canCommit, let expected = snapshot else { return }
@@ -1249,9 +1267,23 @@ struct DiffTab: Identifiable, Equatable {
       committing = true
       activity.advance(store.text("Committing", "提交"), cancellable: false)
       defer { committing = false }
-      let result = try await git.commit(
-        message: message, expected: expected, amend: amend, selection: selection,
-        reviewedPatches: reviewed)
+      let result: CommitResult
+      do {
+        result = try await git.commit(
+          message: message, expected: expected, amend: amend, selection: selection,
+          reviewedPatches: reviewed)
+      } catch let unverified as CommitCompletionUnverified {
+        // A successful native command without a trustworthy hash must not leave
+        // the same draft ready for an accidental second Commit or automatic Push.
+        recentMessages = Array(([message] + recentMessages).prefix(15))
+        editDraft("")
+        self.amend = false
+        lastCommit = nil
+        pushFailed = false
+        outputResult = .needsAttention
+        output = unverifiedCommitOutput(unverified)
+        return
+      }
       activity.recordLocalCommit(result.hash)
       await recordOwnCommitState(git, update: .commit(head: result.hash, branch: expected.branch, acceptsIndex: !result.indexChangedDuringCommit))
       lastCommit = result.hash
@@ -1271,11 +1303,23 @@ struct DiffTab: Identifiable, Equatable {
       pushFailed = false
       rejectedPush = nil
       output = localOutput + indexNote
+      if let warning = result.observationWarning {
+        pushFailed = push
+        outputResult = .needsAttention
+        output = localOutput + store.text(
+          "\nPost-commit verification did not complete. Refresh and review before retrying Push; the local commit is saved.",
+          "\n提交后的校验未完成。重试推送前请刷新并审查；本地提交已保存。") + "\n" + warning
+        return
+      }
       if push {
+        var pushAttempted = false
         do {
           // Preparing Push is already a separate phase after a successful local
           // commit. Observation failures and cancellation must preserve that result.
           let status = try await git.status()
+          guard status.head == result.hash, status.branch == expected.branch, status.operation == nil else {
+            throw GitPierError.indexChanged
+          }
           if status.upstream == nil {
             needsUpstream = true
             outputResult = .needsAttention
@@ -1285,6 +1329,7 @@ struct DiffTab: Identifiable, Equatable {
           } else {
             activity.advance(store.text("Pushing", "推送"), cancellable: true)
             let progress = activity.receiver()
+            pushAttempted = true
             let details = GitOutputSummary.details(
               try await git.network("push", progress: progress))
             output =
@@ -1298,12 +1343,24 @@ struct DiffTab: Identifiable, Equatable {
             + store.text("\nRemote commits must be merged before pushing.", "\n远程有尚未合并的提交，需要合并后推送。")
         } catch is CancellationError {
           pushFailed = true
-          outputResult = .needsAttention
+          outputResult = pushAttempted ? .resultUnknown : .needsAttention
           output =
             store.text("Local commit succeeded; push cancelled: ", "本地提交成功，推送已取消：")
             + String(result.hash.prefix(8)) + indexNote
+          if pushAttempted {
+            output! += store.text("\nThe remote result is unverified. Check the remote before retrying Push.",
+              "\n远端结果尚未核实。重试推送前请检查远端。")
+          }
         } catch {
           pushFailed = true
+          if pushAttempted {
+            outputResult = .resultUnknown
+            output = localOutput + indexNote + store.text(
+              "\nPush result unverified. The remote may have accepted the commit; check it before retrying Push.",
+              "\n推送结果尚未核实。远端可能已接收提交；重试推送前请检查远端。")
+            self.error = error.localizedDescription
+            return
+          }
           output =
             store.text("Local commit succeeded; push failed: ", "本地提交成功，推送失败：")
             + String(result.hash.prefix(8)) + indexNote
@@ -1380,6 +1437,12 @@ struct DiffTab: Identifiable, Equatable {
         if operation == "push" {
           pushFailed = true
           rejectedPush = nil
+          outputResult = .resultUnknown
+          output = error is CancellationError
+            ? store.text("Push cancelled; the remote result is unverified. Check the remote before retrying Push.",
+              "推送已取消；远端结果尚未核实。重试推送前请检查远端。")
+            : store.text("Push result unverified. The remote may have accepted the commit; check it before retrying Push.",
+              "推送结果尚未核实。远端可能已接收提交；重试推送前请检查远端。")
         }
         throw error
       }
@@ -1404,6 +1467,23 @@ struct DiffTab: Identifiable, Equatable {
       confirmTitle: store.text("Merge & Push", "合并并推送"), destructive: false
     ) { [weak self] in self?.mergeAndPush(rejection) }
   }
+  private func recordRecoveryCommit(_ head: String) {
+    lastCommit = head
+    activity.recordLocalCommit(head)
+  }
+  private func preserveUnverifiedPush(_ issue: PushResultUnverified) {
+    recordRecoveryCommit(issue.localHead)
+    pushFailed = true
+    outputResult = .resultUnknown
+    output = store.text("Local commit saved: ", "本地提交已保存：") + issue.localHead
+      + "\n" + (issue.cancelled
+        ? store.text("Push cancelled; the remote result is unverified. Check the remote before retrying Push.",
+          "推送已取消；远端结果尚未核实。重试推送前请检查远端。")
+        : store.text("Push result unverified. The remote may have accepted the commit; check it before retrying Push.",
+          "推送结果尚未核实。远端可能已接收提交；重试推送前请检查远端。"))
+      + "\n" + issue.diagnostic
+    if !issue.cancelled { error = issue.diagnostic }
+  }
   private func mergeAndPush(_ rejection: PushRejection) {
     run(
       label: store.text("Merge & Push", "合并并推送"), completion: "", notify: true, kind: .mergeAndPush
@@ -1411,7 +1491,9 @@ struct DiffTab: Identifiable, Equatable {
       guard let self else { return }
       defer { committing = false }
       do {
-        let details = try await git.mergeAndPush(rejection) { [weak self] phase in
+        let details = try await git.mergeAndPush(rejection, observer: PushRecoveryObserver(localCommit: { [weak self] head in
+          await self?.recordRecoveryCommit(head)
+        })) { [weak self] phase in
           if phase == .pushing { await self?.recordOwnCommitState(git, update: .history) }
           return await MainActor.run {
             guard let self else { return nil }
@@ -1430,6 +1512,10 @@ struct DiffTab: Identifiable, Equatable {
         rejectedPush = nil
         needsUpstream = false
         output = store.text("Merge & push completed.", "合并并推送已完成。") + "\n" + details
+      } catch let issue as PushResultUnverified {
+        conflictPush = rejection
+        rejectedPush = nil
+        preserveUnverifiedPush(issue)
       } catch {
         committing = false
         pushFailed = true
@@ -1519,16 +1605,27 @@ struct DiffTab: Identifiable, Equatable {
       activity.advance(store.text("Creating merge commit", "创建合并提交"), cancellable: false)
       defer { committing = false }
       let commit = try await git.completeMerge(review)
+      activity.recordLocalCommit(commit.hash)
+      lastCommit = commit.hash
       await recordOwnCommitState(git, update: .commit(head: commit.hash, branch: review.index.branch, acceptsIndex: !commit.indexChangedDuringCommit))
       committing = false
       conflictPush = nil
       output = store.text("Merge completed: ", "合并已完成：") + String(commit.hash.prefix(8))
+      if let warning = commit.observationWarning {
+        conflictPush = target
+        pushFailed = target != nil
+        outputResult = .needsAttention
+        output! += store.text("\nPost-commit verification did not complete. Refresh and review before pushing.",
+          "\n提交后的校验未完成。推送前请刷新并审查。") + "\n" + warning
+        return
+      }
       if let target {
         conflictPush = target
         activity.advance(store.text("Pushing", "推送"), cancellable: true)
         do {
           let details = try await git.pushCompletedMerge(
-            target, head: commit.hash, progress: activity.receiver())
+            target, head: commit.hash,
+            observer: PushRecoveryObserver(localCommit: { [weak self] head in await self?.recordRecoveryCommit(head) }), progress: activity.receiver())
           pushFailed = false
           conflictPush = nil
           needsUpstream = false
@@ -1539,16 +1636,18 @@ struct DiffTab: Identifiable, Equatable {
           output = store.text(
             "Merge commit saved; new remote commits need another merge before pushing.",
             "合并提交已保存；远程又有新提交，需要再次合并后推送。")
+        } catch let issue as PushResultUnverified {
+          preserveUnverifiedPush(issue)
         } catch {
           pushFailed = true
           outputResult = .needsAttention
           output = store.text(
-            "Merge commit saved; push did not complete. Retry Push sends the existing commit to the same destination.",
-            "合并提交已保存，推送尚未完成。重试推送会将已有提交发送到同一目标。")
+            "Merge commit saved; Push preparation did not complete. Review the repository before retrying Push.",
+            "合并提交已保存，推送准备未完成。重试推送前请审查仓库状态。")
           if error is CancellationError {
             output = store.text(
-              "Merge commit saved; push cancelled. Retry Push sends the existing commit to the same destination.",
-              "合并提交已保存，推送已取消。重试推送会将已有提交发送到同一目标。")
+              "Merge commit saved; Push preparation cancelled. Review the repository before retrying Push.",
+              "合并提交已保存，推送准备已取消。重试推送前请审查仓库状态。")
           } else {
             self.error = error.localizedDescription
           }
@@ -1567,7 +1666,8 @@ struct DiffTab: Identifiable, Equatable {
     ) { [weak self] git in
       guard let self else { return }
       do {
-        output = try await git.pushCompletedMerge(target, head: head, progress: activity.receiver())
+        output = try await git.pushCompletedMerge(target, head: head,
+          observer: PushRecoveryObserver(localCommit: { [weak self] head in await self?.recordRecoveryCommit(head) }), progress: activity.receiver())
         pushFailed = false
         conflictPush = nil
       } catch let updated as PushRejection {
@@ -1575,6 +1675,9 @@ struct DiffTab: Identifiable, Equatable {
         queuePushRecovery(updated)
         output = store.text(
           "New remote commits need to be merged before pushing.", "远程新提交需要合并后才能推送。")
+      } catch let issue as PushResultUnverified {
+        conflictPush = target
+        preserveUnverifiedPush(issue)
       }
     }
   }

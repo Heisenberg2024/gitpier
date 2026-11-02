@@ -77,7 +77,8 @@ public struct ProcessRunner: Sendable {
   public func run(
     executable: String, arguments: [String], directory: URL?, environment: [String: String] = [:],
     input: Data? = nil, timeout: TimeInterval = 120, limit: Int = 16 * 1024 * 1024,
-    excludingEnvironmentKeys: [String] = [], onStderr: (@Sendable (Data) -> Void)? = nil
+    excludingEnvironmentKeys: [String] = [], onStderr: (@Sendable (Data) -> Void)? = nil,
+    onStdout: (@Sendable (Data) -> Void)? = nil
   ) async throws -> CommandResult {
     let box = ProcessBox()
     return try await withTaskCancellationHandler(
@@ -91,7 +92,7 @@ public struct ProcessRunner: Sendable {
               continuation.resume(returning: try Self.runBlocking(
                 executable: executable, arguments: arguments, directory: directory,
                 environment: environment, input: input, timeout: timeout, limit: limit, box: box,
-                excludingEnvironmentKeys: excludingEnvironmentKeys, onStderr: onStderr))
+                excludingEnvironmentKeys: excludingEnvironmentKeys, onStderr: onStderr, onStdout: onStdout))
             } catch { continuation.resume(throwing: error) }
           }
         }
@@ -102,7 +103,7 @@ public struct ProcessRunner: Sendable {
   private static func runBlocking(
     executable: String, arguments: [String], directory: URL?, environment: [String: String],
     input: Data?, timeout: TimeInterval, limit: Int, box: ProcessBox,
-    excludingEnvironmentKeys: [String], onStderr: (@Sendable (Data) -> Void)?
+    excludingEnvironmentKeys: [String], onStderr: (@Sendable (Data) -> Void)?, onStdout: (@Sendable (Data) -> Void)?
   ) throws -> CommandResult {
     let begin = ProcessInfo.processInfo.systemUptime
     var launched = begin
@@ -160,7 +161,7 @@ public struct ProcessRunner: Sendable {
     readers.enter()
     DispatchQueue.global().async {
       defer { readers.leave() }
-      Self.readOutput(out: out, err: err, stdout: stdout, stderr: stderr, drain: drain, onStderr: onStderr)
+      Self.readOutput(out: out, err: err, stdout: stdout, stderr: stderr, drain: drain, onStderr: onStderr, onStdout: onStdout)
     }
     DispatchQueue.global().async {
       if let input { try? stdin.fileHandleForWriting.write(contentsOf: input) }
@@ -188,7 +189,7 @@ public struct ProcessRunner: Sendable {
   }
 
   private static func readOutput(out: Pipe, err: Pipe, stdout: OutputBuffer, stderr: OutputBuffer,
-    drain: OutputDrain, onStderr: (@Sendable (Data) -> Void)?) {
+    drain: OutputDrain, onStderr: (@Sendable (Data) -> Void)?, onStdout: (@Sendable (Data) -> Void)?) {
     let handles = [out.fileHandleForReading, err.fileHandleForReading]
     defer { for handle in handles { try? handle.close() } }
     var descriptors = handles.map { pollfd(fd: $0.fileDescriptor, events: Int16(POLLIN), revents: 0) }
@@ -212,7 +213,7 @@ public struct ProcessRunner: Sendable {
         let count = Darwin.read(descriptors[index].fd, &buffer, buffer.count)
         if count > 0 {
           let data = Data(buffer.prefix(count))
-          if index == 0 { stdout.append(data) } else { stderr.append(data); onStderr?(data) }
+          if index == 0 { stdout.append(data); onStdout?(data) } else { stderr.append(data); onStderr?(data) }
         } else if count == 0 { descriptors[index].fd = -1 }
         else if errno != EAGAIN && errno != EINTR { drain.fail(errno); return }
       }

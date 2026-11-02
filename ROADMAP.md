@@ -2,7 +2,7 @@
 
 **Native Git Client for macOS** · *All Your Repositories. One Workspace.*
 
-Reviewed: 2026-11-02. Current stable: [v2.0.0 (33)](https://github.com/Heisenberg2024/gitpier/releases/tag/v2.0.0). Next milestone: **Trusted Distribution**, planned separately with no release date.
+Reviewed: 2026-11-02. Current stable: [v2.0.0 (33)](https://github.com/Heisenberg2024/gitpier/releases/tag/v2.0.0). Current maintenance work: **v2.0.1 — Stability & Performance**. Trusted Distribution remains a separate future milestone with no release date.
 
 GitPier develops the existing SwiftUI/AppKit workspace through focused, verifiable improvements. Milestones describe scope and acceptance conditions; they do not promise release dates. / GitPier 以现有原生工作空间为基础，持续改进可靠性、交互与性能；路线图说明范围和验收条件，不承诺发布日期。
 
@@ -40,6 +40,16 @@ The release improves existing capabilities without introducing another Git engin
 | Quality evidence / 质量证据 | Real temporary Git scenarios, full Core/native acceptance, stable-source Universal builds and an honest RC decision. 真实临时 Git、完整回归、固定源码通用构建与可信 RC 判断。 |
 
 Release acceptance includes independent source review, full same-source Swift 6.1.2 CI and the verified Universal/ad-hoc DMG with production Sparkle signatures. Final snapshot checks retain about 59 ms of measured refresh cost. Intel/macOS 14 hardware, full VoiceOver, long soak, private services and production self-update remain unverified. / 独立源码审核、同源完整 CI、通用包及生产更新签名已核实；保留约 59 ms 刷新成本，并明确硬件、完整无障碍、长时、私有服务和生产升级未验范围。
+
+## v2.0.1 — Stability & Performance
+
+**Local automated validation and independent source review complete; same-source CI pending / 本地自动化验证与独立源码复核完成，同源 CI 待验.** Reduce repeated repository queries while retaining coherent review and external-change detection. Preserve successful local commits through observation failures and distinguish unverified remote results; exercise large histories, multiple repositories/worktrees, synthetic authentication and native lifecycle recovery with reproducible measurements. No new Git engine, hosting platform or UI redesign. See the [maintenance plan](docs/v2.0.1-plan.md) and [executed evidence / remaining gates](docs/v2.0.1-testing.md).
+
+减少重复查询但保留完整一致性校验；完善提交后的部分成功反馈与远端未知结果，量化验收大历史、多仓库/工作树、隔离认证及原生生命周期。开发、本地验收、独立审核、CI 与发布分别记录；版本准备不代表发布授权。
+
+## v2.1.0 — Experience refinements / 后续体验完善
+
+**Planned / 计划中.** Continue focused improvements to existing native workflows after the v2.0.x stability work. Scope and acceptance will be agreed separately; no release date or major new feature commitment is implied. / 在 v2.0.x 稳定性工作后继续打磨现有原生工作流；范围与验收另行确定，不承诺日期或大型新功能。
 
 ## Later: Trusted Distribution / 后续独立工作：可信分发
 

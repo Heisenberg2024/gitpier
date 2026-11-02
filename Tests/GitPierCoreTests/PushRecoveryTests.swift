@@ -3,6 +3,43 @@ import XCTest
 @testable import GitPierCore
 
 extension GitServiceTests {
+  func testRecoveryDoesNotPushAnExternalHeadChangeAfterMergeValidation() async throws {
+    try await verifyRecoverySourceChange(switchBranch: false)
+  }
+  func testRecoveryDoesNotPushAnotherBranchAtTheSameMergedHead() async throws {
+    try await verifyRecoverySourceChange(switchBranch: true)
+  }
+  private func verifyRecoverySourceChange(switchBranch: Bool) async throws {
+    let fixture = try await pushFixture()
+    let remote = try await advancePeer(fixture.peer)
+    _ = try await localPushCommit()
+    let rejection = try await rejectedPush()
+    let root: URL = directory
+    do {
+      _ = try await git.mergeAndPush(rejection) { phase in
+        if phase == .pushing {
+          let arguments = switchBranch
+            ? [["branch", "external-other", "HEAD"], ["symbolic-ref", "HEAD", "refs/heads/external-other"]]
+            : [["commit", "--allow-empty", "-m", "external after merge validation"]]
+          for args in arguments {
+            _ = try? await ProcessRunner().run(executable: "/usr/bin/git", arguments: args, directory: root,
+              environment: ["GIT_CONFIG_GLOBAL": "/dev/null", "GIT_CONFIG_NOSYSTEM": "1"])
+          }
+        }
+        return nil
+      }
+      XCTFail("A changed validated push source must stop before transfer")
+    } catch { XCTAssertTrue(error.localizedDescription.contains("changed")) }
+    let state = try await git.status()
+    let pushed = try await remoteHead(fixture.bare)
+    XCTAssertEqual(pushed, remote, "Do not send another writer's HEAD to the reviewed destination")
+    if switchBranch { XCTAssertEqual(state.branch, "external-other", "Preserve the external switch") }
+    else {
+      let subject = try await raw(["log", "-1", "--format=%s"]).text.trimmingCharacters(in: .newlines)
+      XCTAssertEqual(subject, "external after merge validation")
+    }
+  }
+
   private func pushFixture() async throws -> (bare: URL, peer: URL) {
     try await seed()
     let fixtures = directory.appendingPathComponent(".git/fixtures")

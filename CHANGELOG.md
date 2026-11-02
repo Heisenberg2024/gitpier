@@ -2,6 +2,25 @@
 
 ## Unreleased
 
+### v2.0.1 — Stability & Performance (locally validated, unreleased)
+
+- Remove two unused common-directory queries from a complete Index snapshot (10 → 8 Git launches), retaining both native status scans, fresh worktree directory resolution and final Index-byte/HEAD/branch/operation/file validation.
+- Reject same-object branch switches made by original commit hooks, and forward other executable native hooks through the private directory so reference-transaction policies can still veto a commit. Preserve hook arguments, stdin, exit status and quoted/newline paths.
+- Capture the full native commit identity before original post-commit hooks run. Keep a proven local result when later Index observation or command reporting fails; stop automatic Push and preserve the diagnosis. Missing completion evidence requires History/Reflog verification instead of inventing a Hash or leaving the same draft ready to commit again.
+- Preserve local Commit/Merge checkpoints and report an unverified Push result through the existing Result unknown state. A client error/cancellation cannot prove that the remote rejected the commit; explicit Push retry never repeats Commit.
+- Direct unknown Push results to remote verification in both languages; keep Review-history guidance specific to Review operations.
+- Retain verified local Hash/destination checkpoints and unknown-result diagnostics in both Merge & Push recovery and conflict Retry Push, including cancellation and no-op merges across unrelated staging, in-flight refreshes and another unverified retry. Reject a source changed after merge validation before transfer.
+- Treat native commit deadline/cancellation/output-limit interruptions as unverified when completion proof is missing. Preserve redacted partial stdout/stderr and the attempted recent message, require History/Reflog verification and prevent repeating the unchanged Commit draft.
+- Extend real temporary-Git and native acceptance for SHA-256, 5,000-commit pagination, newline/replaced worktrees, post-commit faults, remote acceptance followed by client error, page changes and short native lifecycle stress. Before/after measurements and independent gates are tracked in [v2.0.1 validation](docs/v2.0.1-testing.md).
+- 完整 Index 快照去除两次未使用的公共目录查询（Git 进程 10 → 8），保留两次原生状态扫描、实时工作树目录解析及最终 Index 字节、HEAD、分支、操作与文件校验。
+- 拒绝原始提交 Hook 引起的同 Hash 分支切换；私有目录继续转发其他可执行原生 Hook，保留引用事务的提交拒绝策略，以及参数、标准输入、退出状态和引号/换行路径。
+- 在原始 post-commit Hook 前捕获完整提交身份；后续 Index 观察或命令结果采集失败时保留已证实的本地结果、停止自动推送并保留诊断。缺少可靠回执时要求核查历史/引用日志，不猜测 Hash，也不让同一草稿直接再次提交。
+- 保留本地提交/合并检查点，推送结果未核实时复用“结果未知”状态；客户端报错或取消不能证明远端拒绝，显式重试推送不会重复提交。
+- 双语操作中心对未知推送结果提示核实远端，审查历史提示仅用于 Review 操作。
+- 补齐合并并推送恢复、冲突后重试推送的已验证本地 Hash、原目标和未知结果诊断，覆盖取消、无需新合并提交及其后暂存／在途刷新／再次未知重试的情况；发送前拒绝已观察到的源 HEAD／分支变化。
+- 原生提交超时、取消或输出超限且缺少完成证据时要求核实结果，保留脱敏后的部分 stdout／stderr 和最近提交消息，提示核查历史／引用日志，并阻止原草稿直接重复提交。
+- 补充 SHA-256、5,000 提交分页、换行路径/工作树替换、提交后故障、远端接收后客户端报错、切页和短期原生生命周期压力验收；性能与独立验收边界见版本测试记录。
+
 ## 2.0.0 — 2026-11-02 (33)
 
 - Published as Latest from `b99f72f`; exact-source Swift 6.1.2 CI passed 1,065 Core tests, and Tag CI ran the full macOS gates. Universal DMG, production update signatures, asset-ID readbacks and public downloads/Latest Feed were verified. See [publication evidence and limits](docs/development.md#v200-publication--2026-11-02).

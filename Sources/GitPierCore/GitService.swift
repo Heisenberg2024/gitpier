@@ -2,6 +2,23 @@ import Foundation
 import CryptoKit
 import Darwin
 
+/// Keep bounded diagnostics even when a native deadline/cancellation prevents
+/// ProcessRunner from returning a result. These bytes never prove completion.
+private final class GitCommandDiagnosticCapture: @unchecked Sendable {
+  private let lock = NSLock()
+  private var stdout = Data(), stderr = Data()
+  private let limit = 64 * 1024
+  func append(_ bytes: Data, error: Bool) {
+    lock.lock(); defer { lock.unlock() }
+    if error { stderr.append(bytes.prefix(max(0, limit - stderr.count))) }
+    else { stdout.append(bytes.prefix(max(0, limit - stdout.count))) }
+  }
+  var text: String {
+    lock.lock(); defer { lock.unlock() }
+    return String(decoding: stdout, as: UTF8.self) + "\n" + String(decoding: stderr, as: UTF8.self)
+  }
+}
+
 /// One shared actor per canonical working tree. A queue spans awaits, unlike actor isolation alone.
 public actor GitService {
   private struct TaskReviewFlight {
@@ -81,7 +98,7 @@ public actor GitService {
     _ arguments: [String], input: Data? = nil, environment: [String: String] = [:],
     allowFailure: Bool = false, limit: Int = 16 * 1024 * 1024,
     timeout: TimeInterval = 120,
-    onStderr: (@Sendable (Data) -> Void)? = nil
+    onStderr: (@Sendable (Data) -> Void)? = nil, onStdout: (@Sendable (Data) -> Void)? = nil
   ) async throws -> CommandResult {
     var env = ["LC_ALL": "en_US.UTF-8", "GIT_OPTIONAL_LOCKS": "0", "GIT_TERMINAL_PROMPT": "0"]
     for (key, value) in authEnvironment { env[key] = value }
@@ -90,7 +107,7 @@ public actor GitService {
       executable: gitPath, arguments: ["--no-pager"] + authArguments + arguments, directory: root,
       environment: env, input: input, timeout: timeout, limit: limit,
       excludingEnvironmentKeys: ["GIT_DIR", "GIT_WORK_TREE", "GIT_COMMON_DIR", "GIT_INDEX_FILE"],
-      onStderr: onStderr)
+      onStderr: onStderr, onStdout: onStdout)
     if result.code != 0 && !allowFailure {
       throw GitPierError.command(
         arguments.first ?? "git", result.code, Self.redact(result.errorText))
@@ -139,8 +156,10 @@ public actor GitService {
     var status = try StatusParser.parse(
       await read(["status", "--porcelain=v2", "-z", "--branch", "--untracked-files=all"],
         environment: localOnly ? ["GIT_NO_LAZY_FETCH": "1"] : [:]).stdout)
-    let dir = try await metadataDirectories()[0]
-    status.operation = try nativeOperation(in: dir)
+    // Status consumes only this worktree's directory. Resolve it freshly, but
+    // do not launch the unused common-directory query on both snapshot scans.
+    let path = try Self.nativePath(try await read(["rev-parse", "--absolute-git-dir"]).stdout)
+    status.operation = try nativeOperation(in: URL(fileURLWithPath: path))
     return status
   }
   /// Dashboard reads only porcelain counts, local tracking refs and repository identity.
@@ -715,17 +734,17 @@ public actor GitService {
   }
   public func commit(
     message: String, expected: IndexSnapshot, amend: Bool = false, selection: [FileChange]? = nil,
-    reviewedPatches: [String: Data] = [:]
+    reviewedPatches: [String: Data] = [:], timeout: TimeInterval = 120
   ) async throws
     -> CommitResult
   {
     try await commitReviewed(
       message: message, expected: expected, amend: amend, selection: selection,
-      reviewedPatches: reviewedPatches)
+      reviewedPatches: reviewedPatches, timeout: timeout)
   }
   private func commitReviewed(
     message: String, expected: IndexSnapshot, amend: Bool = false, selection: [FileChange]? = nil,
-    reviewedPatches: [String: Data] = [:], mergeParents: Data? = nil
+    reviewedPatches: [String: Data] = [:], mergeParents: Data? = nil, timeout: TimeInterval = 120
   ) async throws -> CommitResult {
     let title = message.components(separatedBy: "\n").first ?? ""
     guard !title.trimmingCharacters(in: .whitespaces).isEmpty else {
@@ -780,16 +799,27 @@ public actor GitService {
       guard !liveReview.paths.isEmpty || amend || mergeParents != nil else {
         throw GitPierError.emptyIndex
       }
+      // A same-object branch switch is invisible to a HEAD hash comparison.
+      // Bind the exact native symbolic ref as well, including unusual branch
+      // names and detached HEAD, without changing or locking the user's HEAD.
+      let symbolicHead = try await read(["symbolic-ref", "--quiet", "HEAD"], allowFailure: true)
+      let headReference: String
+      if symbolicHead.code == 0 {
+        headReference = try Self.nativePath(symbolicHead.stdout)
+        let branch = headReference.hasPrefix("refs/heads/")
+          ? String(headReference.dropFirst("refs/heads/".count)) : headReference
+        guard branch == liveReview.branch else { throw GitPierError.indexChanged }
+      } else if symbolicHead.code == 1, liveReview.branch == "(detached)" {
+        headReference = ""
+      } else {
+        throw GitPierError.command("symbolic-ref", symbolicHead.code, Self.redact(symbolicHead.errorText))
+      }
       let temp = FileManager.default.temporaryDirectory.appendingPathComponent(
         "GitPier-commit-" + UUID().uuidString)
       try FileManager.default.createDirectory(
         at: temp, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
       defer { try? FileManager.default.removeItem(at: temp) }
-      let realIndex = try await read(["rev-parse", "--git-path", "index"]).text.trimmingCharacters(
-        in: .whitespacesAndNewlines)
-      let indexURL =
-        realIndex.hasPrefix("/")
-        ? URL(fileURLWithPath: realIndex) : root.appendingPathComponent(realIndex)
+      let indexURL = try await liveIndexURL()
       let isolatedIndex = temp.appendingPathComponent("index")
       try FileManager.default.copyItem(at: indexURL, to: isolatedIndex)
       var committedTree = liveReview.tree
@@ -811,17 +841,36 @@ public actor GitService {
           allowFailure: true)
         if selectedPatch.code == 0 && !amend { throw GitPierError.emptyIndex }
       }
-      let originalHooks = try await read(["rev-parse", "--git-path", "hooks"]).text
-        .trimmingCharacters(in: .whitespacesAndNewlines)
+      let originalHooks = try Self.nativePath(try await read(["rev-parse", "--git-path", "hooks"]).stdout)
       let hookURL =
         originalHooks.hasPrefix("/")
         ? URL(fileURLWithPath: originalHooks) : root.appendingPathComponent(originalHooks)
       let hooks = temp.appendingPathComponent("hooks")
+      let receipt = temp.appendingPathComponent("created-commit")
       let expectedParents = temp.appendingPathComponent("merge-parents")
       if let mergeParents { try mergeParents.write(to: expectedParents) }
       try FileManager.default.createDirectory(at: hooks, withIntermediateDirectories: true)
-      // Honor original hooks. commit-msg is the last pre-commit gate: hook-added changes require another review.
-      for name in ["pre-commit", "prepare-commit-msg", "commit-msg", "post-commit", "post-rewrite"]
+      // Keep every other native hook reachable through the private directory,
+      // including reference-transaction policies that can veto the ref update.
+      // Exec preserves the original script path, arguments, stdin and exit code.
+      let guardedHooks = ["pre-commit", "prepare-commit-msg", "commit-msg", "post-commit", "post-rewrite"]
+      var isHookDirectory: ObjCBool = false
+      if FileManager.default.fileExists(atPath: hookURL.path, isDirectory: &isHookDirectory),
+        isHookDirectory.boolValue
+      {
+        for original in try FileManager.default.contentsOfDirectory(at: hookURL, includingPropertiesForKeys: nil)
+          where !guardedHooks.contains(original.lastPathComponent)
+            && FileManager.default.isExecutableFile(atPath: original.path)
+        {
+          let delegate = hooks.appendingPathComponent(original.lastPathComponent)
+          let originalPath = hookURL.appendingPathComponent(original.lastPathComponent).path
+          try ("#!/bin/sh\nexec " + InputValidation.shellQuote(originalPath) + " \"$@\"\n")
+            .write(to: delegate, atomically: true, encoding: .utf8)
+          try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: delegate.path)
+        }
+      }
+      // commit-msg is the last pre-commit gate: hook-added changes require another review.
+      for name in guardedHooks
       {
         let hookInvocation =
           ["post-commit", "post-rewrite"].contains(name)
@@ -830,6 +879,13 @@ public actor GitService {
           "#!/bin/sh\noriginal="
           + InputValidation.shellQuote(hookURL.appendingPathComponent(name).path)
           + "\nif [ -x \"$original\" ]; then " + hookInvocation + " || exit $?; fi\n"
+        if name == "post-commit" {
+          // Native Git has created the commit. Capture its full identity before
+          // an original hook can move HEAD, and before later queries can fail.
+          // Receipt failure must never prevent the original hook from running.
+          script = "#!/bin/sh\n\"$GITPIER_GIT\" rev-parse --verify HEAD > \"$GITPIER_COMMIT_RECEIPT\"\n"
+            + String(script.dropFirst("#!/bin/sh\n".count))
+        }
         if name == "commit-msg" {
           script +=
             "tree=$(\"$GITPIER_GIT\" write-tree) || exit $?\n[ \"$tree\" = \"$GITPIER_TREE\" ] || { echo 'GitPier: a hook changed the staged tree; review those changes before committing.' >&2; exit 1; }\n"
@@ -837,6 +893,8 @@ public actor GitService {
             "cp \"$GITPIER_REAL_INDEX\" \"$GITPIER_CHECK_INDEX\" || exit $?\nlive=$(GIT_INDEX_FILE=\"$GITPIER_CHECK_INDEX\" \"$GITPIER_GIT\" write-tree) || exit $?\n[ \"$live\" = \"$GITPIER_LIVE_TREE\" ] || { echo 'GitPier: the real Index changed; review staged changes again.' >&2; exit 1; }\n"
           script +=
             "head=$(\"$GITPIER_GIT\" rev-parse --verify HEAD 2>/dev/null || true)\n[ \"$head\" = \"$GITPIER_HEAD\" ] || { echo 'GitPier: HEAD changed; review again.' >&2; exit 1; }\n"
+          script +=
+            "gitpier_branch=$(\"$GITPIER_GIT\" symbolic-ref --quiet HEAD 2>/dev/null)\ngitpier_branch_code=$?\ncase \"$gitpier_branch_code\" in 0|1) ;; *) exit \"$gitpier_branch_code\" ;; esac\n[ \"$gitpier_branch\" = \"$GITPIER_HEAD_REF\" ] || { echo 'GitPier: branch changed; review again.' >&2; exit 1; }\n"
           if mergeParents != nil {
             script +=
               "cmp -s \"$GITPIER_MERGE_HEAD\" \"$GITPIER_EXPECTED_MERGE_HEAD\" || { echo 'GitPier: merge parents changed; review again.' >&2; exit 1; }\n"
@@ -850,23 +908,83 @@ public actor GitService {
         "GIT_INDEX_FILE": isolatedIndex.path, "GITPIER_REAL_INDEX": indexURL.path,
         "GITPIER_TREE": committedTree, "GITPIER_LIVE_TREE": liveReview.tree,
         "GITPIER_HEAD": liveReview.head ?? "", "GITPIER_GIT": gitPath,
+        "GITPIER_HEAD_REF": headReference,
         "GITPIER_CHECK_INDEX": temp.appendingPathComponent("checked-index").path,
+        "GITPIER_COMMIT_RECEIPT": receipt.path,
       ]
       if mergeParents != nil {
         env["GITPIER_MERGE_HEAD"] = try await metadataFile("MERGE_HEAD").path
         env["GITPIER_EXPECTED_MERGE_HEAD"] = expectedParents.path
       }
-      var args = ["-c", "core.hooksPath=" + hooks.path, "commit", "--file=-"]
+      // Corroborate the receipt with Git's unique abbreviation of the created
+      // object, not a later HEAD query. Preserve core.abbrev: command-line config
+      // overrides are inherited by original hooks and can change their behavior.
+      var args = ["-c", "core.hooksPath=" + hooks.path, "commit", "--no-quiet", "--file=-"]
       if mergeParents != nil { args.append("--cleanup=strip") }
       if amend { args.append("--amend") }
-      let result = try await read(args, input: Data(message.utf8), environment: env)
-      let hash = try await read(["rev-parse", "HEAD"]).text.trimmingCharacters(
-        in: .whitespacesAndNewlines)
-      let currentTree = try await indexTree()
+      let execution: Result<CommandResult, Error>
+      let diagnostics = GitCommandDiagnosticCapture()
+      var nativeOutput: String?
+      do {
+        let result = try await read(args, input: Data(message.utf8), environment: env, allowFailure: true, timeout: timeout,
+          onStderr: { diagnostics.append($0, error: true) }, onStdout: { diagnostics.append($0, error: false) })
+        nativeOutput = result.text
+        execution = result.code == 0 ? .success(result)
+          : .failure(GitPierError.command("commit", result.code, Self.redact(result.errorText)))
+      }
+      catch { execution = .failure(error) }
+      let hash: String
+      do {
+        guard let data = try operationFile(receipt, limit: 128),
+          let value = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .newlines),
+          [40, 64].contains(value.utf8.count),
+          value.utf8.allSatisfy({ (48...57).contains($0) || (97...102).contains($0) }) else {
+          throw GitPierError.invalidInput("The native commit receipt is missing or invalid.")
+        }
+        hash = value
+      } catch {
+        // A native nonzero exit without a receipt preserves normal Hook/signing
+        // rejection. An interrupted process can already have updated the ref;
+        // neither missing output nor a deadline proves that no commit exists.
+        if case .failure(let failure) = execution {
+          let interrupted: Bool
+          switch failure {
+          case is CancellationError, GitPierError.timeout, GitPierError.outputLimit: interrupted = true
+          default: interrupted = false
+          }
+          guard interrupted else { throw failure }
+          throw CommitCompletionUnverified(diagnostic: Self.redact(
+            diagnostics.text + "\n" + failure.localizedDescription + "\n" + error.localizedDescription))
+        }
+        let result = try execution.get()
+        throw CommitCompletionUnverified(diagnostic: Self.redact(
+          result.text + result.errorText + "\n" + error.localizedDescription))
+      }
+      let summary = try NSRegularExpression(
+        pattern: #"(?m)^\[[^\r\n]*? ([0-9a-f]{4,64})\](?: |$)"#)
+      let text = nativeOutput ?? ""
+      let match = summary.matches(in: text, range: NSRange(text.startIndex..., in: text)).last
+      guard let match, let range = Range(match.range(at: 1), in: text), hash.hasPrefix(text[range]) else {
+        var diagnostic = "The native commit summary and completion receipt could not be matched."
+        diagnostic += "\n" + diagnostics.text
+        if case .failure(let error) = execution { diagnostic += "\n" + error.localizedDescription }
+        throw CommitCompletionUnverified(diagnostic: Self.redact(diagnostic))
+      }
+      var output = "", warnings: [String] = []
+      switch execution {
+      case .success(let result): output = result.text + result.errorText
+      case .failure(let error): warnings.append(error.localizedDescription)
+      }
+      var currentTree: String?
+      do { currentTree = try await indexTree() }
+      catch { warnings.append(error.localizedDescription) }
+      let warning = warnings.isEmpty ? nil : Self.redact(warnings.joined(separator: "\n"))
+      if let warning { output += "\n" + warning }
       // The live Index is never replaced. It already contains the committed tree; external additions remain staged.
       return CommitResult(
-        hash: hash, output: result.text + result.errorText,
-        indexChangedDuringCommit: currentTree != liveReview.tree)
+        hash: hash, output: Self.redact(output),
+        indexChangedDuringCommit: currentTree != liveReview.tree || warning != nil,
+        observationWarning: warning)
     }
   }
   public func patch(
@@ -2399,6 +2517,7 @@ public actor GitService {
   /// No stash, rebase, force push or automatic conflict resolution is performed.
   public func mergeAndPush(
     _ rejection: PushRejection,
+    observer: PushRecoveryObserver? = nil,
     phase: (@Sendable (PushRecoveryPhase) async -> (@Sendable (GitTransferProgress) -> Void)?)? = nil
   ) async throws -> String {
     try await writing {
@@ -2418,13 +2537,15 @@ public actor GitService {
       }
       try Task.checkCancellation()
       let current = try await status()
-      guard current.branch == String(rejection.localReference.dropFirst("refs/heads/".count)),
+      guard let mergedHead = current.head,
+        current.branch == String(rejection.localReference.dropFirst("refs/heads/".count)),
         current.operation == nil, !current.files.contains(where: \.isConflicted),
-        try await read(["merge-base", "--is-ancestor", rejection.localHead, "HEAD"], allowFailure: true).code == 0,
-        try await read(["merge-base", "--is-ancestor", remoteHead, "HEAD"], allowFailure: true).code == 0
+        try await read(["merge-base", "--is-ancestor", rejection.localHead, mergedHead], allowFailure: true).code == 0,
+        try await read(["merge-base", "--is-ancestor", remoteHead, mergedHead], allowFailure: true).code == 0
       else { throw GitPierError.invalidInput("The branch changed during merge. Review it before pushing.") }
+      await observer?.localCommit(mergedHead)
       let pushProgress = await phase?(.pushing)
-      let pushed = try await pushConfirmedTarget(rejection, progress: pushProgress)
+      let pushed = try await pushConfirmedTarget(rejection, expectedHead: mergedHead, progress: pushProgress)
       return Self.redact(
         fetched.text + fetched.errorText + merged.text + merged.errorText + pushed.text
           + pushed.errorText)
@@ -2432,6 +2553,7 @@ public actor GitService {
   }
   public func pushCompletedMerge(
     _ rejection: PushRejection, head: String,
+    observer: PushRecoveryObserver? = nil,
     progress: (@Sendable (GitTransferProgress) -> Void)? = nil
   ) async throws -> String {
     try await writing {
@@ -2440,12 +2562,13 @@ public actor GitService {
         current.branch == String(rejection.localReference.dropFirst("refs/heads/".count)),
         !current.files.contains(where: \.isConflicted)
       else { throw GitPierError.conflictChanged }
-      let result = try await pushConfirmedTarget(rejection, progress: progress)
+      await observer?.localCommit(head)
+      let result = try await pushConfirmedTarget(rejection, expectedHead: head, progress: progress)
       return Self.redact(result.text + result.errorText)
     }
   }
   private func pushConfirmedTarget(
-    _ rejection: PushRejection, progress: (@Sendable (GitTransferProgress) -> Void)?
+    _ rejection: PushRejection, expectedHead: String, progress: (@Sendable (GitTransferProgress) -> Void)?
   ) async throws -> CommandResult {
     var destination = rejection.remoteURL
     var pushArguments = ["push", "--progress", "--porcelain"]
@@ -2472,16 +2595,30 @@ public actor GitService {
     let reference = try await read(["symbolic-ref", "-q", "HEAD"], allowFailure: true).text
       .trimmingCharacters(in: .newlines)
     let head = try await read(["rev-parse", "HEAD"]).text.trimmingCharacters(in: .newlines)
-    let pushed = try await read(
-      pushArguments + ["--", destination, "HEAD:" + rejection.remoteReference],
-      allowFailure: true, onStderr: { bytes in pushDecoder?.feed(bytes) })
+    guard reference == rejection.localReference, head == expectedHead else {
+      throw GitPierError.invalidInput("The push source changed after merge verification. Review it before pushing.")
+    }
+    let diagnostics = GitCommandDiagnosticCapture()
+    let pushed: CommandResult
+    do {
+      pushed = try await read(
+        pushArguments + ["--", destination, "HEAD:" + rejection.remoteReference], allowFailure: true,
+        onStderr: { bytes in diagnostics.append(bytes, error: true); pushDecoder?.feed(bytes) },
+        onStdout: { diagnostics.append($0, error: false) })
+    } catch {
+      throw PushResultUnverified(localHead: head,
+        diagnostic: Self.redact(diagnostics.text + "\n" + error.localizedDescription),
+        cancelled: error is CancellationError)
+    }
     if pushed.code != 0 {
       if let updated = Self.pushRejection(
         pushed, localReference: reference, localHead: head, upstreamRemote: rejection.upstreamRemote
       ) {
         throw updated
       }
-      throw GitPierError.command("push", pushed.code, Self.redact(pushed.text + pushed.errorText))
+      throw PushResultUnverified(localHead: head,
+        diagnostic: Self.redact(GitPierError.command("push", pushed.code, pushed.text + pushed.errorText).localizedDescription),
+        cancelled: false)
     }
     return pushed
   }
