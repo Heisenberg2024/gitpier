@@ -2,7 +2,10 @@
 
 ## Unreleased
 
-### v2.0.1 — Stability & Performance (locally validated, unreleased)
+## 2.0.1 — 2026-11-02 (34)
+
+- Published as [Latest](https://github.com/Heisenberg2024/gitpier/releases/tag/v2.0.1) from `0c3bcd9` after independent source review, same-source full Swift 6.1.2 CI and successful Tag CI reusing that validation. Production Sparkle signatures, three stable-ID asset readbacks and six anonymous release/download/Feed endpoints verified; see [publication evidence](docs/development.md#v201-publication--2026-11-02).
+- 已从`0c3bcd9`正式发布为[Latest](https://github.com/Heisenberg2024/gitpier/releases/tag/v2.0.1)；独立源码复核、同源Swift 6.1.2完整CI及复用该验证的Tag CI通过，生产更新签名、三附件回读与六项匿名页面／下载／Feed均已核验。
 
 - Remove two unused common-directory queries from a complete Index snapshot (10 → 8 Git launches), retaining both native status scans, fresh worktree directory resolution and final Index-byte/HEAD/branch/operation/file validation.
 - Reject same-object branch switches made by original commit hooks, and forward other executable native hooks through the private directory so reference-transaction policies can still veto a commit. Preserve hook arguments, stdin, exit status and quoted/newline paths.

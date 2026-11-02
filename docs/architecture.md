@@ -1,8 +1,8 @@
 # Architecture and security boundaries
 
-Current stable: [v2.0.0 (33)](https://github.com/Heisenberg2024/gitpier/releases/tag/v2.0.0), published on 2026-11-02. Coherent Index observations, retained local commit results and bounded diagnostics reuse the existing Git queues, native UI and update trust chain. See [publication validation and limits](development.md#v200-publication--2026-11-02). 当前稳定版为 v2.0.0（33），一致审查、操作结果与诊断继续复用既有 Git 队列、原生界面和更新信任边界。
+Current stable: [v2.0.1 (34)](https://github.com/Heisenberg2024/gitpier/releases/tag/v2.0.1), published on 2026-11-02. Coherent Index observations, retained local commit results and bounded diagnostics reuse the existing Git queues, native UI and update trust chain. See [publication validation and limits](development.md#v201-publication--2026-11-02). 当前稳定版为 v2.0.1（34），一致审查、操作结果与诊断继续复用既有 Git 队列、原生界面和更新信任边界。
 
-## Maintenance observations (v2.0.1 local, unreleased)
+## Maintenance observations (v2.0.1 released)
 
 `status(localOnly:)` now resolves only `--absolute-git-dir`, freshly for every call. Consumers requiring both worktree/common directories keep `metadataDirectories()`. A complete snapshot uses eight Git launches instead of ten in the deterministic fixture, with the same two porcelain observations and final raw Index-byte/HEAD/branch/native-operation/file checks. No mutable-state or directory cache is introduced.
 

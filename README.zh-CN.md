@@ -12,6 +12,12 @@ GitPier 将仓库管理、变更审查、提交和集成终端汇集在一个专
 
 ![提交工作台：已跟踪与未跟踪变更、双栏 Diff 和终端](docs/screenshots/commit-workspace.png)
 
+## 稳定性与性能 — v2.0.1
+
+[v2.0.1（34）](https://github.com/Heisenberg2024/gitpier/releases/tag/v2.0.1)现已正式发布为 **Latest**。仓库刷新减少重复Git查询并保留最终一致性校验；提交中断时保留诊断，完成状态不明则提示核实；恢复推送保留原提交和目标，不重复Commit或Merge。
+
+Universal安装包支持macOS 14及以上。详见[验收与未验证边界](docs/v2.0.1-testing.md)和[发布证据](docs/development.md#v201-publication--2026-11-02)。Developer ID签名与Apple公证继续作为后续独立工作。
+
 ## 产品质量与原生体验 — v2.0.0
 
 v2.0.0 加强 Index 审查快照的一致性，在后续推送失败或取消时保留本地提交成功结果，并复用现有工作空间预算限制快速切换 Diff 的并发。原生体验精修包括历史多选与键盘导航、明确的操作状态、每次操作的诊断详情，以及按界面语言显示日期；Dashboard 调度使用可复现的大规模数据测量。

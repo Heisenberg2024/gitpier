@@ -2,7 +2,7 @@
 
 **Native Git Client for macOS** · *All Your Repositories. One Workspace.*
 
-Reviewed: 2026-11-02. Current stable: [v2.0.0 (33)](https://github.com/Heisenberg2024/gitpier/releases/tag/v2.0.0). Current maintenance work: **v2.0.1 — Stability & Performance**. Trusted Distribution remains a separate future milestone with no release date.
+Reviewed: 2026-11-02. Current stable: [v2.0.1 (34)](https://github.com/Heisenberg2024/gitpier/releases/tag/v2.0.1). The v2.0.1 Stability & Performance maintenance release is published. Trusted Distribution remains a separate future milestone with no release date.
 
 GitPier develops the existing SwiftUI/AppKit workspace through focused, verifiable improvements. Milestones describe scope and acceptance conditions; they do not promise release dates. / GitPier 以现有原生工作空间为基础，持续改进可靠性、交互与性能；路线图说明范围和验收条件，不承诺发布日期。
 
@@ -21,6 +21,7 @@ GitPier develops the existing SwiftUI/AppKit workspace through focused, verifiab
 | [v1.8.0](https://github.com/Heisenberg2024/gitpier/releases/tag/v1.8.0) | Worktree Task Workspaces and optional Codex CLI through the existing user environment. 任务工作树与可选 Codex CLI。 |
 | [v1.8.1](https://github.com/Heisenberg2024/gitpier/releases/tag/v1.8.1) | Large staged assets, native file scrolling and merge/mainline reliability. 大资源、原生多文件滚动与合并可靠性。 |
 | [v1.9.0](https://github.com/Heisenberg2024/gitpier/releases/tag/v1.9.0) | Ordered Cherry-pick, unified Revert recovery, six-state Branch Health and large-history graph optimization. 有序重放、统一撤销恢复、分支健康与历史图优化。 |
+| [v2.0.1](https://github.com/Heisenberg2024/gitpier/releases/tag/v2.0.1) | Reduced repeated snapshot queries; interrupted-commit safeguards, retained recovery Push targets and explicit unknown results. 减少重复快照查询，加固提交中断与恢复推送。 |
 | [v2.0.0](https://github.com/Heisenberg2024/gitpier/releases/tag/v2.0.0) | Coherent Index review, retained local commit results, bounded Diff reads, operation diagnostics, native History/locale refinements and measured scheduling. 一致审查、部分成功反馈、有界 Diff、诊断和原生体验。 |
 
 Maintenance releases and exact changes are recorded in the [changelog](CHANGELOG.md). Released status does not imply all hardware, private accounts or distribution paths have been validated. / 维护版及具体差异见变更记录；已发布状态不等同于全部硬件、私有账号与分发路径均已验收。
@@ -43,7 +44,7 @@ Release acceptance includes independent source review, full same-source Swift 6.
 
 ## v2.0.1 — Stability & Performance
 
-**Local automated validation and independent source review complete; same-source CI pending / 本地自动化验证与独立源码复核完成，同源 CI 待验.** Reduce repeated repository queries while retaining coherent review and external-change detection. Preserve successful local commits through observation failures and distinguish unverified remote results; exercise large histories, multiple repositories/worktrees, synthetic authentication and native lifecycle recovery with reproducible measurements. No new Git engine, hosting platform or UI redesign. See the [maintenance plan](docs/v2.0.1-plan.md) and [executed evidence / remaining gates](docs/v2.0.1-testing.md).
+**Released / 已发布：2026-11-02，2.0.1（34）.** [Release](https://github.com/Heisenberg2024/gitpier/releases/tag/v2.0.1) · [Publication evidence](docs/development.md#v201-publication--2026-11-02). Independent source review, full same-source CI, Tag CI reuse and signed Universal assets passed; live-service/hardware/long-soak limits remain explicit. / 独立复核、同源完整CI、Tag CI复用及已签名通用附件通过；真实服务／硬件／长时边界保留。 Reduce repeated repository queries while retaining coherent review and external-change detection. Preserve successful local commits through observation failures and distinguish unverified remote results; exercise large histories, multiple repositories/worktrees, synthetic authentication and native lifecycle recovery with reproducible measurements. No new Git engine, hosting platform or UI redesign. See the [maintenance plan](docs/v2.0.1-plan.md) and [executed evidence / remaining gates](docs/v2.0.1-testing.md).
 
 减少重复查询但保留完整一致性校验；完善提交后的部分成功反馈与远端未知结果，量化验收大历史、多仓库/工作树、隔离认证及原生生命周期。开发、本地验收、独立审核、CI 与发布分别记录；版本准备不代表发布授权。
 

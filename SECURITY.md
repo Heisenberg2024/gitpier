@@ -1,5 +1,11 @@
 # Security & privacy
 
+## v2.0.1 interrupted native operations
+
+Additional commit/recovery-Push diagnostic capture is transient and bounded to64KiB per stdout/stderr stream, then redacted for presentation. Missing commit-completion proof after timeout/cancellation requires History/Reflog verification; attempted Push errors can require remote verification. Neither path automatically repeats a write. Existing session-history limits below still apply; diagnostics can contain private repository context and should be reviewed before sharing. No credential backend, update trust or durable journal change.
+
+简体中文：提交／恢复推送的额外诊断捕获仅驻留内存，每个stdout／stderr流最多64KiB，展示前脱敏；中断且无提交完成证据时核查历史／引用日志，推送未知时核查远端，不自动重试写入。下述会话历史上限继续生效，分享前仍需人工核对私有上下文；不改凭证后端、更新信任或持久日志。
+
 ## v2.0.0 diagnostic retention
 
 Operations Center may retain redacted user-facing failure details in session memory: at most 4,096 characters and 16 KiB UTF-8 after truncation. The shared output redactor covers URL credentials/query secrets, common authentication headers and named token/password fields. No credential backend or durable Review Journal format changes. Unknown secret formats and private repository/path context can still require manual review before sharing a diagnostic; redaction is not a guarantee that every sensitive value is detected. See [operation history](docs/operations-center.md).

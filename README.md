@@ -12,6 +12,12 @@ GitPier brings repository management, change review, commits, and an integrated 
 
 ![Commit workspace with tracked and untracked changes, side-by-side Diff, and terminal](docs/screenshots/commit-workspace.png)
 
+## Stability and performance — v2.0.1
+
+[v2.0.1 (34)](https://github.com/Heisenberg2024/gitpier/releases/tag/v2.0.1) is the current **Latest** release. Repository refresh avoids repeated Git queries while retaining final consistency checks. Interrupted commits retain their diagnostics and require verification when completion is uncertain; recovery Push keeps its commit and destination without repeating Commit or Merge.
+
+The Universal installer supports macOS 14 or later. See [release validation and remaining limits](docs/v2.0.1-testing.md) and [publication evidence](docs/development.md#v201-publication--2026-11-02). Developer ID signing and Apple notarization remain separate future work.
+
 ## Product quality and native experience — v2.0.0
 
 v2.0.0 strengthens reviewed Index snapshots, preserves local Commit success through later Push failures or cancellation, and bounds rapid Diff reads using the existing workspace budget. Native refinements cover History selection and keyboard navigation, meaningful operation states, per-operation diagnostics and language-aware dates. Dashboard scheduling is measured against reproducible large inventories.
