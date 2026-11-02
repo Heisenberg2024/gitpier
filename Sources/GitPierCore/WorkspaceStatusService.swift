@@ -61,16 +61,16 @@ public actor WorkspaceStatusService {
     }
     for record in records {
       if let old = entries[record.id], old.record.path != record.path {
-        invalidate([record.id]); entries[record.id] = WorkspaceEntry(record: record)
+        invalidateEntries([record.id]); entries[record.id] = WorkspaceEntry(record: record)
       } else if entries[record.id] != nil {
         entries[record.id]?.record = record
       } else { entries[record.id] = WorkspaceEntry(record: record) }
     }
-    publish(); pump()
+    pump()
   }
   public func request(_ ids: [UUID], priority: Priority = .background, force: Bool = false) {
     guard !stopped else { return }
-    if force { invalidate(ids) }
+    if force { invalidateEntries(ids) }
     for id in ids {
       guard let entry = entries[id] else { continue }
       if var request = pending[id] {
@@ -86,15 +86,20 @@ public actor WorkspaceStatusService {
       pending[id] = Request(record: entry.record, generation: generation, priority: priority, order: sequence)
       entries[id]?.state = .queued
     }
-    publish(); pump()
+    // Admission and invalidation are one synchronous actor turn. Publish its
+    // final state in pump instead of making each transient state render.
+    pump()
   }
   public func invalidate(_ ids: [UUID]) {
+    invalidateEntries(ids)
+    publish()
+  }
+  private func invalidateEntries(_ ids: [UUID]) {
     for id in ids where entries[id] != nil {
       generations[id] = UUID(); running[id]?.task.cancel(); pending[id] = nil
       let state: WorkspaceCollectionState = entries[id]?.snapshot == nil ? .unscanned : .stale
       entries[id]?.state = state
     }
-    publish()
   }
   private func pump() {
     while !stopped && running.count < concurrency {

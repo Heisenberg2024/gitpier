@@ -45,6 +45,106 @@ final class PushVerificationTests: XCTestCase {
     try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: url.path)
     return url
   }
+  func testNetworkPushResolvesEachSafetyPhaseTargetOnlyOnce() async throws {
+    let log = fixture.appendingPathComponent("checkpoint-commands")
+    let path = try wrapper("printf '%s\\n' \"$*\" >> '\(log.path)'")
+    let service = GitService(root: root, gitPath: path.path), probe = PushCheckpointProbe()
+    _ = try await service.network("push", observer: PushRecoveryObserver(localCommit: { _ in },
+      checkpoint: { await probe.record($0) }))
+    let captured = await probe.last()
+    XCTAssertNotNil(captured, "Do not meet the process budget by skipping checkpoint capture")
+    let commands = try String(contentsOf: log, encoding: .utf8).components(separatedBy: "\n")
+    XCTAssertEqual(commands.filter { $0.contains("remote get-url --push --all -- origin") }.count, 3,
+      "Capture, completion of capture and post-observer validation each resolve a fresh target once")
+    XCTAssertEqual(commands.filter { $0.contains("ls-remote --get-url --") }.count, 3,
+      "Every existing boundary still checks native URL re-expansion")
+    XCTAssertEqual(commands.filter { $0.contains("config --null --get-regexp") && $0.contains("credential\\.") }.count, 3,
+      "Every existing boundary still reads a fresh complete safety fingerprint")
+    XCTAssertEqual(commands.filter { $0.contains("config --null --get-all remote.origin.") }.count, 0,
+      "Use the already read configuration rather than starting more identical readers")
+    XCTAssertEqual(commands.filter { $0.contains("push --progress --porcelain") }.count, 1)
+  }
+  func testPostCheckpointObserverAuthenticationChangeStillPreventsPush() async throws {
+    try await commit("must not push after reconfiguration")
+    let directory = try XCTUnwrap(root), attempted = fixture.appendingPathComponent("unexpected-push")
+    let path = try wrapper("case \" $* \" in *\" push \"*) touch '\(attempted.path)';; esac")
+    let service = GitService(root: directory, gitPath: path.path)
+    let before = try await raw(["--git-dir=" + remote.path, "rev-parse", "refs/heads/main"]).stdout
+    let observer = PushRecoveryObserver(localCommit: { _ in }, checkpoint: { _ in
+      _ = try? await ProcessRunner().run(executable: "/usr/bin/git",
+        arguments: ["config", "http.extraHeader", "X-Fixture-Account: replaced"], directory: directory,
+        environment: ["GIT_CONFIG_NOSYSTEM": "1", "GIT_CONFIG_GLOBAL": "/dev/null"])
+    })
+    do { _ = try await service.network("push", observer: observer); XCTFail("Revalidate after the observer before writing") }
+    catch { XCTAssertTrue(error.localizedDescription.contains("changed")) }
+    XCTAssertFalse(FileManager.default.fileExists(atPath: attempted.path))
+    let after = try await raw(["--git-dir=" + remote.path, "rev-parse", "refs/heads/main"]).stdout
+    XCTAssertEqual(after, before)
+  }
+  func testEmptyPushURLResetKeepsNativeSingleDestination() async throws {
+    try await raw(["config", "--add", "remote.origin.pushurl", ""])
+    try await raw(["config", "--add", "remote.origin.pushurl", remote.path])
+    let native = try await raw(["remote", "get-url", "--push", "--all", "--", "origin"])
+    XCTAssertEqual(native.text, remote.path + "\n", "Git treats the empty URL as a list reset")
+    let target = try await checkpoint(), observation = try await git.verifyPush(target)
+    XCTAssertTrue(observation.confirmed)
+  }
+  func testMultipleEffectivePushDestinationsRemainManual() async throws {
+    try await raw(["config", "--add", "remote.origin.pushurl", remote.path])
+    try await raw(["config", "--add", "remote.origin.pushurl", fixture.appendingPathComponent("other.git").path])
+    let target = try await git.reviewPushCheckpoint()
+    XCTAssertNil(target)
+  }
+  func testTransportChangedDuringSourceStatusCannotCreateCheckpoint() async throws {
+    let path = try wrapper("""
+      case " $* " in
+        *" status "*)
+          /usr/bin/git "$@"; code=$?
+          /usr/bin/git config remote.origin.uploadpack /usr/bin/false
+          exit "$code";;
+      esac
+      """)
+    let service = GitService(root: root, gitPath: path.path)
+    do {
+      let target = try await service.reviewPushCheckpoint()
+      XCTAssertNil(target, "Transport validation must observe configuration after source status")
+    } catch { XCTAssertTrue(error.localizedDescription.contains("changed")) }
+  }
+  func testTransportChangedDuringFinalRemoteResolutionPreventsNativePush() async throws {
+    try await commit("must not use a newly configured transport")
+    let armed = fixture.appendingPathComponent("after-checkpoint")
+    let mutated = fixture.appendingPathComponent("transport-changed")
+    let attempted = fixture.appendingPathComponent("unexpected-push")
+    let path = try wrapper("""
+      case "$*" in
+        "--no-pager remote")
+          /usr/bin/git "$@"; code=$?
+          if [ -f '\(armed.path)' ]; then
+            /usr/bin/git config remote.origin.receivepack /usr/bin/false || exit $?
+            touch '\(mutated.path)'
+          fi
+          exit "$code";;
+        *" push "*) touch '\(attempted.path)';;
+      esac
+      """)
+    let service = GitService(root: root, gitPath: path.path)
+    let observer = PushRecoveryObserver(localCommit: { _ in }, checkpoint: { _ in
+      try? Data().write(to: armed)
+    })
+    do { _ = try await service.network("push", observer: observer); XCTFail("The final configuration check must reject the new transport") }
+    catch { XCTAssertTrue(error.localizedDescription.contains("changed")) }
+    XCTAssertTrue(FileManager.default.fileExists(atPath: mutated.path), "The final native remote query must inject the change")
+    XCTAssertFalse(FileManager.default.fileExists(atPath: attempted.path), "Do not start Push with a newly configured transport")
+  }
+  func testMixedCaseRemoteAndMultipleFetchURLsKeepExactPushDestination() async throws {
+    try await raw(["remote", "rename", "origin", "OriginUpper"])
+    try await raw(["config", "--add", "remote.OriginUpper.url", fixture.appendingPathComponent("unused-fetch.git").path])
+    try await raw(["config", "remote.OriginUpper.pushurl", remote.path])
+    let target = try await checkpoint()
+    XCTAssertEqual(target.remote, "OriginUpper")
+    let result = try await git.verifyPush(target)
+    XCTAssertTrue(result.confirmed)
+  }
   func testExactRemoteCheckpointIsConfirmedWithoutChangingLocalGitState() async throws {
     let target = try await checkpoint()
     try Data("staged\n".utf8).write(to: root.appendingPathComponent("tracked.txt")); try await raw(["add", "tracked.txt"])

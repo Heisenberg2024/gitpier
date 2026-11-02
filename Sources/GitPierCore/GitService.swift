@@ -2540,26 +2540,78 @@ public actor GitService {
       return Self.redact(result.text + result.errorText)
     }
   }
-  private func pushConfigurationIdentity(explicitTarget: Bool = false) async throws -> Data {
+  /// One native configuration read within a validation phase. Only its digest
+  /// survives in the checkpoint; URL values are not cached across phases.
+  private struct PushConfigurationRead: Sendable {
+    let identity: Data
+    private let values: [String: [String?]]
+    init(bytes: Data, profile: Data) throws {
+      guard bytes.isEmpty || bytes.last == 0 else { throw GitPierError.indexChanged }
+      identity = Data(SHA256.hash(data: bytes + profile))
+      var parsed: [String: [String?]] = [:]
+      for record in bytes.split(separator: 0) {
+        let separator = record.firstIndex(of: 10)
+        let keyBytes = separator.map { record[..<$0] } ?? record[...]
+        guard let key = String(data: keyBytes, encoding: .utf8), !key.isEmpty else {
+          throw GitPierError.indexChanged
+        }
+        // Authentication values contribute to the digest, but are not retained
+        // in the parsed observation used by the destination checks.
+        if key.hasPrefix("remote.") || key.hasPrefix("push.") {
+          let value = separator.map { String(decoding: record[record.index(after: $0)...], as: UTF8.self) }
+          parsed[key, default: []].append(value)
+        }
+      }
+      values = parsed
+    }
+    func has(_ key: String) -> Bool { values[key] != nil }
+    func last(_ key: String) -> String? { values[key]?.last ?? nil }
+    func remoteConfiguration(_ name: String) -> ([String], [String]) {
+      func urls(_ suffix: String) -> [String] {
+        (values["remote." + name + "." + suffix] ?? []).compactMap { $0 }.filter { !$0.isEmpty }
+      }
+      return (urls("url"), urls("pushurl"))
+    }
+    func destinationIdentity(_ remote: String, effective: Data) -> String {
+      GitService.remoteConfigurationID(remoteConfiguration(remote))
+        + ":" + SHA256.hash(data: effective).map { String(format: "%02x", $0) }.joined()
+    }
+    func hasCustomTransport(_ remote: String) -> Bool {
+      ["vcs", "receivepack", "uploadpack", "serveroption", "proxy", "proxyauthmethod"].contains {
+        has("remote." + remote + "." + $0)
+      }
+    }
+  }
+  private func readPushConfiguration(explicitTarget: Bool = false) async throws -> PushConfigurationRead {
     let pattern = "^(" + (explicitTarget ? "" : "branch\\.|")
       + "remote\\.|push\\.|url\\.|credential\\.|http\\.|ssh\\.|core\\.(sshcommand|askpass|gitproxy)$)"
     let value = try await read(["config", "--null", "--get-regexp", pattern], allowFailure: true)
     guard value.code == 0 || value.code == 1 else { throw GitPierError.indexChanged }
     let profile = Data((authEnvironment["GITPIER_AUTH_IDENTITY"] ?? "").utf8)
-    return Data(SHA256.hash(data: value.stdout + profile))
+    return try PushConfigurationRead(bytes: value.stdout, profile: profile)
+  }
+  private func readPushCheckpointDestination(_ remote: String) async throws -> (bytes: Data, url: String)? {
+    let effective = try await read(["remote", "get-url", "--push", "--all", "--", remote]).stdout
+    // Git resolves empty URL list resets itself. Require exactly one complete
+    // native destination; ambiguous or malformed output stays manual.
+    guard effective.last == 10, effective.filter({ $0 == 10 }).count == 1,
+      !effective.contains(0), let text = String(data: effective, encoding: .utf8), text.count > 1 else {
+      return nil
+    }
+    return (effective, String(text.dropLast()))
   }
   private func capturePushCheckpoint(localReference: String, localHead: String, remote: String?, branch: String?,
     remoteReference: String? = nil) async throws -> PushCheckpoint? {
     guard localReference.hasPrefix("refs/heads/"), [40, 64].contains(localHead.count),
       localHead.allSatisfy(\.isHexDigit) else { return nil }
     let explicitTarget = remote != nil && (branch != nil || remoteReference != nil)
-    let configuration = try await pushConfigurationIdentity(explicitTarget: explicitTarget)
+    let configuration = try await readPushConfiguration(explicitTarget: explicitTarget)
     let name: String, destination: String
     if let remote, let remoteReference { name = remote; destination = remoteReference }
     else if let remote, let branch { name = remote; destination = "refs/heads/" + branch }
     else {
       guard remote == nil, branch == nil else { return nil }
-      let policy = try await read(["config", "--get", "push.default"], allowFailure: true).text.trimmingCharacters(in: .newlines)
+      let policy = (configuration.last("push.default") ?? "").trimmingCharacters(in: .newlines)
       guard ["", "simple", "current", "upstream"].contains(policy) else { return nil }
       let fields = try await contextWorkflowTracking(String(localReference.dropFirst(11)))
       guard fields.count == 6, !fields[4].isEmpty else { return nil }
@@ -2574,8 +2626,7 @@ public actor GitService {
           policy == "upstream" || fields[3] == localReference else { return nil }
         destination = fields[3]
       }
-      let custom = try await read(["config", "--null", "--get-all", "remote." + name + ".push"], allowFailure: true)
-      guard custom.code == 1, custom.stdout.isEmpty else { return nil }
+      guard !configuration.has("remote." + name + ".push") else { return nil }
     }
     guard !name.isEmpty, destination.hasPrefix("refs/heads/") else { return nil }
     try InputValidation.reference(name)
@@ -2584,19 +2635,18 @@ public actor GitService {
       let value = try await read(["config", "--bool", "--get", key], allowFailure: true)
       guard value.code == 1 || value.code == 0 && value.text.trimmingCharacters(in: .newlines) == "false" else { return nil }
     }
-    let recurse = try await read(["config", "--get", "push.recurseSubmodules"], allowFailure: true).text.trimmingCharacters(in: .newlines)
+    let recurse = (configuration.last("push.recursesubmodules") ?? "").trimmingCharacters(in: .newlines)
     guard ["", "no", "check"].contains(recurse) else { return nil }
     try await validateWorkspaceRoot()
     let directories = try await metadataDirectories().map { $0.resolvingSymlinksInPath().path }
     guard let gitDirectory = directories.first, let common = directories.last else { return nil }
     let identities = try [root.path, gitDirectory, common].map(TaskDirectoryIdentity.read)
-    let identity = try await forceDestinationIdentity(name)
-    let urls = try await read(["remote", "get-url", "--push", "--all", "--", name]).text.split(separator: "\n").map(String.init)
-    guard urls.count == 1, let url = urls.first,
-      try await standardPushVerificationTransport(name, url: url) else { return nil }
+    guard !configuration.hasCustomTransport(name), let target = try await readPushCheckpointDestination(name),
+      try await standardPushVerificationTransport(name, url: target.url) else { return nil }
     let checkpoint = PushCheckpoint(gitExecutable: gitPath, workingTree: root.path, gitDirectory: gitDirectory, commonDirectory: common,
       localReference: localReference, localHead: localHead, remote: name, remoteReference: destination,
-      directoryIdentities: identities, configurationIdentity: configuration, destinationIdentity: identity, explicitTarget: explicitTarget)
+      directoryIdentities: identities, configurationIdentity: configuration.identity,
+      destinationIdentity: configuration.destinationIdentity(name, effective: target.bytes), explicitTarget: explicitTarget)
     _ = try await validatePushCheckpoint(checkpoint, requireSource: true)
     return checkpoint
   }
@@ -2609,10 +2659,6 @@ public actor GitService {
       !["https", "http", "ssh", "git", "file", "git+ssh", "ssh+git"].contains(String(url[..<separator.lowerBound])) { return false }
     let names = try await read(["remote"], limit: 256 * 1024).text.split(separator: "\n").map(String.init)
     guard !names.contains(url) else { return false }
-    let pattern = "^remote\\." + NSRegularExpression.escapedPattern(for: remote)
-      + "\\.(vcs|receivepack|uploadpack|serveroption|proxy|proxyauthmethod)$"
-    let custom = try await read(["config", "--null", "--get-regexp", pattern], allowFailure: true)
-    guard custom.code == 1, custom.stdout.isEmpty else { return false }
     let resolved = try await read(["ls-remote", "--get-url", "--", url], limit: 256 * 1024)
     // --get-url is local configuration resolution only; it never contacts a server.
     return String(data: resolved.stdout, encoding: .utf8) == url + "\n"
@@ -2623,19 +2669,22 @@ public actor GitService {
     try await validateWorkspaceRoot()
     let directories = try await metadataDirectories().map { $0.resolvingSymlinksInPath().path }
     guard directories.first == checkpoint.gitDirectory, directories.last == checkpoint.commonDirectory,
-      try [root.path, checkpoint.gitDirectory, checkpoint.commonDirectory].map(TaskDirectoryIdentity.read) == checkpoint.directoryIdentities,
-      try await pushConfigurationIdentity(explicitTarget: checkpoint.explicitTarget) == checkpoint.configurationIdentity,
-      try await forceDestinationIdentity(checkpoint.remote) == checkpoint.destinationIdentity else { throw GitPierError.indexChanged }
+      try [root.path, checkpoint.gitDirectory, checkpoint.commonDirectory].map(TaskDirectoryIdentity.read) == checkpoint.directoryIdentities else { throw GitPierError.indexChanged }
     if requireSource {
       let state = try await status(localOnly: true)
       guard state.head == checkpoint.localHead,
         state.branch == String(checkpoint.localReference.dropFirst(11)), state.operation == nil,
         !state.files.contains(where: \.isConflicted) else { throw GitPierError.indexChanged }
     }
-    let urls = try await read(["remote", "get-url", "--push", "--all", "--", checkpoint.remote]).text.split(separator: "\n").map(String.init)
-    guard urls.count == 1, let url = urls.first, !url.isEmpty else { throw GitPierError.indexChanged }
-    guard try await standardPushVerificationTransport(checkpoint.remote, url: url) else { throw GitPierError.indexChanged }
-    return url
+    guard let target = try await readPushCheckpointDestination(checkpoint.remote),
+      try await standardPushVerificationTransport(checkpoint.remote, url: target.url) else { throw GitPierError.indexChanged }
+    // Read after all local source/URL/alias queries. In particular, transport
+    // changes during native remote enumeration must not escape the final gate.
+    let configuration = try await readPushConfiguration(explicitTarget: checkpoint.explicitTarget)
+    guard configuration.identity == checkpoint.configurationIdentity,
+      !configuration.hasCustomTransport(checkpoint.remote),
+      configuration.destinationIdentity(checkpoint.remote, effective: target.bytes) == checkpoint.destinationIdentity else { throw GitPierError.indexChanged }
+    return target.url
   }
   private func observePushCheckpoint(_ checkpoint: PushCheckpoint) async throws -> PushVerificationObservation {
     let url = try await validatePushCheckpoint(checkpoint, requireSource: false)

@@ -4,9 +4,16 @@ import SwiftUI
 @MainActor struct RemoteCheckText {
   let workspace: WorkspaceModel
   let id: UUID
+  let value: RemoteCheckRecord
+  let stale: Bool
+  init(workspace: WorkspaceModel, id: UUID) {
+    self.workspace = workspace; self.id = id
+    // This presentation is constructed for each render. Resolving a record
+    // hashes its target; reuse that current value throughout the render.
+    value = workspace.remoteCheck(id)
+    stale = value.isStale(interval: workspace.remoteInterval(id))
+  }
   var store: AppStore { workspace.store }
-  var value: RemoteCheckRecord { workspace.remoteCheck(id) }
-  var stale: Bool { value.isStale(interval: workspace.remoteInterval(id)) }
   var title: String {
     if let snapshot = workspace.entries[id]?.snapshot, snapshot.upstream == nil { return store.text("No upstream", "无上游") }
     switch value.phase {
@@ -44,6 +51,7 @@ struct RepositorySyncStatus: View {
   @ObservedObject var workspace: WorkspaceModel
   var body: some View {
     let check = RemoteCheckText(workspace: workspace, id: entry.record.id)
+    let help = check.help
     VStack(alignment: .leading, spacing: 4) {
       if let value = entry.usable {
         BranchSyncBadge(state: value.syncState, stacked: true)
@@ -58,8 +66,8 @@ struct RepositorySyncStatus: View {
           }.font(uiFont(size: 10)).foregroundStyle(check.warning ? .orange : .secondary)
         }
       } else { BranchSyncBadge(state: .unknown, stacked: true) }
-    }.font(uiFont(size: 12)).foregroundStyle(.secondary).help(check.help)
-      .accessibilityElement(children: .combine).accessibilityHint(check.help)
+    }.font(uiFont(size: 12)).foregroundStyle(.secondary).help(help)
+      .accessibilityElement(children: .combine).accessibilityHint(help)
   }
 }
 
@@ -69,6 +77,8 @@ struct RepositoryNetworkToolbar: View {
   @ObservedObject var workspace: WorkspaceModel
   var body: some View {
     let check = RemoteCheckText(workspace: workspace, id: model.record.id)
+    let help = check.help
+    let tracking = trackingHelp + "\n" + help
     let sync = BranchSyncPresentation(state: model.status.syncState, store: store)
     HStack(spacing: 12) {
       Button { model.network("fetch") } label: {
@@ -77,7 +87,7 @@ struct RepositoryNetworkToolbar: View {
           else { Image(systemName: check.warning ? "exclamationmark.triangle" : check.stale ? "clock.arrow.circlepath" : "arrow.down.to.line") }
           Text(store.text("Fetch", "获取"))
         }
-      }.accessibilityLabel(store.text("Fetch", "获取")).accessibilityValue(model.networkFetching ? store.text("Fetching", "正在获取") : check.title).help(check.help)
+      }.accessibilityLabel(store.text("Fetch", "获取")).accessibilityValue(model.networkFetching ? store.text("Fetching", "正在获取") : check.title).help(help)
       Button { model.network("pull") } label: {
         Label {
           Text(store.text("Pull", "拉取") + (model.status.behind > 0 ? " ↓\(model.status.behind)" : ""))
@@ -85,7 +95,7 @@ struct RepositoryNetworkToolbar: View {
           Image(systemName: diverged ? "arrow.triangle.branch" : "arrow.down")
             .symbolRenderingMode(.monochrome).foregroundStyle(sync.incomingColor)
         }
-      }.help(trackingHelp + "\n" + check.help)
+      }.help(tracking)
       Button {
         if model.status.upstream == nil { model.needsUpstream = true }
         else { model.network("push") }
@@ -97,7 +107,7 @@ struct RepositoryNetworkToolbar: View {
             .symbolRenderingMode(.monochrome).foregroundStyle(sync.outgoingColor)
         }
       }.disabled(model.status.operation != nil || model.status.files.contains(where: \.isConflicted))
-        .help(trackingHelp + "\n" + check.help)
+        .help(tracking)
     }.font(uiFont(size: 11)).buttonStyle(.plain).disabled(model.busy || !model.available)
   }
   private var diverged: Bool { model.status.ahead > 0 && model.status.behind > 0 }

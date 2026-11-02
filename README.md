@@ -16,7 +16,7 @@ GitPier brings repository management, change review, commits, and an integrated 
 
 The **2.1.0 (35) development candidate is unreleased**. Operations Center retains unresolved checkpoints, offers full-hash copying and History navigation, and explicitly verifies a saved single-branch Push against its original remote reference. A retry reviews and rechecks the original source/target and never creates another commit. Context advice highlights earlier unverified results.
 
-Dashboard scans reuse metadata within each collection and suppress unchanged publications. The standalone `Marketing/hero-demo/` package has been removed from the current tree. See the [development plan](docs/v2.1.0-plan.md) and [executed validation, measurements and remaining gates](docs/v2.1.0-testing.md). Stable downloads remain v2.0.1; no v2.1.0 Tag or Release has been created.
+Dashboard scans reuse metadata within each collection, coalesce refresh notifications and reuse remote-check presentation within each render. Push preflight reuses observations only within a validation phase and retains fresh checks at every boundary. The [performance follow-up](docs/v2.1.0-performance.md) records matched comparisons and their limits. The standalone `Marketing/hero-demo/` package has been removed from the current tree. See the [development plan](docs/v2.1.0-plan.md) and [executed validation, measurements and remaining gates](docs/v2.1.0-testing.md). Stable downloads remain v2.0.1; no v2.1.0 Tag or Release has been created.
 
 ## Stability and performance — v2.0.1
 

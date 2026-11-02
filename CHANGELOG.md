@@ -9,6 +9,7 @@
 - Review Push-only retries against the saved source and destination, query the remote first, skip another transfer when already confirmed, and preserve native non-fast-forward recovery. Never repeat Commit, automatically Push or use Force.
 - Add operation type symbols, captured target details, full Hash copy, History navigation and bilingual verification feedback. Context advice prioritizes unverified earlier results while preserving conflict/unfinished-operation precedence and the compact native popover.
 - Reuse current-scan common-directory/effective-URL data with directory identity revalidation, suppress no-op Dashboard publications, and use blue for the Behind metric.
+- Coalesce Dashboard refresh publications and reuse remote-check presentation per render. Batch duplicate Push configuration/URL reads within each phase, retaining fresh final configuration/transport checks and all native alias/source/directory/authentication validation; see the [performance follow-up](docs/v2.1.0-performance.md).
 - Remove the tracked standalone `Marketing/hero-demo/` tree. Preserve existing ignored Demo files outside the repository and retain native branding/resources.
 - Verification and performance evidence, including unrun external acceptance, are recorded in [v2.1.0 validation](docs/v2.1.0-testing.md). This is not a published release.
 - 未决注意事项独立于最近 100 条已完成摘要保留；按操作保存分支、工作树、本地提交及原始脱敏诊断。
@@ -16,6 +17,7 @@
 - 原目标重试须审查、重新核对来源与目标并先查询远端；已确认时不再发送，保留原生非快进恢复，不重复提交、不自动推送、不 Force。
 - 操作中心补齐类型图标、目标、完整 Hash 复制、历史入口及双语反馈；紧凑原生上下文浮层优先提示此前未确认结果，并保留冲突及未完成操作的优先级。
 - Dashboard 单次扫描复用当前公共目录及有效 URL 并复核目录身份，抑制无变化通知，落后指标使用蓝色。
+- 合并 Dashboard 刷新通知，每次渲染复用远端检查说明；合并 Push 同阶段重复配置／URL 读取，保留最终实时配置／传输校验及原生别名、来源、目录和认证校验，配对结果见性能续作。
 - 删除当前树中已跟踪的独立 Hero Demo；原忽略文件在仓库外保留，原生品牌与资源不受影响。版本验收及性能见对应记录，尚未正式发布。
 
 ## 2.0.1 — 2026-11-02 (34)

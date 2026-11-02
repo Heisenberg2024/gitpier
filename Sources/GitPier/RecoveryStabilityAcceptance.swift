@@ -74,8 +74,10 @@ extension UIAcceptance {
             /usr/bin/git "$@"
             result=$?
             if [ "$result" = 0 ] && [ -e .git/recovery-inject ]; then
+              \(cancelled ? "echo 'Synthetic recovery cancellation after remote acceptance' >&2" : "echo 'Synthetic recovery client error after remote acceptance' >&2")
+              # Publish readiness only after the required diagnostic is in the pipe.
               /usr/bin/git rev-parse HEAD > .git/recovery-accepted
-              \(cancelled ? "echo 'Synthetic recovery cancellation after remote acceptance' >&2; exec /bin/sleep 30" : "echo 'Synthetic recovery client error after remote acceptance' >&2; exit 84")
+              \(cancelled ? "exec /bin/sleep 30" : "exit 84")
             fi
             exit "$result" ;;
         esac

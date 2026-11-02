@@ -227,6 +227,30 @@ final class WorkspaceStatusTests: XCTestCase {
     let final = await service.current(); XCTAssertEqual(final[record.id]?.snapshot?.branch, "scan-2")
     let counts = await probe.values(); XCTAssertEqual(counts.1, 1)
   }
+  func testForcedRefreshKeepsCachedSnapshotAndCancelledWorkerSlotUntilExit() async {
+    let probe = SnapshotProbe(paused: true)
+    let service = WorkspaceStatusService(concurrency: 1, loader: { try await probe.load($0) })
+    await service.reconcile([record]); await service.request([record.id]); await probe.started(1)
+    await probe.release(); await service.waitUntilIdle()
+    let first = await service.current()[record.id]?.snapshot
+    XCTAssertNotNil(first)
+    await service.request([record.id], force: true); await probe.started(2)
+    await service.request([record.id], priority: .userInitiated, force: true)
+    let queued = await service.current()[record.id]
+    XCTAssertEqual(queued?.state, .queued); XCTAssertEqual(queued?.snapshot, first)
+    let blocked = await probe.values(); XCTAssertEqual(blocked.0, 2); XCTAssertEqual(blocked.1, 1)
+    await probe.release(); await probe.started(3)
+    let collecting = await service.current()[record.id]
+    XCTAssertEqual(collecting?.state, .collecting); XCTAssertEqual(collecting?.snapshot, first)
+    await probe.release(); await service.waitUntilIdle()
+    let final = await service.current()[record.id]
+    XCTAssertEqual(final?.state, .fresh); XCTAssertEqual(final?.snapshot?.branch, "scan-3")
+    let finished = await probe.values(); XCTAssertEqual(finished.1, 1)
+    await service.invalidate([record.id])
+    let invalidated = await service.current()[record.id]
+    XCTAssertEqual(invalidated?.state, .stale); XCTAssertEqual(invalidated?.snapshot, final?.snapshot)
+    await service.shutdown()
+  }
   func testRemovalAndShutdownRejectLateUncancellableResults() async {
     let probe = SnapshotProbe(paused: true)
     let service = WorkspaceStatusService(concurrency: 1, loader: { try await probe.load($0) })

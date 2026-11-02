@@ -2,7 +2,7 @@
 
 **Native Git Client for macOS** · *All Your Repositories. One Workspace.*
 
-Reviewed: 2026-11-02. Current stable: [v2.0.1 (34)](https://github.com/Heisenberg2024/gitpier/releases/tag/v2.0.1). The v2.0.1 Stability & Performance maintenance release is published. Trusted Distribution remains a separate future milestone with no release date.
+Reviewed: 2026-11-03. Current stable: [v2.0.1 (34)](https://github.com/Heisenberg2024/gitpier/releases/tag/v2.0.1). The v2.0.1 Stability & Performance maintenance release is published. Trusted Distribution remains a separate future milestone with no release date.
 
 GitPier develops the existing SwiftUI/AppKit workspace through focused, verifiable improvements. Milestones describe scope and acceptance conditions; they do not promise release dates. / GitPier 以现有原生工作空间为基础，持续改进可靠性、交互与性能；路线图说明范围和验收条件，不承诺发布日期。
 
@@ -50,7 +50,7 @@ Release acceptance includes independent source review, full same-source Swift 6.
 
 ## v2.1.0 — Native workflow refinements / 原生工作流完善
 
-**Development / Unreleased / 开发中、未发布：2.1.0（35）.** The [implementation plan](docs/v2.1.0-plan.md) covers safe branch/Demo cleanup, retained Operations Center checkpoints, explicit remote verification and reviewed Push-only retry, contextual recovery advice and measured Dashboard improvements. Actual gates, paired measurements and remaining manual/service/hardware acceptance belong to the [validation record](docs/v2.1.0-testing.md). There is no v2.1.0 Tag/Release or distribution migration. / 本次原位完善操作中心、远端核实与原目标重试、上下文恢复建议及多仓库性能，安全清理旧分支和 Demo；真实门槛、配对测量和未验范围单独记录，不代表正式发布或分发体系迁移。
+**Development / Unreleased / 开发中、未发布：2.1.0（35）.** The [implementation plan](docs/v2.1.0-plan.md) covers safe branch/Demo cleanup, retained Operations Center checkpoints, explicit remote verification and reviewed Push-only retry, contextual recovery advice and measured Dashboard improvements. Actual gates, paired measurements and remaining manual/service/hardware acceptance belong to the [validation record](docs/v2.1.0-testing.md). The [performance follow-up](docs/v2.1.0-performance.md) retains phase-boundary Push validation while reducing repeated reads/rendering; fresh paired comparisons separately track R4 and formal v2.0.1. There is no v2.1.0 Tag/Release or distribution migration. / 本次原位完善操作中心、远端核实与原目标重试、上下文恢复建议及多仓库性能，安全清理旧分支和 Demo；真实门槛、配对测量和未验范围单独记录，性能续作在保留各阶段 Push 校验的前提下减少重复读取／渲染，重新分别对照 R4 和正式 v2.0.1 配对，不代表正式发布或分发体系迁移。
 
 ## Later: Trusted Distribution / 后续独立工作：可信分发
 
