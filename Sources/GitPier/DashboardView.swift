@@ -88,7 +88,7 @@ private struct WorkspaceDashboard: View {
         metric(store.text("Repositories", "仓库"), value: listing.summary.total, symbol: "shippingbox", filter: nil, color: .accentColor)
         metric(filterName(.modified), value: listing.summary.counts[.modified] ?? 0, symbol: "pencil.line", filter: .modified, color: .orange)
         metric(filterName(.ahead), value: listing.summary.counts[.ahead] ?? 0, symbol: "arrow.up", filter: .ahead, color: .accentColor)
-        metric(filterName(.behind), value: listing.summary.counts[.behind] ?? 0, symbol: "arrow.down", filter: .behind, color: .orange)
+        metric(filterName(.behind), value: listing.summary.counts[.behind] ?? 0, symbol: "arrow.down", filter: .behind, color: .blue)
         metric(filterName(.conflicts), value: listing.summary.counts[.conflicts] ?? 0, symbol: "exclamationmark.triangle", filter: .conflicts, color: .red)
       }
       HStack(spacing: 6) {

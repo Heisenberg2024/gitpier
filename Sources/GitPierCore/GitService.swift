@@ -182,6 +182,8 @@ public actor GitService {
         try await CommonDirectoryQueue.shared.acquire(common)
         do {
           try Task.checkCancellation()
+          let scanPaths = [root.path, gitDirectory, common]
+          let scanIdentities = try scanPaths.map(TaskDirectoryIdentity.read)
           try await requireLocalWorkspaceQueries()
           var state = try StatusParser.parse(await read(
             ["status", "--porcelain=v2", "-z", "--branch", "--untracked-files=all"],
@@ -192,7 +194,10 @@ public actor GitService {
           let names = try await read(["remote"], limit: 256 * 1024, timeout: 15).text
             .split(separator: "\n").map(String.init)
           let target: WorkspaceFetchTarget?
-          if !names.isEmpty { target = try? await upstreamFetchTarget(record) } else { target = nil }
+          if !names.isEmpty { target = try? await upstreamFetchTarget(record, common: URL(fileURLWithPath: common)) } else { target = nil }
+          guard try scanPaths.map(TaskDirectoryIdentity.read) == scanIdentities else {
+            throw WorkspaceFailure(.invalidRepository, "The working tree or Git metadata changed during collection.")
+          }
           let snapshot = WorkspaceSnapshot(record: record, status: state, gitDirectory: gitDirectory,
             commonDirectory: common, remoteNames: names, collectedAt: collectedAt,
             remoteTarget: target, collectedUptime: collectedUptime)
@@ -1859,16 +1864,28 @@ public actor GitService {
     return SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
   }
   private func workspaceFetchIdentity(_ remote: String) async throws -> String {
+    try await workspaceFetchContext(remote).identity
+  }
+  /// Reuse values only within this read. Multiple configured URLs still use Git
+  /// to select the first effective URL; newline-containing paths are not split.
+  private func workspaceFetchContext(_ remote: String, common: URL? = nil) async throws -> (identity: String, url: String) {
     let pattern = "^remote\\." + NSRegularExpression.escapedPattern(for: remote) + "\\."
     let config = try await read(["config", "--null", "--get-regexp", pattern], allowFailure: true)
     guard config.code == 0 else { throw GitPierError.invalidInput("The remote no longer exists. Review Fetch again.") }
     let effective = try await read(["remote", "get-url", "--all", "--", remote]).stdout
-    let common = try await commonDirectory()
-    let attributes = try FileManager.default.attributesOfItem(atPath: common.path)
+    let resolvedCommon: URL
+    if let common { resolvedCommon = common } else { resolvedCommon = try await commonDirectory() }
+    let attributes = try FileManager.default.attributesOfItem(atPath: resolvedCommon.path)
     let identity = Data("\(attributes[.systemNumber] ?? ""):\(attributes[.systemFileNumber] ?? "")".utf8)
     let authentication = try await read(["config", "--null", "--get-regexp", "^(credential\\.|http\\.|url\\.|core\\.(sshcommand|askpass)|ssh\\.)"], allowFailure: true).stdout
     let profile = Data((authEnvironment["GITPIER_AUTH_IDENTITY"] ?? "").utf8)
-    return SHA256.hash(data: config.stdout + effective + identity + authentication + profile).map { String(format: "%02x", $0) }.joined()
+    let fingerprint = SHA256.hash(data: config.stdout + effective + identity + authentication + profile).map { String(format: "%02x", $0) }.joined()
+    let urlKey = Data(("remote." + remote + ".url\n").utf8)
+    let urlCount = config.stdout.split(separator: 0).filter { $0.starts(with: urlKey) }.count
+    let firstURL: String
+    if urlCount == 1 { firstURL = String(decoding: effective, as: UTF8.self).trimmingCharacters(in: .newlines) }
+    else { firstURL = try await read(["remote", "get-url", "--", remote]).text.trimmingCharacters(in: .newlines) }
+    return (fingerprint, firstURL)
   }
   public func reviewWorkspaceFetch(_ record: RepositoryRecord) async throws -> [WorkspaceFetchTarget] {
     try await lifecycleWrite {
@@ -1884,6 +1901,9 @@ public actor GitService {
   }
   /// Resolve Git's default Fetch remote, including init/push without an upstream and detached HEAD.
   public func upstreamFetchTarget(_ record: RepositoryRecord) async throws -> WorkspaceFetchTarget? {
+    try await upstreamFetchTarget(record, common: nil)
+  }
+  private func upstreamFetchTarget(_ record: RepositoryRecord, common: URL?) async throws -> WorkspaceFetchTarget? {
     let branch = try await read(["symbolic-ref", "-q", "HEAD"], allowFailure: true).text.trimmingCharacters(in: .newlines)
     var name = ""
     if branch.hasPrefix("refs/heads/") {
@@ -1897,11 +1917,13 @@ public actor GitService {
     }
     guard !name.isEmpty else { return nil }
     try InputValidation.reference(name)
-    let identity = try await workspaceFetchIdentity(name)
-    let url = try await read(["remote", "get-url", "--", name]).text.trimmingCharacters(in: .newlines)
+    let context = try await workspaceFetchContext(name, common: common)
+    let identity = context.identity, url = context.url
     let remote = GitRemote(name: name, fetchURL: Self.redact(url), pushURL: "",
       configuredFetchURLs: [], configuredPushURLs: [], configurationID: identity)
-    return WorkspaceFetchTarget(record: record, commonDirectory: try await commonDirectory().path,
+    let resolvedCommon: URL
+    if let common { resolvedCommon = common } else { resolvedCommon = try await commonDirectory() }
+    return WorkspaceFetchTarget(record: record, commonDirectory: resolvedCommon.path,
       remote: remote, configurationIdentity: identity)
   }
   public func trackingReferenceIdentity(_ remote: String) async throws -> String {
@@ -2404,7 +2426,7 @@ public actor GitService {
     strategy: String = "configured", forceWithLease: Bool = false,
     forceReview: ForcePushReview? = nil,
     progress: (@Sendable (GitTransferProgress) -> Void)? = nil,
-    context: ContextWorkflowReview? = nil
+    context: ContextWorkflowReview? = nil, observer: PushRecoveryObserver? = nil
   ) async throws -> String {
     guard ["fetch", "pull", "push"].contains(operation) else {
       throw GitPierError.invalidInput("Invalid network operation")
@@ -2457,6 +2479,13 @@ public actor GitService {
       let localHead = operation == "push"
         ? try await read(["rev-parse", "--verify", "HEAD"], allowFailure: true).text
           .trimmingCharacters(in: .whitespacesAndNewlines) : ""
+      if operation == "push", !forceWithLease, let observer,
+        let checkpoint = try? await capturePushCheckpoint(localReference: localReference, localHead: localHead,
+          remote: remote, branch: branch) {
+        await observer.localCommit(localHead)
+        await observer.checkpoint?(checkpoint)
+        _ = try await validatePushCheckpoint(checkpoint, requireSource: true)
+      }
       let decoder = progress.map { GitProgressDecoder($0) }
       let result = try await read(args, allowFailure: true, onStderr: { bytes in decoder?.feed(bytes) })
       if result.code != 0 {
@@ -2469,6 +2498,161 @@ public actor GitService {
       }
       return Self.redact(result.text + result.errorText)
     }
+  }
+  public func reviewPushCheckpoint(remote: String? = nil, branch: String? = nil) async throws -> PushCheckpoint? {
+    try await lifecycleWrite {
+      let reference = try await read(["symbolic-ref", "-q", "HEAD"], allowFailure: true).text.trimmingCharacters(in: .newlines)
+      let head = try await read(["rev-parse", "--verify", "HEAD"], allowFailure: true).text.trimmingCharacters(in: .newlines)
+      return try await capturePushCheckpoint(localReference: reference, localHead: head, remote: remote, branch: branch)
+    }
+  }
+  public func verifyPush(_ checkpoint: PushCheckpoint) async throws -> PushVerificationObservation {
+    try await lifecycleWrite { try await observePushCheckpoint(checkpoint) }
+  }
+  public func retryPush(_ checkpoint: PushCheckpoint, observer: PushRecoveryObserver? = nil,
+    progress: (@Sendable (GitTransferProgress) -> Void)? = nil) async throws -> String {
+    try await lifecycleWrite {
+      _ = try await validatePushCheckpoint(checkpoint, requireSource: true)
+      let observation = try await observePushCheckpoint(checkpoint)
+      await observer?.localCommit(checkpoint.localHead)
+      await observer?.checkpoint?(checkpoint)
+      // A remote query/callback may have awaited arbitrary time. Revalidate once
+      // more and send the fixed object, never a newly changed HEAD or a force flag.
+      _ = try await validatePushCheckpoint(checkpoint, requireSource: true)
+      if observation.confirmed { return "Remote reference already matches the saved local commit." }
+      let diagnostics = GitCommandDiagnosticCapture(), decoder = progress.map { GitProgressDecoder($0) }
+      let result: CommandResult
+      do {
+        result = try await read(["push", "--progress", "--porcelain", "--", checkpoint.remote,
+          checkpoint.localHead + ":" + checkpoint.remoteReference], allowFailure: true,
+          onStderr: { diagnostics.append($0, error: true); decoder?.feed($0) },
+          onStdout: { diagnostics.append($0, error: false) })
+      } catch {
+        throw PushResultUnverified(localHead: checkpoint.localHead,
+          diagnostic: Self.redact(diagnostics.text + "\n" + error.localizedDescription), cancelled: error is CancellationError)
+      }
+      if result.code != 0 {
+        if let rejection = Self.pushRejection(result, localReference: checkpoint.localReference,
+          localHead: checkpoint.localHead, upstreamRemote: checkpoint.remote, source: checkpoint.localHead) { throw rejection }
+        throw PushResultUnverified(localHead: checkpoint.localHead,
+          diagnostic: Self.redact(result.text + result.errorText), cancelled: false)
+      }
+      return Self.redact(result.text + result.errorText)
+    }
+  }
+  private func pushConfigurationIdentity(explicitTarget: Bool = false) async throws -> Data {
+    let pattern = "^(" + (explicitTarget ? "" : "branch\\.|")
+      + "remote\\.|push\\.|url\\.|credential\\.|http\\.|ssh\\.|core\\.(sshcommand|askpass|gitproxy)$)"
+    let value = try await read(["config", "--null", "--get-regexp", pattern], allowFailure: true)
+    guard value.code == 0 || value.code == 1 else { throw GitPierError.indexChanged }
+    let profile = Data((authEnvironment["GITPIER_AUTH_IDENTITY"] ?? "").utf8)
+    return Data(SHA256.hash(data: value.stdout + profile))
+  }
+  private func capturePushCheckpoint(localReference: String, localHead: String, remote: String?, branch: String?,
+    remoteReference: String? = nil) async throws -> PushCheckpoint? {
+    guard localReference.hasPrefix("refs/heads/"), [40, 64].contains(localHead.count),
+      localHead.allSatisfy(\.isHexDigit) else { return nil }
+    let explicitTarget = remote != nil && (branch != nil || remoteReference != nil)
+    let configuration = try await pushConfigurationIdentity(explicitTarget: explicitTarget)
+    let name: String, destination: String
+    if let remote, let remoteReference { name = remote; destination = remoteReference }
+    else if let remote, let branch { name = remote; destination = "refs/heads/" + branch }
+    else {
+      guard remote == nil, branch == nil else { return nil }
+      let policy = try await read(["config", "--get", "push.default"], allowFailure: true).text.trimmingCharacters(in: .newlines)
+      guard ["", "simple", "current", "upstream"].contains(policy) else { return nil }
+      let fields = try await contextWorkflowTracking(String(localReference.dropFirst(11)))
+      guard fields.count == 6, !fields[4].isEmpty else { return nil }
+      name = fields[4]
+      if !fields[5].isEmpty { destination = fields[5] }
+      else if policy == "current" { destination = localReference }
+      else {
+        // Git leaves push:remoteref empty for its ordinary default mapping.
+        // Reuse the existing native upstream atoms, accepting only an exact
+        // single-branch mapping; ambiguous/triangular cases stay manual.
+        guard fields[2] == name, fields[3].hasPrefix("refs/heads/"),
+          policy == "upstream" || fields[3] == localReference else { return nil }
+        destination = fields[3]
+      }
+      let custom = try await read(["config", "--null", "--get-all", "remote." + name + ".push"], allowFailure: true)
+      guard custom.code == 1, custom.stdout.isEmpty else { return nil }
+    }
+    guard !name.isEmpty, destination.hasPrefix("refs/heads/") else { return nil }
+    try InputValidation.reference(name)
+    _ = try await read(["check-ref-format", destination])
+    for key in ["push.followTags", "remote." + name + ".mirror"] {
+      let value = try await read(["config", "--bool", "--get", key], allowFailure: true)
+      guard value.code == 1 || value.code == 0 && value.text.trimmingCharacters(in: .newlines) == "false" else { return nil }
+    }
+    let recurse = try await read(["config", "--get", "push.recurseSubmodules"], allowFailure: true).text.trimmingCharacters(in: .newlines)
+    guard ["", "no", "check"].contains(recurse) else { return nil }
+    try await validateWorkspaceRoot()
+    let directories = try await metadataDirectories().map { $0.resolvingSymlinksInPath().path }
+    guard let gitDirectory = directories.first, let common = directories.last else { return nil }
+    let identities = try [root.path, gitDirectory, common].map(TaskDirectoryIdentity.read)
+    let identity = try await forceDestinationIdentity(name)
+    let urls = try await read(["remote", "get-url", "--push", "--all", "--", name]).text.split(separator: "\n").map(String.init)
+    guard urls.count == 1, let url = urls.first,
+      try await standardPushVerificationTransport(name, url: url) else { return nil }
+    let checkpoint = PushCheckpoint(gitExecutable: gitPath, workingTree: root.path, gitDirectory: gitDirectory, commonDirectory: common,
+      localReference: localReference, localHead: localHead, remote: name, remoteReference: destination,
+      directoryIdentities: identities, configurationIdentity: configuration, destinationIdentity: identity, explicitTarget: explicitTarget)
+    _ = try await validatePushCheckpoint(checkpoint, requireSource: true)
+    return checkpoint
+  }
+  /// Passing an effective URL as a repository argument runs Git's URL aliasing
+  /// again. Decline chained rewrites and named custom transports rather than
+  /// querying another ref space and treating it as completion proof.
+  private func standardPushVerificationTransport(_ remote: String, url: String) async throws -> Bool {
+    if url.range(of: "^[A-Za-z][A-Za-z0-9+.-]*::", options: .regularExpression) != nil { return false }
+    if let separator = url.range(of: "://"),
+      !["https", "http", "ssh", "git", "file", "git+ssh", "ssh+git"].contains(String(url[..<separator.lowerBound])) { return false }
+    let names = try await read(["remote"], limit: 256 * 1024).text.split(separator: "\n").map(String.init)
+    guard !names.contains(url) else { return false }
+    let pattern = "^remote\\." + NSRegularExpression.escapedPattern(for: remote)
+      + "\\.(vcs|receivepack|uploadpack|serveroption|proxy|proxyauthmethod)$"
+    let custom = try await read(["config", "--null", "--get-regexp", pattern], allowFailure: true)
+    guard custom.code == 1, custom.stdout.isEmpty else { return false }
+    let resolved = try await read(["ls-remote", "--get-url", "--", url], limit: 256 * 1024)
+    // --get-url is local configuration resolution only; it never contacts a server.
+    return String(data: resolved.stdout, encoding: .utf8) == url + "\n"
+  }
+  /// Returns the current raw push URL only to the immediately executing query.
+  private func validatePushCheckpoint(_ checkpoint: PushCheckpoint, requireSource: Bool) async throws -> String {
+    guard gitPath == checkpoint.gitExecutable, root.path == checkpoint.workingTree else { throw GitPierError.indexChanged }
+    try await validateWorkspaceRoot()
+    let directories = try await metadataDirectories().map { $0.resolvingSymlinksInPath().path }
+    guard directories.first == checkpoint.gitDirectory, directories.last == checkpoint.commonDirectory,
+      try [root.path, checkpoint.gitDirectory, checkpoint.commonDirectory].map(TaskDirectoryIdentity.read) == checkpoint.directoryIdentities,
+      try await pushConfigurationIdentity(explicitTarget: checkpoint.explicitTarget) == checkpoint.configurationIdentity,
+      try await forceDestinationIdentity(checkpoint.remote) == checkpoint.destinationIdentity else { throw GitPierError.indexChanged }
+    if requireSource {
+      let state = try await status(localOnly: true)
+      guard state.head == checkpoint.localHead,
+        state.branch == String(checkpoint.localReference.dropFirst(11)), state.operation == nil,
+        !state.files.contains(where: \.isConflicted) else { throw GitPierError.indexChanged }
+    }
+    let urls = try await read(["remote", "get-url", "--push", "--all", "--", checkpoint.remote]).text.split(separator: "\n").map(String.init)
+    guard urls.count == 1, let url = urls.first, !url.isEmpty else { throw GitPierError.indexChanged }
+    guard try await standardPushVerificationTransport(checkpoint.remote, url: url) else { throw GitPierError.indexChanged }
+    return url
+  }
+  private func observePushCheckpoint(_ checkpoint: PushCheckpoint) async throws -> PushVerificationObservation {
+    let url = try await validatePushCheckpoint(checkpoint, requireSource: false)
+    let result = try await read(["ls-remote", "--refs", "--", url, checkpoint.remoteReference],
+      limit: 256 * 1024, timeout: 30)
+    // Reject changed identities even if the old endpoint happened to match.
+    guard try await validatePushCheckpoint(checkpoint, requireSource: false) == url else { throw GitPierError.indexChanged }
+    var head: String?
+    if result.stdout.last == 10, let text = String(data: result.stdout, encoding: .utf8) {
+      let lines = text.split(separator: "\n")
+      if lines.count == 1 {
+        let fields = lines[0].split(separator: "\t", omittingEmptySubsequences: false)
+        if fields.count == 2, fields[1] == checkpoint.remoteReference,
+          [40, 64].contains(fields[0].count), fields[0].allSatisfy(\.isHexDigit) { head = String(fields[0]) }
+      }
+    }
+    return PushVerificationObservation(checkpoint: checkpoint, remoteHead: head, checkedAt: Date())
   }
   private func forceDestinationIdentity(_ remote: String) async throws -> String {
     let configured = try await remoteConfiguration(remote)
@@ -2492,7 +2676,7 @@ public actor GitService {
                           destinationIdentity: try await forceDestinationIdentity(remote))
   }
   private static func pushRejection(
-    _ result: CommandResult, localReference: String, localHead: String, upstreamRemote: String?
+    _ result: CommandResult, localReference: String, localHead: String, upstreamRemote: String?, source: String? = nil
   ) -> PushRejection? {
     guard localReference.hasPrefix("refs/heads/"), !localHead.isEmpty else { return nil }
     let lines = result.text.split(separator: "\n").map(String.init)
@@ -2506,7 +2690,7 @@ public actor GitService {
       record[2] == "[rejected] (fetch first)" || record[2] == "[rejected] (non-fast-forward)"
     else { return nil }
     let refs = record[1].split(separator: ":", omittingEmptySubsequences: false).map(String.init)
-    guard refs.count == 2, refs[0] == localReference || refs[0] == "HEAD",
+    guard refs.count == 2, refs[0] == localReference || refs[0] == "HEAD" || refs[0] == source,
       refs[1].hasPrefix("refs/heads/") else { return nil }
     return PushRejection(
       localReference: localReference, localHead: localHead, remoteURL: destination,
@@ -2545,7 +2729,7 @@ public actor GitService {
       else { throw GitPierError.invalidInput("The branch changed during merge. Review it before pushing.") }
       await observer?.localCommit(mergedHead)
       let pushProgress = await phase?(.pushing)
-      let pushed = try await pushConfirmedTarget(rejection, expectedHead: mergedHead, progress: pushProgress)
+      let pushed = try await pushConfirmedTarget(rejection, expectedHead: mergedHead, observer: observer, progress: pushProgress)
       return Self.redact(
         fetched.text + fetched.errorText + merged.text + merged.errorText + pushed.text
           + pushed.errorText)
@@ -2563,14 +2747,15 @@ public actor GitService {
         !current.files.contains(where: \.isConflicted)
       else { throw GitPierError.conflictChanged }
       await observer?.localCommit(head)
-      let result = try await pushConfirmedTarget(rejection, expectedHead: head, progress: progress)
+      let result = try await pushConfirmedTarget(rejection, expectedHead: head, observer: observer, progress: progress)
       return Self.redact(result.text + result.errorText)
     }
   }
   private func pushConfirmedTarget(
-    _ rejection: PushRejection, expectedHead: String, progress: (@Sendable (GitTransferProgress) -> Void)?
+    _ rejection: PushRejection, expectedHead: String, observer: PushRecoveryObserver?, progress: (@Sendable (GitTransferProgress) -> Void)?
   ) async throws -> CommandResult {
     var destination = rejection.remoteURL
+    var namedRemote: String?
     var pushArguments = ["push", "--progress", "--porcelain"]
     if let remote = rejection.upstreamRemote {
       let urls = try await read(["remote", "get-url", "--push", "--all", "--", remote]).text
@@ -2579,6 +2764,7 @@ public actor GitService {
         throw GitPierError.invalidInput("The push destination changed. Review it before pushing.")
       }
       destination = remote
+      namedRemote = remote
       pushArguments.append("--set-upstream")
     } else {
       // Using the matching named remote also updates its tracking ref after a successful push.
@@ -2589,7 +2775,7 @@ public actor GitService {
           .split(separator: "\n").map(String.init)
         if urls == [rejection.remoteURL] { matches.append(name) }
       }
-      if matches.count == 1 { destination = matches[0] }
+      if matches.count == 1 { destination = matches[0]; namedRemote = matches[0] }
     }
     let pushDecoder = progress.map { GitProgressDecoder($0) }
     let reference = try await read(["symbolic-ref", "-q", "HEAD"], allowFailure: true).text
@@ -2597,6 +2783,12 @@ public actor GitService {
     let head = try await read(["rev-parse", "HEAD"]).text.trimmingCharacters(in: .newlines)
     guard reference == rejection.localReference, head == expectedHead else {
       throw GitPierError.invalidInput("The push source changed after merge verification. Review it before pushing.")
+    }
+    if let namedRemote, let observer,
+      let checkpoint = try? await capturePushCheckpoint(localReference: reference, localHead: head,
+        remote: namedRemote, branch: nil, remoteReference: rejection.remoteReference) {
+      await observer.checkpoint?(checkpoint)
+      _ = try await validatePushCheckpoint(checkpoint, requireSource: true)
     }
     let diagnostics = GitCommandDiagnosticCapture()
     let pushed: CommandResult

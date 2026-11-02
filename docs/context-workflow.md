@@ -1,5 +1,9 @@
 # Contextual workflow — v1.7.0
 
+In the v2.1.0 development candidate, an earlier unverified Commit/Push takes priority over routine change/Push advice. The warning directs you to the existing Operations Center, where the saved checkpoint, diagnosis, History and explicit remote verification remain available. Real conflicts and unfinished Git operations keep higher priority. Opening this advice performs no remote query or repeat write.
+
+简体中文：2.1.0 开发候选优先提示此前尚未核实的提交/推送，使用警告状态进入原操作中心，查看检查点、诊断、历史或主动核实远端。真实冲突和未完成 Git 操作仍更优先；打开建议不查询远端，也不重复写入。
+
 Click the **lightbulb to the left of the branch name** in the repository toolbar. It opens a native macOS popover with one prioritized suggestion, its reason and relevant existing actions. The toolbar stays 43pt high; the former permanent advice region is removed and its space belongs to the file list, Diff and commit controls again. The popover never opens automatically.
 
 | Toolbar state | Meaning |

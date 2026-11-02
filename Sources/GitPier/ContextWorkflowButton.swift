@@ -38,6 +38,10 @@ import SwiftUI
 struct ContextWorkflowButton: View {
   @ObservedObject var model: RepositoryModel
   @ObservedObject var workspace: WorkspaceModel
+  @ObservedObject private var operations: OperationsCenter
+  init(model: RepositoryModel, workspace: WorkspaceModel) {
+    self.model = model; self.workspace = workspace; self.operations = model.store.operations
+  }
   @EnvironmentObject var store: AppStore
   @Environment(\.colorSchemeContrast) private var contrast
   @FocusState private var keyboardFocused: Bool

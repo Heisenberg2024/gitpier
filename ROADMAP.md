@@ -48,9 +48,9 @@ Release acceptance includes independent source review, full same-source Swift 6.
 
 减少重复查询但保留完整一致性校验；完善提交后的部分成功反馈与远端未知结果，量化验收大历史、多仓库/工作树、隔离认证及原生生命周期。开发、本地验收、独立审核、CI 与发布分别记录；版本准备不代表发布授权。
 
-## v2.1.0 — Experience refinements / 后续体验完善
+## v2.1.0 — Native workflow refinements / 原生工作流完善
 
-**Planned / 计划中.** Continue focused improvements to existing native workflows after the v2.0.x stability work. Scope and acceptance will be agreed separately; no release date or major new feature commitment is implied. / 在 v2.0.x 稳定性工作后继续打磨现有原生工作流；范围与验收另行确定，不承诺日期或大型新功能。
+**Development / Unreleased / 开发中、未发布：2.1.0（35）.** The [implementation plan](docs/v2.1.0-plan.md) covers safe branch/Demo cleanup, retained Operations Center checkpoints, explicit remote verification and reviewed Push-only retry, contextual recovery advice and measured Dashboard improvements. Actual gates, paired measurements and remaining manual/service/hardware acceptance belong to the [validation record](docs/v2.1.0-testing.md). There is no v2.1.0 Tag/Release or distribution migration. / 本次原位完善操作中心、远端核实与原目标重试、上下文恢复建议及多仓库性能，安全清理旧分支和 Demo；真实门槛、配对测量和未验范围单独记录，不代表正式发布或分发体系迁移。
 
 ## Later: Trusted Distribution / 后续独立工作：可信分发
 

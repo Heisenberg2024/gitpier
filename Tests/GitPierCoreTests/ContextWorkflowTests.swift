@@ -2,6 +2,24 @@ import XCTest
 @testable import GitPierCore
 
 final class ContextWorkflowTests: XCTestCase {
+  func testUnresolvedOperationTakesPriorityOverRoutineCommitAndPushAdvice() {
+    var input = clean(); input.unresolvedResult = true; input.status.ahead = 1
+    let advice = ContextWorkflowAdvice.evaluate(input)
+    XCTAssertEqual(advice.actions.map(\.rawValue), ["inspectOperations"])
+    XCTAssertEqual(advice.priority(in: input), .risk)
+    input.currentPage = "commit"
+    input.status.files = [FileChange(path: "new work", index: ".", worktree: "M", kind: .modified)]
+    XCTAssertEqual(ContextWorkflowAdvice.evaluate(input).visibleActions(in: input).map(\.rawValue), ["inspectOperations"])
+    input.refreshing = true
+    XCTAssertEqual(ContextWorkflowAdvice.evaluate(input).displayLevel(in: input), .warning)
+  }
+  func testConflictsRemainHigherPriorityThanUnknownRemoteResults() {
+    var input = clean(); input.unresolvedResult = true
+    input.status.files = [FileChange(path: "conflict", index: "U", worktree: "U", kind: .conflicted)]
+    XCTAssertEqual(ContextWorkflowAdvice.evaluate(input).kind, .conflicts)
+    input.status.files = []; input.status.operation = .rebase
+    XCTAssertEqual(ContextWorkflowAdvice.evaluate(input).kind, .unfinishedOperation)
+  }
   func testRefreshKeepsKnownRiskVisibleWithoutOfferingWrites() {
     var input = clean(); input.refreshing = true
     input.status.files = [FileChange(path: "conflict", index: "U", worktree: "U", kind: .conflicted)]

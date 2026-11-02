@@ -96,10 +96,14 @@ import GitPierCore
       observation = Task { [weak self] in
         for await entries in stream {
           guard !Task.isCancelled, let self else { return }
+          guard self.entries != entries else { continue }
+          let previous = self.entries
           self.entries = entries
           self.configureWatchers()
           for entry in entries.values {
-            if let snapshot = entry.usable { self.store.models[entry.record.id]?.applyRemoteSnapshot(snapshot) }
+            if let snapshot = entry.usable, previous[entry.record.id]?.usable != snapshot {
+              self.store.models[entry.record.id]?.applyRemoteSnapshot(snapshot)
+            }
           }
         }
       }

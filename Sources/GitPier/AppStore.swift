@@ -1118,6 +1118,9 @@ struct DiffTab: Identifiable, Equatable {
     output = nil
     outputResult = .succeeded
     let progressTicket = activity.begin(label ?? store.text("Git operation", "Git 操作"), kind: kind)
+    if [.push, .commitAndPush, .mergeAndPush].contains(kind) { pushRetryOperationID = progressTicket.id }
+    else if kind == .commit { pushRetryOperationID = nil }
+    activity.recordBranch(status.branch)
     let hadConflicts = status.files.contains(where: \.isConflicted)
     activeTask = Task {
       defer {
@@ -1168,6 +1171,7 @@ struct DiffTab: Identifiable, Equatable {
         result = .needsAttention
         outputResult = .needsAttention
         lastCommit = nil
+        activity.recordUnverifiedCommit()
         output = unverifiedCommitOutput(unverified)
       } catch is CancellationError {
         if outputResult == .resultUnknown {
@@ -1279,6 +1283,7 @@ struct DiffTab: Identifiable, Equatable {
         editDraft("")
         self.amend = false
         lastCommit = nil
+        activity.recordUnverifiedCommit()
         pushFailed = false
         outputResult = .needsAttention
         output = unverifiedCommitOutput(unverified)
@@ -1331,7 +1336,7 @@ struct DiffTab: Identifiable, Equatable {
             let progress = activity.receiver()
             pushAttempted = true
             let details = GitOutputSummary.details(
-              try await git.network("push", progress: progress))
+              try await git.network("push", progress: progress, observer: pushCheckpointObserver()))
             output =
               store.text("Commit & push completed: ", "提交并推送已完成：")
               + String(result.hash.prefix(8)) + indexNote
@@ -1409,7 +1414,8 @@ struct DiffTab: Identifiable, Equatable {
       do {
         output = try await git.network(
           operation, remote: remote, branch: branch, strategy: reviewedStrategy ?? store.settings.pullStrategy,
-          forceWithLease: force, forceReview: forceReview, progress: progress, context: context)
+          forceWithLease: force, forceReview: forceReview, progress: progress, context: context,
+          observer: operation == "push" ? pushCheckpointObserver() : nil)
         if operation == "fetch" {
           let confirmed = await git.confirmedManualFetchTargets(targets, all: remote == nil)
           var updated: Set<String> = []
@@ -1471,6 +1477,33 @@ struct DiffTab: Identifiable, Equatable {
     lastCommit = head
     activity.recordLocalCommit(head)
   }
+  private var pushRetryOperationID: UUID?
+  private func pushCheckpointObserver() -> PushRecoveryObserver {
+    PushRecoveryObserver(localCommit: { [weak self] head in
+      await self?.activity.recordLocalCommit(head)
+    }, checkpoint: { [weak self] checkpoint in
+      await self?.activity.recordPushCheckpoint(checkpoint)
+    })
+  }
+  func confirmCheckpointPush(_ checkpoint: PushCheckpoint) {
+    guard !busy, record.path == checkpoint.workingTree else { return }
+    confirmation = PendingAction(title: store.text("Retry saved Push?", "重试已保存的推送？"),
+      detail: checkpoint.workingTree + "\n" + String(checkpoint.localReference.dropFirst(11)) + " → "
+        + checkpoint.remote + " / " + String(checkpoint.remoteReference.dropFirst(11)) + "\n" + checkpoint.localHead + "\n\n"
+        + store.text("Recheck the current source, original target and remote reference. Push only this saved commit if needed.",
+          "重新核查当前来源、原目标和远端引用；需要时仅推送此已保存提交。"),
+      confirmTitle: store.text("Retry Push", "重试推送"), destructive: false) { [weak self] in
+      self?.run(label: self?.store.text("Pushing", "推送"), kind: .push) { [weak self] git in
+        guard let self else { return }
+        do {
+          _ = try await git.retryPush(checkpoint, observer: pushCheckpointObserver(), progress: activity.receiver())
+          pushFailed = false; conflictPush = nil; rejectedPush = nil
+          output = store.text("Push target confirmed at the saved local commit.", "推送目标已确认指向保存的本地提交。")
+        } catch let rejection as PushRejection { queuePushRecovery(rejection) }
+        catch let issue as PushResultUnverified { preserveUnverifiedPush(issue) }
+      }
+    }
+  }
   private func preserveUnverifiedPush(_ issue: PushResultUnverified) {
     recordRecoveryCommit(issue.localHead)
     pushFailed = true
@@ -1493,7 +1526,7 @@ struct DiffTab: Identifiable, Equatable {
       do {
         let details = try await git.mergeAndPush(rejection, observer: PushRecoveryObserver(localCommit: { [weak self] head in
           await self?.recordRecoveryCommit(head)
-        })) { [weak self] phase in
+        }, checkpoint: { [weak self] checkpoint in await self?.activity.recordPushCheckpoint(checkpoint) })) { [weak self] phase in
           if phase == .pushing { await self?.recordOwnCommitState(git, update: .history) }
           return await MainActor.run {
             guard let self else { return nil }
@@ -1625,7 +1658,8 @@ struct DiffTab: Identifiable, Equatable {
         do {
           let details = try await git.pushCompletedMerge(
             target, head: commit.hash,
-            observer: PushRecoveryObserver(localCommit: { [weak self] head in await self?.recordRecoveryCommit(head) }), progress: activity.receiver())
+            observer: PushRecoveryObserver(localCommit: { [weak self] head in await self?.recordRecoveryCommit(head) },
+              checkpoint: { [weak self] checkpoint in await self?.activity.recordPushCheckpoint(checkpoint) }), progress: activity.receiver())
           pushFailed = false
           conflictPush = nil
           needsUpstream = false
@@ -1656,6 +1690,12 @@ struct DiffTab: Identifiable, Equatable {
     }
   }
   func retryPush() {
+    if let id = pushRetryOperationID,
+      let operation = store.operations.records.first(where: { $0.id == id }), operation.state == .resultUnknown {
+      if let checkpoint = operation.pushCheckpoint { confirmCheckpointPush(checkpoint) }
+      else { store.showOperationsCenter = true }
+      return
+    }
     guard let target = conflictPush, let head = status.head, status.operation == nil else {
       network("push")
       return
@@ -1667,7 +1707,8 @@ struct DiffTab: Identifiable, Equatable {
       guard let self else { return }
       do {
         output = try await git.pushCompletedMerge(target, head: head,
-          observer: PushRecoveryObserver(localCommit: { [weak self] head in await self?.recordRecoveryCommit(head) }), progress: activity.receiver())
+          observer: PushRecoveryObserver(localCommit: { [weak self] head in await self?.recordRecoveryCommit(head) },
+              checkpoint: { [weak self] checkpoint in await self?.activity.recordPushCheckpoint(checkpoint) }), progress: activity.receiver())
         pushFailed = false
         conflictPush = nil
       } catch let updated as PushRejection {

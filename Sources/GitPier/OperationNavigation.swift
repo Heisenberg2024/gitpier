@@ -37,6 +37,12 @@ struct OperationNavigationSnapshot: Equatable {
   }
 }
 @MainActor extension AppStore {
+  func openOperationHistory(_ record: WorkflowOperationRecord) async {
+    await openOperation(record)
+    guard let model = current, model.record.id == record.repositoryID,
+      model.record.path == record.repositoryIdentity?.workingTree else { return }
+    model.setPage("history")
+  }
   /// Navigation only. Every mutating button remains in the original reviewed workflow.
   func openOperation(_ record: WorkflowOperationRecord) async {
     guard let id = record.repositoryID, let model = models[id],

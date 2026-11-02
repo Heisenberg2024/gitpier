@@ -38,6 +38,19 @@ final class OperationCenterTests: XCTestCase {
     XCTAssertEqual(history.records.count, 12)
     XCTAssertTrue(history.records.contains { $0.id == active.id }); XCTAssertTrue(history.records.contains { $0.id == unknown.id })
   }
+  func testHistoryPruningRetainsUnresolvedLocalCheckpointsAndAttention() {
+    var history = OperationCenterHistory(recentLimit: 2)
+    var commit = WorkflowOperationRecord(kind: .commitAndPush, state: .needsAttention)
+    commit.localCommit = String(repeating: "a", count: 40)
+    commit.setDetail("Local commit saved; review before pushing.")
+    let merge = WorkflowOperationRecord(kind: .merge, state: .needsAttention, recovery: .conflicts)
+    history.insert(commit); history.insert(merge)
+    for _ in 0..<20 { history.insert(WorkflowOperationRecord(kind: .fetch, state: .succeeded)) }
+    XCTAssertEqual(history.records.first { $0.id == commit.id }?.localCommit, commit.localCommit)
+    XCTAssertEqual(history.records.first { $0.id == commit.id }?.detail, commit.detail)
+    XCTAssertTrue(history.records.contains { $0.id == merge.id })
+    XCTAssertEqual(history.records.filter { $0.state == .succeeded }.count, 2)
+  }
   func testAutomaticFetchCoalescingDoesNotEraseManualOrActiveWork() {
     let repository = UUID(); var history = OperationCenterHistory()
     history.insert(WorkflowOperationRecord(kind: .automaticFetch, repositoryID: repository, state: .succeeded))

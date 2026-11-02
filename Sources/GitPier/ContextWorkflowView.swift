@@ -4,10 +4,17 @@ import SwiftUI
 struct ContextWorkflowView: View {
   @ObservedObject var model: RepositoryModel
   @ObservedObject var workspace: WorkspaceModel
+  @ObservedObject private var operations: OperationsCenter
   @EnvironmentObject var store: AppStore
   var onAction: ((ContextWorkflowAction, ContextWorkflowInput) -> Void)?
   var onAbort: ((GitOperation, ContextWorkflowInput) -> Void)?
   @State private var contentHeight: CGFloat = 240
+  init(model: RepositoryModel, workspace: WorkspaceModel,
+    onAction: ((ContextWorkflowAction, ContextWorkflowInput) -> Void)? = nil,
+    onAbort: ((GitOperation, ContextWorkflowInput) -> Void)? = nil) {
+    self.model = model; self.workspace = workspace; self.operations = model.store.operations
+    self.onAction = onAction; self.onAbort = onAbort
+  }
   var body: some View {
     // Age only the already observed Fetch metadata. This never polls Git.
     TimelineView(.periodic(from: .now, by: 60)) { timeline in
@@ -119,6 +126,7 @@ struct ContextWorkflowView: View {
   }
   private func title(_ advice: ContextWorkflowAdvice, _ input: ContextWorkflowInput) -> String {
     switch advice.kind {
+    case .unverifiedResult: return store.text("Verify the earlier operation first", "先核实此前的操作")
     case .busy: return store.text("Git operation in progress", "Git 操作进行中")
     case .refreshing, .checkingRemote: return store.text("Updating workflow analysis", "正在更新工作流分析")
     case .conflicts:
@@ -141,6 +149,7 @@ struct ContextWorkflowView: View {
     let state = input.status
     let staged = state.staged.count, unstaged = state.files.filter(\.isUnstaged).count
     switch advice.kind {
+    case .unverifiedResult: return store.text("An earlier Commit or Push still needs verification. Inspect its saved result and local history before repeating any operation.", "此前的提交或推送仍需核实。重复操作前，请检查保存的结果和本地历史。")
     case .unavailable: return store.text("This working tree cannot be read. Recheck its location and permissions before starting Git work.", "无法读取此工作树。开始 Git 操作前，请先核查位置和权限。")
     case .refreshing: return store.text("Reading this working tree. Suggestions resume after the local snapshot is ready.", "正在读取此工作树，本地快照就绪后更新建议。")
     case .busy: return store.text("An operation or remote check already owns this target. Wait for its result before starting another step.", "此目标已有操作或远端检查正在执行，请等待结果后再进行下一步。")
@@ -168,6 +177,7 @@ struct ContextWorkflowView: View {
   }
   private func actionTitle(_ action: ContextWorkflowAction, _ input: ContextWorkflowInput) -> String {
     switch action {
+    case .inspectOperations: return store.text("Inspect Operations Center", "检查操作中心")
     case .refresh: return store.text("Refresh local state", "刷新本地状态")
     case .reviewChanges: return store.text(input.status.staged.isEmpty ? "Review changes" : "Review staged content", input.status.staged.isEmpty ? "审查修改" : "审查暂存内容")
     case .resolveConflicts: return store.text("Resolve Conflicts…", "解决冲突…")

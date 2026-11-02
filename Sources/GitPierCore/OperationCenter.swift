@@ -37,6 +37,10 @@ public struct WorkflowOperationRecord: Identifiable, Equatable, Sendable {
   public var transferPhase: GitTransferPhase?
   public var repositoryIdentity: OperationRepositoryIdentity?
   public var localCommit: String?
+  public var localBranch: String?
+  public var localCommitUnverified = false
+  public var pushCheckpoint: PushCheckpoint?
+  public var verifiedAt: Date?
   public private(set) var detail: String?
   public var cancellationRequested = false
   public var canCancel: Bool
@@ -94,11 +98,22 @@ public struct OperationCenterHistory: Sendable {
   public mutating func coalesceAutomatic(repositoryID: UUID) {
     records.removeAll { $0.repositoryID == repositoryID && $0.kind == .automaticFetch && $0.state.finished }
   }
+  @discardableResult public mutating func reconcilePush(_ id: UUID, observation: PushVerificationObservation) -> Bool {
+    guard observation.confirmed, let index = records.firstIndex(where: { $0.id == id }),
+      records[index].state == .resultUnknown,
+      [.push, .commitAndPush, .mergeAndPush].contains(records[index].kind),
+      records[index].pushCheckpoint == observation.checkpoint else { return false }
+    var record = records.remove(at: index)
+    record.state = .succeeded; record.phase = .completed
+    record.verifiedAt = observation.checkedAt; record.completedAt = observation.checkedAt
+    record.canCancel = false; record.progress = nil; record.revision += 1
+    records.insert(record, at: 0); prune(); return true
+  }
   private mutating func prune() {
     // Unresolved journal entries remain visible; their separate durable store owns its limits.
     var recent = 0
     records = records.filter {
-      if $0.state.active || $0.state == .waitingForUser || $0.state == .resultUnknown { return true }
+      if $0.state.active || $0.state == .waitingForUser || $0.state == .resultUnknown || $0.state == .needsAttention { return true }
       recent += 1; return recent <= recentLimit
     }
   }

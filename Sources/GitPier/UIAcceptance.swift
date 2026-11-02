@@ -95,6 +95,12 @@ import SwiftUI
           exit(0)
         }
         #if DEBUG
+        if acceptanceScope == "workflow210" {
+          try await verifyWorkflow210(store: store, model: model, root: root, window: window, output: output)
+          window.close(); store.shutdown()
+          print("Native v2.1 workflow recovery acceptance passed.")
+          exit(0)
+        }
         if let acceptanceScope, acceptanceScope.hasPrefix("stability-recovery-") {
           window.close()
           try await verifyRecoveryStability(root: root, output: output,

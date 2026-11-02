@@ -102,6 +102,13 @@ extension UIAcceptance {
       }
       model.confirmation = nil; confirmation.performConfirmedAction()
       var previous: WorkflowOperationRecord?
+      func retryWithReview() throws {
+        model.retryPush()
+        if let review = model.confirmation {
+          guard review.readyForConfirmation else { throw GitPierError.invalidInput("Saved Push review is not ready") }
+          model.confirmation = nil; review.performConfirmedAction()
+        }
+      }
       if retry {
         try await waitFor { !model.busy && !model.refreshing }
         guard model.conflictPush != nil, model.status.operation == .merge else {
@@ -128,7 +135,7 @@ extension UIAcceptance {
         }
         previous = store.operations.records.first { $0.kind == .mergeAndPush }
         if !success { try Data().write(to: inject) }
-        model.retryPush()
+        try retryWithReview()
       }
       if cancelled {
         try await waitFor { FileManager.default.fileExists(atPath: fixture.appendingPathComponent(".git/recovery-accepted").path) }
@@ -177,7 +184,11 @@ extension UIAcceptance {
         let indexBefore = try Data(contentsOf: fixture.appendingPathComponent(".git/index"))
         let accepted = fixture.appendingPathComponent(".git/recovery-accepted")
         try FileManager.default.removeItem(at: accepted)
-        model.retryPush()
+        // The first attempt reached the server. A matching remote now avoids
+        // another transfer; move this disposable remote back to exercise a
+        // genuinely necessary second attempt and its interrupted observation.
+        try await git.perform(["--git-dir=" + remote.path, "update-ref", "refs/heads/main", baseHead])
+        try retryWithReview()
         if inFlightRefresh {
           try FileManager.default.removeItem(at: refreshGate)
           await refresh?.value
@@ -197,7 +208,7 @@ extension UIAcceptance {
       }
       if !success {
         try FileManager.default.removeItem(at: inject)
-        model.retryPush()
+        try retryWithReview()
         try await waitFor { !model.busy && !model.refreshing }
         let after = try await git.resolveCommit("HEAD")
         let afterWrites = try Data(contentsOf: writes)

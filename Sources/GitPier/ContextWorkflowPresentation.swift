@@ -55,6 +55,7 @@ import SwiftUI
     }
     if hasNotice && level != .blocked { return store.text("Review the updated context before continuing", "继续前请审查更新后的上下文") }
     switch advice.kind {
+    case .unverifiedResult: return store.text("An earlier operation has an unverified result; inspect Operations Center", "此前操作的结果未确认，请检查操作中心")
     case .conflicts:
       let count = input.status.files.filter(\.isConflicted).count
       return store.text("\(operationName): \(count) conflicted paths; resolve before continuing", "\(operationName)：\(count) 个冲突路径，需先解决")

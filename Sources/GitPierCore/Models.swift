@@ -110,8 +110,10 @@ public struct PushResultUnverified: LocalizedError, Sendable {
 /// source-compatible while delivering the verified local checkpoint.
 public struct PushRecoveryObserver: Sendable {
   public let localCommit: @Sendable (String) async -> Void
-  public init(localCommit: @escaping @Sendable (String) async -> Void) {
-    self.localCommit = localCommit
+  public let checkpoint: (@Sendable (PushCheckpoint) async -> Void)?
+  public init(localCommit: @escaping @Sendable (String) async -> Void,
+    checkpoint: (@Sendable (PushCheckpoint) async -> Void)? = nil) {
+    self.localCommit = localCommit; self.checkpoint = checkpoint
   }
 }
 

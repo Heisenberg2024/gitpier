@@ -1,5 +1,13 @@
 # Development
 
+## v2.1.0 development — unreleased
+
+Development runs directly on main and extends the existing native models/queues. The [plan](v2.1.0-plan.md) and [validation record](v2.1.0-testing.md) distinguish completed changes, executable evidence, paired performance and pending external acceptance. The standalone Hero Demo is removed from the current tree; ignored local files were preserved outside the repository. Version/build target is 2.1.0/35. Stable downloads and historical publication facts remain v2.0.1/34.
+
+Use `Scripts/test.sh`, `Scripts/ui-acceptance.sh`, `Scripts/performance.sh` and `Scripts/build-app.sh`; freeze explicit test executables before measuring, use disposable repositories, serialize GUI scopes, and end task-owned compilation/testing before paired timing. Local release-tool checks are not a remote Actions run. No v2.1.0 Tag, Release, production signing, notarization or installation is part of this development task.
+
+简体中文：2.1.0（35）在 main 增量开发，计划与验收分开记录实现、真实测试、配对性能和未验边界。Hero Demo 已从当前树移除，忽略文件在仓库外保留；稳定下载仍是 2.0.1（34）。原脚本及隔离临时仓库继续使用，测量固定二进制且避开编译负载，不创建 Tag/Release、生产签名、公证或安装。
+
 ## v2.0.1 publication — 2026-11-02
 
 [GitPier v2.0.1 (34)](https://github.com/Heisenberg2024/gitpier/releases/tag/v2.0.1) was published as **Latest** at **2026-11-02 19:56:59 (Asia/Shanghai)**, Release **431402213**, source/tag **`0c3bcd90fe25cbf06567c556bd3c8bb78591acc5`**, using the approved English-first / Chinese-second notes.

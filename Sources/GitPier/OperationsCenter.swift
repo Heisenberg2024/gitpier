@@ -4,6 +4,8 @@ import SwiftUI
 
 @MainActor final class OperationsCenter: ObservableObject {
   @Published private(set) var history = OperationCenterHistory()
+  @Published private(set) var verifyingPush: Set<UUID> = []
+  @Published private(set) var verificationMessages: [UUID: String] = [:]
   private var fetchAttempts: [String: UUID] = [:]
   private var cancellations: [UUID: () -> Void] = [:]
   private var taskIDs: [UUID: UUID] = [:]
@@ -30,7 +32,8 @@ import SwiftUI
   }
   func update(_ id: UUID, state: WorkflowOperationState? = nil, transfer: GitTransferProgress? = nil,
     cancellable: Bool? = nil, phase: WorkflowOperationPhase? = nil, recovery: OperationRecoveryAction? = nil,
-    localCommit: String? = nil, detail: String? = nil) {
+    localCommit: String? = nil, detail: String? = nil, branch: String? = nil,
+    pushCheckpoint: PushCheckpoint? = nil, localCommitUnverified: Bool? = nil) {
     guard var record = records.first(where: { $0.id == id }), !record.state.finished else { return }
     if let state { record.state = state; record.phase = state.active ? (state == .queued ? .queued : .executing) : state == .resultUnknown ? .verification : .completed }
     if let phase { record.phase = phase; record.progress = nil; record.transferPhase = nil }
@@ -38,6 +41,13 @@ import SwiftUI
     if let cancellable { record.canCancel = cancellable && cancellations[id] != nil }
     if let recovery { record.recovery = recovery }
     if let localCommit { record.localCommit = localCommit }
+    if let branch { record.localBranch = branch }
+    if let pushCheckpoint {
+      record.pushCheckpoint = pushCheckpoint
+      record.localBranch = String(pushCheckpoint.localReference.dropFirst(11))
+      record.repositoryIdentity = OperationRepositoryIdentity(workingTree: pushCheckpoint.workingTree, commonDirectory: pushCheckpoint.commonDirectory)
+    }
+    if let localCommitUnverified { record.localCommitUnverified = localCommitUnverified }
     if let detail { record.setDetail(detail) }
     if record.cancellationRequested && record.state.active { record.phase = .cancelling; record.canCancel = false }
     if !record.state.active { cancellations[id] = nil; record.canCancel = false }
@@ -45,6 +55,30 @@ import SwiftUI
     record.revision += 1
     history.update(record)
     pruneCallbacks()
+  }
+  /// Explicit read-only inspection of this exact historical Push, not a replay.
+  func verifyPush(_ record: WorkflowOperationRecord, store: AppStore) async {
+    guard let checkpoint = record.pushCheckpoint, record.state == .resultUnknown,
+      !verifyingPush.contains(record.id), let id = record.repositoryID,
+      let model = store.models[id], model.record.path == checkpoint.workingTree,
+      store.repositories.contains(where: { $0.id == id && $0.path == checkpoint.workingTree }) else { return }
+    verifyingPush.insert(record.id); verificationMessages[record.id] = nil
+    defer { verifyingPush.remove(record.id); pruneCallbacks() }
+    do {
+      guard !model.busy, await model.configure() else { throw GitPierError.indexChanged }
+      let observation = try await model.git().verifyPush(checkpoint)
+      guard !Task.isCancelled, store.models[id] === model,
+        store.repositories.contains(where: { $0.id == id && $0.path == checkpoint.workingTree }) else { return }
+      if observation.confirmed, history.reconcilePush(record.id, observation: observation) {
+        verificationMessages[record.id] = store.text("The remote reference matches the saved local commit.", "远端引用与已保存的本地提交一致。")
+        model.objectWillChange.send()
+      } else {
+        verificationMessages[record.id] = store.text("The remote reference does not prove this Push completed. The result remains unconfirmed.", "远端引用不足以证明此次推送完成，结果仍未确认。")
+      }
+    } catch {
+      verificationMessages[record.id] = store.text("Unable to confirm the remote result. Review the target and connection before checking again.", "无法确认远端结果。请核查目标和连接后再次检查。")
+        + "\n" + GitService.redact(localizedUI(error.localizedDescription))
+    }
   }
   func cancel(_ id: UUID) {
     guard var record = records.first(where: { $0.id == id }), record.state.active,
@@ -57,6 +91,7 @@ import SwiftUI
     let active = Set(records.filter { $0.state.active }.map(\.id))
     cancellations = cancellations.filter { active.contains($0.key) }
     let retained = Set(records.map(\.id)); taskIDs = taskIDs.filter { retained.contains($0.key) }
+    verificationMessages = verificationMessages.filter { retained.contains($0.key) }
   }
   func observe(_ job: WorkspaceFetchJob, cancel: @escaping () -> Void) {
     if fetchAttempts[job.id] == job.attemptID && !records.contains(where: { $0.id == job.attemptID }) { return }
@@ -112,7 +147,7 @@ struct OperationsCenterView: View {
       }
       Text(store.text("Cancellation requests stop the running task when possible. Completed changes and remote writes may remain. Local tracking references are Fetch snapshots.", "取消请求会尽可能停止任务，已完成的修改或远程写入可能保留。远程跟踪引用来自 Fetch 快照。"))
         .font(.callout).foregroundStyle(.secondary)
-      Text(store.text("Ordinary operations are kept for this session (up to 100 recent records). Review recovery is saved separately.", "普通操作仅保留本次会话，最近记录最多 100 条；审查恢复记录另行持久保存。"))
+      Text(store.text("This session keeps up to 100 completed summaries and retains unresolved results. Review recovery is saved separately.", "本次会话保留最近 100 条已完成摘要及未决结果；审查恢复记录另行持久保存。"))
         .font(.caption).foregroundStyle(.secondary)
       ScrollView {
         // Separate section containers prevent lazy flattened ForEach identities
@@ -135,7 +170,7 @@ struct OperationsCenterView: View {
     ForEach(values) { record in
       VStack(alignment: .leading, spacing: 6) {
         HStack {
-          Text(operationTitle(record.kind, store: store)).fontWeight(.medium)
+          Label(operationTitle(record.kind, store: store), systemImage: operationKindSymbol(record.kind)).fontWeight(.medium)
           Text(record.repositoryID.flatMap { id in store.repositories.first { $0.id == id }?.name } ?? (record.kind == .review ? store.text("Review history", "审查历史") : "GitPier")).foregroundStyle(.secondary).lineLimit(1)
           Spacer()
           Label(operationStateTitle(record, store: store), systemImage: OperationStatusPresentation(record.state).symbol)
@@ -150,7 +185,7 @@ struct OperationsCenterView: View {
             .accessibilityLabel(store.text("Working tree", "工作树")).accessibilityValue(path)
         }
         if let hash = record.localCommit {
-          Label(store.text("Local commit created: ", "本地提交已创建：") + String(hash.prefix(8)), systemImage: "checkmark.circle")
+          Label(store.text("Saved local commit: ", "已保存的本地提交：") + String(hash.prefix(8)), systemImage: "checkmark.circle")
             .font(.caption).foregroundStyle(.green).help(hash).textSelection(.enabled)
         }
         if record.state.active {
@@ -160,8 +195,9 @@ struct OperationsCenterView: View {
           OperationBar(value: record.progress).frame(height: 8)
         }
         if let detail = record.detail { OperationDiagnosticView(detail: detail) }
+        OperationRecoveryControls(record: record, center: center)
         HStack {
-          Text(record.startedAt, style: .time).font(.caption).foregroundStyle(.secondary)
+          Text(record.completedAt ?? record.startedAt, style: .time).font(.caption).foregroundStyle(.secondary)
           Spacer()
           if let taskID = center.taskID(record.id) {
             Button(store.text("Open Task", "打开任务")) {
@@ -185,6 +221,7 @@ struct OperationsCenterView: View {
           }
         }
       }.padding(12).background(Color.secondary.opacity(0.07)).clipShape(RoundedRectangle(cornerRadius: 8))
+        .accessibilityElement(children: .contain)
         .accessibilityIdentifier("gitpier.operation." + record.id.uuidString)
     }
     }

@@ -65,6 +65,9 @@ struct WorkflowComparisonRequest: Identifiable {
     value.remotePhase = remote.phase
     value.remoteFresh = !remote.isStale(now: now, interval: store.workspace.remoteInterval(record.id))
     value.retainingBranches = branches.filter { !$0.remote && $0.hash == status.head }.map(\.name).sorted()
+    value.unresolvedResult = store.operations.records.contains {
+      $0.repositoryID == record.id && ($0.state == .resultUnknown || $0.localCommitUnverified)
+    }
     return value
   }
 
@@ -74,6 +77,7 @@ struct WorkflowComparisonRequest: Identifiable {
     guard !workflowPreparing, workflowSelectionMatches(displayed),
       (action == .refresh || ContextWorkflowAdvice.evaluate(displayed).actions.contains(action)) else { return }
     workflowMessage = nil
+    if action == .inspectOperations { store.showOperationsCenter = true; return }
     if action == .refresh {
       guard !busy, !refreshing else { return }
       await activate(refresh: true); return
@@ -127,7 +131,7 @@ struct WorkflowComparisonRequest: Identifiable {
       return
     }
     switch action {
-    case .refresh: break
+    case .refresh, .inspectOperations: break
     case .reviewChanges:
       setPage("commit")
       let staged = !context.status.staged.isEmpty

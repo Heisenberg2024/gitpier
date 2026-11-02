@@ -46,6 +46,12 @@ struct OperationState {
     guard state?.result == .running else { return }
     center?.update(id, localCommit: hash)
   }
+  func recordBranch(_ branch: String) { center?.update(id, branch: branch) }
+  func recordUnverifiedCommit() { center?.update(id, localCommitUnverified: true) }
+  func recordPushCheckpoint(_ checkpoint: PushCheckpoint) {
+    guard state?.result == .running else { return }
+    center?.update(id, pushCheckpoint: checkpoint)
+  }
   func receiver() -> @Sendable (GitTransferProgress) -> Void {
     let expected = ticket
     return { [weak self] progress in

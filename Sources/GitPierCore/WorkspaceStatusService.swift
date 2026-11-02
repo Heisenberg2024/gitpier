@@ -23,6 +23,7 @@ public actor WorkspaceStatusService {
   private var stopped = false
   private var configurationRevision = -1
   private var subscribers: [UUID: AsyncStream<[UUID: WorkspaceEntry]>.Continuation] = [:]
+  private var lastPublished: [UUID: WorkspaceEntry]?
   private var idleWaiters: [CheckedContinuation<Void, Never>] = []
   public init(concurrency: Int = 3, lifetime: TimeInterval = 30, loader: @escaping Loader = { record in
     let git = await GitServiceRegistry.shared.service(for: URL(fileURLWithPath: record.path))
@@ -39,8 +40,15 @@ public actor WorkspaceStatusService {
       continuation.onTermination = { [weak self] _ in Task { await self?.unsubscribe(id) } }
     }
   }
-  private func unsubscribe(_ id: UUID) { subscribers[id] = nil }
-  private func publish() { for subscriber in subscribers.values { subscriber.yield(entries) } }
+  private func unsubscribe(_ id: UUID) {
+    subscribers[id] = nil
+    if subscribers.isEmpty { lastPublished = nil }
+  }
+  private func publish() {
+    guard !subscribers.isEmpty, lastPublished != entries else { return }
+    lastPublished = entries
+    for subscriber in subscribers.values { subscriber.yield(entries) }
+  }
   public func current() -> [UUID: WorkspaceEntry] { entries }
   public func reconcile(_ records: [RepositoryRecord], revision: Int? = nil) {
     if let revision {

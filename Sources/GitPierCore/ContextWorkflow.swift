@@ -16,12 +16,13 @@ public struct ContextWorkflowInput: Equatable, Sendable {
   public var remotePhase = RemoteCheckPhase.notChecked
   public var remoteFresh = false
   public var retainingBranches: [String] = []
+  public var unresolvedResult = false
   public init() {}
 }
 
 public enum ContextWorkflowAction: String, CaseIterable, Sendable {
   case refresh, reviewChanges, resolveConflicts, continueOperation, createBranch, chooseBranch
-  case addRemote, setUpstream, reviewFetch, reviewAuthentication
+  case addRemote, setUpstream, reviewFetch, reviewAuthentication, inspectOperations
   case compareIncoming, compareOutgoing, reviewPull, reviewPush, mergeUpstream, rebaseUpstream
 }
 
@@ -30,7 +31,7 @@ public struct ContextWorkflowAdvice: Equatable, Sendable {
     case unavailable, refreshing, busy, stale, conflicts, unfinishedOperation, detached
     case firstCommit, stagedChanges, localChanges, preserveBeforeSync, addFiles
     case localOnly, noUpstream, authentication, fetchFailed, checkingRemote, verifyRemote
-    case missingUpstream, diverged, incoming, outgoing, aligned
+    case missingUpstream, diverged, incoming, outgoing, aligned, unverifiedResult
   }
   public let kind: Kind
   public let actions: [ContextWorkflowAction]
@@ -48,6 +49,7 @@ public struct ContextWorkflowAdvice: Equatable, Sendable {
     // These are facts from the last local snapshot, never a live-remote claim.
     if [.busy, .refreshing, .checkingRemote].contains(kind) {
       if input.status.files.contains(where: \.isConflicted) || input.status.operation != nil { return .blocked }
+      if input.unresolvedResult { return .warning }
       if input.status.head != nil && (input.status.branch == "(detached)" || input.status.branch.isEmpty) { return .warning }
       if input.status.upstreamComparable && input.status.behind > 0 {
         return input.status.files.isEmpty ? .attention : .warning
@@ -57,7 +59,7 @@ public struct ContextWorkflowAdvice: Equatable, Sendable {
     if isReviewingChanges(input) { return .normal }
     switch kind {
     case .conflicts, .unfinishedOperation: return .blocked
-    case .detached, .preserveBeforeSync: return .warning
+    case .detached, .preserveBeforeSync, .unverifiedResult: return .warning
     case .incoming, .diverged, .unavailable, .stale, .authentication, .fetchFailed, .missingUpstream:
       return .attention
     case .verifyRemote:
@@ -75,7 +77,7 @@ public struct ContextWorkflowAdvice: Equatable, Sendable {
     switch kind {
     case .aligned, .localOnly, .addFiles, .busy, .refreshing, .checkingRemote: return .normal
     case .conflicts, .unfinishedOperation, .detached, .preserveBeforeSync, .diverged,
-         .unavailable, .stale, .authentication, .fetchFailed, .missingUpstream: return .risk
+         .unavailable, .stale, .authentication, .fetchFailed, .missingUpstream, .unverifiedResult: return .risk
     case .verifyRemote: return input.status.ahead > 0 || input.status.behind > 0 ? .risk : .suggestion
     default: return .suggestion
     }
@@ -96,6 +98,7 @@ public struct ContextWorkflowAdvice: Equatable, Sendable {
       return Self(.conflicts, state.operation == .rebase ? [.resolveConflicts, .continueOperation] : [.resolveConflicts])
     }
     if state.operation != nil { return Self(.unfinishedOperation, [.continueOperation]) }
+    if input.unresolvedResult { return Self(.unverifiedResult, [.inspectOperations]) }
     if state.head != nil && (state.branch == "(detached)" || state.branch.isEmpty) {
       return Self(.detached, input.retainingBranches.isEmpty ? [.createBranch] : [.chooseBranch])
     }

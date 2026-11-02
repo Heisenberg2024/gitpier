@@ -1,6 +1,22 @@
 import XCTest
 @testable import GitPierCore
 
+private actor WorkspacePublicationProbe {
+  let ready: XCTestExpectation
+  let duplicate: XCTestExpectation
+  var armed = false
+  var sentReady = false
+  var sentDuplicate = false
+  init(ready: XCTestExpectation, duplicate: XCTestExpectation) { self.ready = ready; self.duplicate = duplicate }
+  func arm() { armed = true }
+  func observe(_ state: WorkspaceCollectionState?) {
+    if state == .fresh {
+      if armed, !sentDuplicate { sentDuplicate = true; duplicate.fulfill() }
+      else if !armed, !sentReady { sentReady = true; ready.fulfill() }
+    }
+  }
+}
+
 private actor SnapshotProbe {
   var calls: [UUID] = []
   var active = 0
@@ -28,6 +44,25 @@ private actor SnapshotProbe {
 }
 
 final class WorkspaceStatusTests: XCTestCase {
+  func testFreshVisibilityAndUnchangedReconciliationDoNotPublishDuplicateSnapshots() async {
+    let record = RepositoryRecord(path: "/fixture/no-op-publication")
+    let service = WorkspaceStatusService(loader: { record in
+      WorkspaceSnapshot(record: record, status: RepositoryStatus(), gitDirectory: record.path, commonDirectory: record.path)
+    })
+    let ready = expectation(description: "Initial fresh snapshot")
+    let duplicate = expectation(description: "Unchanged data must not republish")
+    duplicate.isInverted = true
+    let probe = WorkspacePublicationProbe(ready: ready, duplicate: duplicate)
+    let stream = await service.updates()
+    let observation = Task { for await entries in stream { await probe.observe(entries[record.id]?.state) } }
+    await service.reconcile([record]); await service.request([record.id]); await service.waitUntilIdle()
+    await fulfillment(of: [ready], timeout: 2)
+    await probe.arm()
+    await service.reconcile([record])
+    for _ in 0..<10 { await service.request([record.id], priority: .visible) }
+    await fulfillment(of: [duplicate], timeout: 0.15)
+    await service.shutdown(); await observation.value
+  }
   var fixture: URL!
   var root: URL!
   var git: GitService!
@@ -84,6 +119,21 @@ final class WorkspaceStatusTests: XCTestCase {
     try await raw(["commit", "-m", "second"]); try await raw(["checkout", "--detach"])
     let third = try await git.workspaceSnapshot(record)
     XCTAssertTrue(third.detached); XCTAssertEqual(third.staged, 0); XCTAssertNotEqual(third.head, first.head)
+  }
+  func testDashboardScanDoesNotRepeatCommonDirectoryAndEffectiveURLQueries() async throws {
+    let log = fixture.appendingPathComponent("dashboard-commands")
+    let wrapper = fixture.appendingPathComponent("dashboard-git")
+    try "#!/bin/sh\nprintf '%s\\n' \"$*\" >> '\(log.path)'\nexec /usr/bin/git \"$@\"\n".write(to: wrapper, atomically: true, encoding: .utf8)
+    try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: wrapper.path)
+    try await raw(["remote", "add", "origin", "https://example.invalid/never-contact.git"])
+    try await raw(["config", "branch.main.remote", "origin"])
+    let service = GitService(root: root, gitPath: wrapper.path)
+    let value = try await service.workspaceSnapshot(record)
+    XCTAssertEqual(value.remoteTarget?.commonDirectory, value.commonDirectory)
+    XCTAssertEqual(value.remoteTarget?.remote.fetchURL, "https://example.invalid/never-contact.git")
+    let commands = try String(contentsOf: log, encoding: .utf8).components(separatedBy: "\n")
+    XCTAssertEqual(commands.filter { $0.contains("rev-parse --git-common-dir") }.count, 1)
+    XCTAssertEqual(commands.filter { $0.contains("remote get-url") }.count, 1)
   }
   func testLinkedWorktreeSharedIdentityAndIndependentCounts() async throws {
     let linked = fixture.appendingPathComponent("linked ")

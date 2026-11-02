@@ -12,6 +12,12 @@ GitPier brings repository management, change review, commits, and an integrated 
 
 ![Commit workspace with tracked and untracked changes, side-by-side Diff, and terminal](docs/screenshots/commit-workspace.png)
 
+## Development on main — v2.1.0
+
+The **2.1.0 (35) development candidate is unreleased**. Operations Center retains unresolved checkpoints, offers full-hash copying and History navigation, and explicitly verifies a saved single-branch Push against its original remote reference. A retry reviews and rechecks the original source/target and never creates another commit. Context advice highlights earlier unverified results.
+
+Dashboard scans reuse metadata within each collection and suppress unchanged publications. The standalone `Marketing/hero-demo/` package has been removed from the current tree. See the [development plan](docs/v2.1.0-plan.md) and [executed validation, measurements and remaining gates](docs/v2.1.0-testing.md). Stable downloads remain v2.0.1; no v2.1.0 Tag or Release has been created.
+
 ## Stability and performance — v2.0.1
 
 [v2.0.1 (34)](https://github.com/Heisenberg2024/gitpier/releases/tag/v2.0.1) is the current **Latest** release. Repository refresh avoids repeated Git queries while retaining final consistency checks. Interrupted commits retain their diagnostics and require verification when completion is uncertain; recovery Push keeps its commit and destination without repeating Commit or Merge.
