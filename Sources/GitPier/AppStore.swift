@@ -1496,11 +1496,11 @@ struct DiffTab: Identifiable, Equatable {
       self?.run(label: self?.store.text("Pushing", "推送"), kind: .push) { [weak self] git in
         guard let self else { return }
         do {
-          _ = try await git.retryPush(checkpoint, observer: pushCheckpointObserver(), progress: activity.receiver())
-          pushFailed = false; conflictPush = nil; rejectedPush = nil
-          output = store.text("Push target confirmed at the saved local commit.", "推送目标已确认指向保存的本地提交。")
-        } catch let rejection as PushRejection { queuePushRecovery(rejection) }
-        catch let issue as PushResultUnverified { preserveUnverifiedPush(issue) }
+          _ = try await git.retryPush(checkpoint, observer: self.pushCheckpointObserver(), progress: self.activity.receiver())
+          self.pushFailed = false; self.conflictPush = nil; self.rejectedPush = nil
+          self.output = self.store.text("Push target confirmed at the saved local commit.", "推送目标已确认指向保存的本地提交。")
+        } catch let rejection as PushRejection { self.queuePushRecovery(rejection) }
+        catch let issue as PushResultUnverified { self.preserveUnverifiedPush(issue) }
       }
     }
   }
