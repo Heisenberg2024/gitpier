@@ -58,5 +58,9 @@ if len(sys.argv) < 6 or sys.argv[5] != "http":
     context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
     context.load_cert_chain(sys.argv[2], sys.argv[3])
     server.socket = context.wrap_socket(server.socket, server_side=True)
-Path(sys.argv[4]).write_text(str(server.server_port))
+# The native test and shell acceptance both use file existence as readiness.
+port_file = Path(sys.argv[4])
+pending_port = port_file.with_name(f".{port_file.name}.{os.getpid()}.tmp")
+pending_port.write_text(str(server.server_port), encoding="ascii")
+pending_port.replace(port_file)
 server.serve_forever()
