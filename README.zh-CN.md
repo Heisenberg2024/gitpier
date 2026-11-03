@@ -12,15 +12,15 @@ GitPier 将仓库管理、变更审查、提交和集成终端汇集在一个专
 
 ![提交工作台：已跟踪与未跟踪变更、双栏 Diff 和终端](docs/screenshots/commit-workspace.png)
 
-## main 开发中 — v2.1.0
+## 推送恢复与工作空间性能 — v2.1.0
 
-**2.1.0（35）为尚未发布的开发候选。** 操作中心保留未决检查点，支持复制完整 Hash、打开历史，以及主动核实已保存的单分支推送和原远端引用。重试须审查并重新核对原来源与目标，不会再次创建提交；上下文建议会突出此前未确认的结果。
+[v2.1.0（35）](https://github.com/Heisenberg2024/gitpier/releases/tag/v2.1.0)已发布为当前 **Latest**。操作中心保留未决检查点，支持复制完整 Hash、打开历史，以及主动核实已保存的单分支推送和原远端引用。重试须审查并重新核对原来源与目标，不会再次创建提交；上下文建议会突出此前未确认的结果。
 
-Dashboard 在单次采集中复用元数据，合并刷新通知，并在每次渲染中复用远端检查说明。Push 预检仅在同一校验阶段复用读取结果，各边界仍重新校验。[性能续作](docs/v2.1.0-performance.md)记录配对比较及其边界。独立 `Marketing/hero-demo/` 已从当前仓库树移除。详见[开发计划](docs/v2.1.0-plan.md)及[实际验收、性能和剩余门槛](docs/v2.1.0-testing.md)。稳定下载仍为 v2.0.1，未创建 v2.1.0 Tag 或 Release。
+Dashboard 在单次采集中复用元数据，合并刷新通知，并在每次渲染中复用远端检查说明。Push 预检仅在同一校验阶段复用读取结果，各边界仍重新校验。[性能续作](docs/v2.1.0-performance.md)记录配对比较及其边界。独立 `Marketing/hero-demo/` 已从当前仓库树移除。详见[开发计划](docs/v2.1.0-plan.md)、[验收与剩余边界](docs/v2.1.0-testing.md)和[发布证据](docs/development.md#v210-publication--2026-11-03)。
 
 ## 稳定性与性能 — v2.0.1
 
-[v2.0.1（34）](https://github.com/Heisenberg2024/gitpier/releases/tag/v2.0.1)现已正式发布为 **Latest**。仓库刷新减少重复Git查询并保留最终一致性校验；提交中断时保留诊断，完成状态不明则提示核实；恢复推送保留原提交和目标，不重复Commit或Merge。
+[v2.0.1（34）](https://github.com/Heisenberg2024/gitpier/releases/tag/v2.0.1)是仓库刷新和 Git 操作中断恢复的维护版。仓库刷新减少重复Git查询并保留最终一致性校验；提交中断时保留诊断，完成状态不明则提示核实；恢复推送保留原提交和目标，不重复Commit或Merge。
 
 Universal安装包支持macOS 14及以上。详见[验收与未验证边界](docs/v2.0.1-testing.md)和[发布证据](docs/development.md#v201-publication--2026-11-02)。Developer ID签名与Apple公证继续作为后续独立工作。
 
@@ -95,7 +95,7 @@ Git LFS 页面检测可选工具，展示规则 / 文件 / OID / Pointer，审�
 
 **已发布 [v1.4.4](https://github.com/Heisenberg2024/gitpier/releases/tag/v1.4.4)（构建号 24）。**自动获取统一复用 Git 原生认证，覆盖 HTTP、HTTPS、SSH、Git 和本地传输，不区分 GitHub、GitLab、Gitee 等平台。命名助手、绝对路径助手和 Shell 助手保留原顺序、URL/账号/路径匹配及完整协议响应；自动 Git 只请求 get，不调用 store/erase。不再把已保存密码或 Agent 当成获取前提：公开仓库可匿名获取，是否需要认证由实际服务器决定。SSH 保留原始命令、配置、Agent、文件私钥、Provider 和原生钥匙串行为。终端 Clone、GitPier Clone 以及 init/push 仓库使用相同流程；Clone 所选账号在自动检查前绑定。HTTP 仍是明文传输，设置中显示提示；GitPier 托管 HTTPS Token 仍拒绝 HTTP。既有凭证必须能被应用的 Git 进程访问，无法恢复未保存的密码或仅存在于另一个终端会话的环境变量。详见[安全边界](SECURITY.md)和[验证记录](docs/development.md#unified-native-authentication)。
 
-“工作空间搜索”支持名称、路径、组织、分支、远程名称，以及按需查询已跟踪文件路径和提交信息 / 哈希。范围可选全部 / 当前组织 / 当前仓库 / 已选仓库，结果打开仓库、已有 Diff / 文件历史或提交详情。Git 查询可取消、分页并限制结果及输出，不建立源码内容索引或上传到第三方。**⌘⇧P** 打开快速切换，支持最近 / 收藏仓库、组织匹配、上下方向键、回车和 Esc；终端焦点保留原有按键。Universal DMG 是当前正式下载，发布验证结果见[开发指南](docs/development.md#v200-publication--2026-11-02)。
+“工作空间搜索”支持名称、路径、组织、分支、远程名称，以及按需查询已跟踪文件路径和提交信息 / 哈希。范围可选全部 / 当前组织 / 当前仓库 / 已选仓库，结果打开仓库、已有 Diff / 文件历史或提交详情。Git 查询可取消、分页并限制结果及输出，不建立源码内容索引或上传到第三方。**⌘⇧P** 打开快速切换，支持最近 / 收藏仓库、组织匹配、上下方向键、回车和 Esc；终端焦点保留原有按键。Universal DMG 是当前正式下载，发布验证结果见[开发指南](docs/development.md#v210-publication--2026-11-03)。
 
 ## 代码托管与凭证存储 — v1.5.0
 

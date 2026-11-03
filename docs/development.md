@@ -1,12 +1,18 @@
 # Development
 
-## v2.1.0 development — unreleased
+## v2.1.0 publication — 2026-11-03
 
-Development runs directly on main and extends the existing native models/queues. The [plan](v2.1.0-plan.md) and [validation record](v2.1.0-testing.md) distinguish completed changes, executable evidence, paired performance and pending external acceptance. The standalone Hero Demo is removed from the current tree; ignored local files were preserved outside the repository. The [performance follow-up](v2.1.0-performance.md) records phase-local Push observation batching, coherent workspace publications, per-render remote presentation and new matched comparisons. Version/build target is 2.1.0/35. Stable downloads and historical publication facts remain v2.0.1/34.
+[GitPier v2.1.0 (35)](https://github.com/Heisenberg2024/gitpier/releases/tag/v2.1.0) became **Latest** at **2026-11-03 20:45:38 (Asia/Shanghai)**. Release **432684966** and Tag `v2.1.0` point to `5ff81be6d5cb3dd9594535b5bdde3c1453bf4009`. The GitHub body and signed Feed both carry the approved English and Simplified Chinese notes.
 
-Use `Scripts/test.sh`, `Scripts/ui-acceptance.sh`, `Scripts/performance.sh` and `Scripts/build-app.sh`; freeze explicit test executables before measuring, use disposable repositories, serialize GUI scopes, and end task-owned compilation/testing before paired timing. Debug-only `branch-health` and `stability-recovery-*` scopes require a Debug executable and their own completion markers; Release falls through to the default UI suite. Local release-tool checks are not a remote Actions run. No v2.1.0 Tag, Release, production signing, notarization or installation is part of this development task.
+[Source CI 41631553152](https://github.com/Heisenberg2024/gitpier/actions/runs/41631553152) ran the full macOS workflow with Swift 6.1.2 and Apple Git 2.39.5. The downloaded XUnit report contains 1,128 cases with zero failures, errors or skips. The application, temporary DMG and development archive checks passed. [Tag CI 41638290777](https://github.com/Heisenberg2024/gitpier/actions/runs/41638290777) reused that successful run for the same SHA. All 320 frozen inputs match the released commit. The local release candidate passed full Release UI/PTY, bilingual native recovery and Universal bundle verification. See the [validation record](v2.1.0-testing.md) and [matched performance results](v2.1.0-performance.md).
 
-简体中文：2.1.0（35）在 main 增量开发，计划与验收分开记录实现、真实测试、配对性能和未验边界。Hero Demo 已从当前树移除，忽略文件在仓库外保留；稳定下载仍是 2.0.1（34）。性能续作记录 Push 阶段内读取复用、工作区通知合并、逐次渲染远端说明及新配对比较。原脚本及隔离临时仓库继续使用，测量固定二进制且避开编译负载；仅 Debug 编入的 `branch-health`／`stability-recovery-*` 专项须使用 Debug 程序并核对各自完成标记，不创建 Tag/Release、生产签名、公证或安装。
+The Universal DMG is **31,006,444 bytes**, SHA256 `b7d4221ca9a28721cf05ee99454c482813e050109496cc36b23a046d159f5000`. The **5,936-byte** Feed has SHA256 `c368fb0c61ad8c9a03a9d699dfc782ec8e69ffdcb10ab7f4133e2ba9d3c5d68e`. The existing Sparkle production identity signed both. Feed **705578364**, DMG **705577888** and checksum **705578363** matched local bytes when read back by ID. Same-length altered copies of the DMG and Feed failed signature verification. The release and Latest pages, all three downloads and the canonical Latest Feed returned anonymous HTTP 200. The 22 prior releases and 22 prior tag refs match their pre-publication records.
+
+The app uses ad-hoc application signing. Developer ID, notarization, installed-version upgrade, private live services, Intel/macOS 14 hardware and complete accessibility or long-duration testing remain outside this verification. Local evidence is in `.cache/releases/v2.1.0/publish-5ff81be-20261103/publication-report.json`.
+
+简体中文：v2.1.0（35）于 **2026-11-03 20:45:38（北京时间）**按审核说明发布为 Latest，Release 432684966，源码与 Tag 为 `5ff81be`。同源完整 CI 的 1,128 项测试零失败、错误和跳过，Tag CI 复用该次验证。Universal DMG、生产 Sparkle 签名、三份附件按 ID 回读及六个公开端点均已核实。真实安装升级、私有服务、最低版本硬件与完整辅助功能验收仍待独立执行。
+
+Use `Scripts/test.sh`, `Scripts/ui-acceptance.sh`, `Scripts/performance.sh` and `Scripts/build-app.sh` with disposable repositories and frozen test executables. End task-owned builds and tests before paired timing. The Debug-only `branch-health` and `stability-recovery-*` scopes require a Debug executable and their own completion markers.
 
 ## v2.0.1 publication — 2026-11-02
 
