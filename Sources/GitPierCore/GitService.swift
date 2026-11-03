@@ -145,11 +145,13 @@ public actor GitService {
     var directories: [URL] = []
     for flag in ["--absolute-git-dir", "--git-common-dir"] {
       let path = try Self.nativePath(try await read(["rev-parse", flag]).stdout)
-      directories.append(
-        path.hasPrefix("/") ? URL(fileURLWithPath: path) : root.appendingPathComponent(path))
+      directories.append(metadataDirectory(path))
     }
     var seen: Set<URL> = []
-    return directories.map { $0.standardizedFileURL }.filter { seen.insert($0).inserted }
+    return directories.filter { seen.insert($0).inserted }
+  }
+  private func metadataDirectory(_ path: String) -> URL {
+    (path.hasPrefix("/") ? URL(fileURLWithPath: path) : root.appendingPathComponent(path)).standardizedFileURL
   }
   public func status(localOnly: Bool = false) async throws -> RepositoryStatus {
     if localOnly { try await requireLocalWorkspaceQueries() }
@@ -226,6 +228,9 @@ public actor GitService {
   private func validateWorkspaceRoot() async throws {
     let path = try Self.nativePath(try await read(["rev-parse", "--show-toplevel"],
       environment: ["GIT_NO_LAZY_FETCH": "1"], timeout: 15).stdout)
+    try validateWorkspaceRoot(path)
+  }
+  private func validateWorkspaceRoot(_ path: String) throws {
     guard URL(fileURLWithPath: path).standardizedFileURL.resolvingSymlinksInPath() == root else {
       throw WorkspaceFailure(.invalidRepository, "The registered directory is no longer a Git working-tree root.")
     }
@@ -2600,6 +2605,25 @@ public actor GitService {
     }
     return (effective, String(text.dropLast()))
   }
+  private func pushCheckpointDirectories() async throws -> (git: String, common: String) {
+    let result = try await read(["rev-parse", "--show-toplevel", "--absolute-git-dir", "--git-common-dir"],
+      environment: ["GIT_NO_LAZY_FETCH": "1"], allowFailure: true, timeout: 15)
+    if result.code == 0, result.stdout.last == 10 {
+      let rows = result.stdout.dropLast().split(separator: 10, omittingEmptySubsequences: false)
+      if rows.count == 3 {
+        try validateWorkspaceRoot(Self.nativePath(Data(rows[0])))
+        let git = try metadataDirectory(Self.nativePath(Data(rows[1]))).resolvingSymlinksInPath().path
+        let common = try metadataDirectory(Self.nativePath(Data(rows[2]))).resolvingSymlinksInPath().path
+        return (git, common)
+      }
+    }
+    // rev-parse separates these paths with LF, which may also occur inside a
+    // path. Read each path separately whenever the combined result is ambiguous.
+    try await validateWorkspaceRoot()
+    let directories = try await metadataDirectories()
+    guard let git = directories.first, let common = directories.last else { throw GitPierError.indexChanged }
+    return (git.resolvingSymlinksInPath().path, common.resolvingSymlinksInPath().path)
+  }
   private func capturePushCheckpoint(localReference: String, localHead: String, remote: String?, branch: String?,
     remoteReference: String? = nil) async throws -> PushCheckpoint? {
     guard localReference.hasPrefix("refs/heads/"), [40, 64].contains(localHead.count),
@@ -2631,15 +2655,15 @@ public actor GitService {
     guard !name.isEmpty, destination.hasPrefix("refs/heads/") else { return nil }
     try InputValidation.reference(name)
     _ = try await read(["check-ref-format", destination])
-    for key in ["push.followTags", "remote." + name + ".mirror"] {
+    // Absent keys have Git's false default. Let Git parse every present value,
+    // and recheck the complete configuration before publishing or using a checkpoint.
+    for key in ["push.followtags", "remote." + name + ".mirror"] where configuration.has(key) {
       let value = try await read(["config", "--bool", "--get", key], allowFailure: true)
       guard value.code == 1 || value.code == 0 && value.text.trimmingCharacters(in: .newlines) == "false" else { return nil }
     }
     let recurse = (configuration.last("push.recursesubmodules") ?? "").trimmingCharacters(in: .newlines)
     guard ["", "no", "check"].contains(recurse) else { return nil }
-    try await validateWorkspaceRoot()
-    let directories = try await metadataDirectories().map { $0.resolvingSymlinksInPath().path }
-    guard let gitDirectory = directories.first, let common = directories.last else { return nil }
+    let (gitDirectory, common) = try await pushCheckpointDirectories()
     let identities = try [root.path, gitDirectory, common].map(TaskDirectoryIdentity.read)
     guard !configuration.hasCustomTransport(name), let target = try await readPushCheckpointDestination(name),
       try await standardPushVerificationTransport(name, url: target.url) else { return nil }
@@ -2666,9 +2690,8 @@ public actor GitService {
   /// Returns the current raw push URL only to the immediately executing query.
   private func validatePushCheckpoint(_ checkpoint: PushCheckpoint, requireSource: Bool) async throws -> String {
     guard gitPath == checkpoint.gitExecutable, root.path == checkpoint.workingTree else { throw GitPierError.indexChanged }
-    try await validateWorkspaceRoot()
-    let directories = try await metadataDirectories().map { $0.resolvingSymlinksInPath().path }
-    guard directories.first == checkpoint.gitDirectory, directories.last == checkpoint.commonDirectory,
+    let directories = try await pushCheckpointDirectories()
+    guard directories.git == checkpoint.gitDirectory, directories.common == checkpoint.commonDirectory,
       try [root.path, checkpoint.gitDirectory, checkpoint.commonDirectory].map(TaskDirectoryIdentity.read) == checkpoint.directoryIdentities else { throw GitPierError.indexChanged }
     if requireSource {
       let state = try await status(localOnly: true)

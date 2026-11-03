@@ -62,7 +62,57 @@ final class PushVerificationTests: XCTestCase {
       "Every existing boundary still reads a fresh complete safety fingerprint")
     XCTAssertEqual(commands.filter { $0.contains("config --null --get-all remote.origin.") }.count, 0,
       "Use the already read configuration rather than starting more identical readers")
+    XCTAssertEqual(commands.filter { $0.hasSuffix("rev-parse --show-toplevel --absolute-git-dir --git-common-dir") }.count, 3,
+      "Each phase freshly resolves all three directory paths in one native query")
+    XCTAssertEqual(commands.filter { $0.hasSuffix("rev-parse --show-toplevel") }.count, 0)
+    XCTAssertEqual(commands.filter { $0.contains("config --bool --get") }.count, 0,
+      "The complete configuration already establishes that both boolean keys are absent")
+    XCTAssertEqual(commands.filter { $0.contains("status --porcelain=v2 -z --branch --untracked-files=all") }.count, 2,
+      "Both source checks retain the complete native status scan")
     XCTAssertEqual(commands.filter { $0.contains("push --progress --porcelain") }.count, 1)
+  }
+  func testLinkedWorktreeWithNewlineUsesUnambiguousDirectoryReads() async throws {
+    let linked = fixture.appendingPathComponent("linked\nworktree")
+    try await raw(["worktree", "add", "-b", "linked", linked.path])
+    try await raw(["-C", linked.path, "push", "--set-upstream", "origin", "linked"])
+    let log = fixture.appendingPathComponent("checkpoint-commands")
+    let path = try wrapper("printf '%s\\n' \"$*\" >> '\(log.path)'")
+    let service = GitService(root: linked, gitPath: path.path)
+    let target = try await checkpoint(service)
+    let directories = try await service.metadataDirectories()
+    XCTAssertEqual(target.workingTree, linked.path)
+    XCTAssertEqual(target.gitDirectory, directories.first?.resolvingSymlinksInPath().path)
+    XCTAssertEqual(target.commonDirectory, root.appendingPathComponent(".git").path)
+    XCTAssertNotEqual(target.gitDirectory, target.commonDirectory)
+    let result = try await service.verifyPush(target)
+    XCTAssertTrue(result.confirmed)
+    let commands = try String(contentsOf: log, encoding: .utf8).components(separatedBy: "\n")
+    XCTAssertEqual(commands.filter { $0.hasSuffix("rev-parse --show-toplevel --absolute-git-dir --git-common-dir") }.count, 4)
+    XCTAssertEqual(commands.filter { $0.hasSuffix("rev-parse --show-toplevel") }.count, 4,
+      "An LF in a native path requires independent path reads in every phase")
+  }
+  func testReplacingGitDirectoryAfterCheckpointPreventsPush() async throws {
+    try await commit("must not push from replaced Git directory")
+    let gitDirectory = root.appendingPathComponent(".git"), replacement = fixture.appendingPathComponent("replacement")
+    let oldDirectory = fixture.appendingPathComponent("original"), replaced = fixture.appendingPathComponent("replaced")
+    let attempted = fixture.appendingPathComponent("unexpected-push")
+    try FileManager.default.copyItem(at: gitDirectory, to: replacement)
+    let path = try wrapper("case \" $* \" in *\" push \"*) touch '\(attempted.path)';; esac")
+    let service = GitService(root: root, gitPath: path.path)
+    let before = try await raw(["--git-dir=" + remote.path, "rev-parse", "refs/heads/main"]).stdout
+    let observer = PushRecoveryObserver(localCommit: { _ in }, checkpoint: { _ in
+      do {
+        try FileManager.default.moveItem(at: gitDirectory, to: oldDirectory)
+        try FileManager.default.moveItem(at: replacement, to: gitDirectory)
+        try Data().write(to: replaced)
+      } catch { XCTFail("Replace only the temporary fixture's Git directory: \(error)") }
+    })
+    do { _ = try await service.network("push", observer: observer); XCTFail("The new directory inode must invalidate the checkpoint") }
+    catch { XCTAssertTrue(error.localizedDescription.contains("changed")) }
+    XCTAssertTrue(FileManager.default.fileExists(atPath: replaced.path))
+    XCTAssertFalse(FileManager.default.fileExists(atPath: attempted.path))
+    let after = try await raw(["--git-dir=" + remote.path, "rev-parse", "refs/heads/main"]).stdout
+    XCTAssertEqual(after, before)
   }
   func testPostCheckpointObserverAuthenticationChangeStillPreventsPush() async throws {
     try await commit("must not push after reconfiguration")
