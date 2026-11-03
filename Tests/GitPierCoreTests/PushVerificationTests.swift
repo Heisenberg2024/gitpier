@@ -81,13 +81,19 @@ final class PushVerificationTests: XCTestCase {
     let after = try await raw(["--git-dir=" + remote.path, "rev-parse", "refs/heads/main"]).stdout
     XCTAssertEqual(after, before)
   }
-  func testEmptyPushURLResetKeepsNativeSingleDestination() async throws {
+  func testEmptyPushURLFollowsNativeListSemantics() async throws {
     try await raw(["config", "--add", "remote.origin.pushurl", ""])
     try await raw(["config", "--add", "remote.origin.pushurl", remote.path])
-    let native = try await raw(["remote", "get-url", "--push", "--all", "--", "origin"])
-    XCTAssertEqual(native.text, remote.path + "\n", "Git treats the empty URL as a list reset")
-    let target = try await checkpoint(), observation = try await git.verifyPush(target)
-    XCTAssertTrue(observation.confirmed)
+    let native = try await raw(["remote", "get-url", "--push", "--all", "--", "origin"]).stdout
+    let single = Data((remote.path + "\n").utf8)
+    let target = try await git.reviewPushCheckpoint()
+    if native == single {
+      let observation = try await git.verifyPush(XCTUnwrap(target))
+      XCTAssertTrue(observation.confirmed)
+    } else {
+      XCTAssertEqual(native, Data([10]) + single, "Older Git retains the empty entry in its destination list")
+      XCTAssertNil(target, "A blank destination line cannot be discarded as single-target proof")
+    }
   }
   func testMultipleEffectivePushDestinationsRemainManual() async throws {
     try await raw(["config", "--add", "remote.origin.pushurl", remote.path])
