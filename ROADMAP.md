@@ -2,7 +2,7 @@
 
 **Native Git Client for macOS** · *All Your Repositories. One Workspace.*
 
-Reviewed: 2026-11-03. Current stable: [v2.1.0 (35)](https://github.com/Heisenberg2024/gitpier/releases/tag/v2.1.0). Trusted Distribution remains a separate future milestone with no release date.
+Reviewed: 2026-11-05. Current stable: [v2.1.0 (35)](https://github.com/Heisenberg2024/gitpier/releases/tag/v2.1.0). Trusted Distribution remains a separate future milestone with no release date.
 
 GitPier develops the existing SwiftUI/AppKit workspace through focused, verifiable improvements. Milestones describe scope and acceptance conditions; they do not promise release dates. / GitPier 以现有原生工作空间为基础，持续改进可靠性、交互与性能；路线图说明范围和验收条件，不承诺发布日期。
 
@@ -58,9 +58,9 @@ The release retains Operations Center checkpoints, verifies the exact remote ref
 
 ## v2.2.0 — Native Experience Refinement / 原生体验完善
 
-In development. Improve operation outcomes and progress, message review, settings and credential clarity; adopt current macOS sidebar material and shared native presentation while retaining macOS 14 compatibility. [Implementation and acceptance](docs/v2.2.0-native-experience.md) records the local results and outstanding gates separately. The stable download remains v2.1.0 (35).
+Release candidate preparation: 2.2.0 (36). Improve operation outcomes and progress, message review, settings and credential clarity; add file type icons and two-axis Diff synchronization while retaining opaque reading surfaces, shared native presentation and macOS 14 compatibility. [Implementation and acceptance](docs/v2.2.0-native-experience.md) and [release preparation](docs/development.md#v220-release-candidate--2026-11-05) record results and outstanding gates separately. The stable download remains v2.1.0 (35).
 
-开发中。完善操作结果、提交说明、偏好和凭证来源展示；更新原生窗口表现并保留 macOS 14 兼容路径。发布候选须经过单独验收，稳定下载仍为 v2.1.0（35）。
+2.2.0（36）候选版准备中。完善操作结果、提交说明、偏好和凭证来源展示，新增文件类型图标与 Diff 双轴同步；保留不透明阅读区域、共用原生弹窗及 macOS 14 兼容路径。正式发布前仍须审阅说明并验证最终版本提交，稳定下载仍为 v2.1.0（35）。
 
 ## Later: Trusted Distribution / 后续独立工作：可信分发
 

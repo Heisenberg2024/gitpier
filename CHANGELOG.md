@@ -2,19 +2,32 @@
 
 ## Unreleased
 
+- Release candidate: 2.2.0 (Build 36); the current public release remains v2.1.0 (35). Final version-commit CI and maintainer review of bilingual release notes are still required.
 - Background operation notifications can use the system sound or stay silent; the foreground keeps in-app feedback. Automatic background Fetch stays quiet.
 - New installations check for updates automatically. Explicit Sparkle opt-outs are preserved; downloads and installation still require confirmation.
 - Commit and Push use a single workflow with real transfer counters, durable outcomes and existing recovery controls. Optional message formatting is reviewed before it changes what is sent to Git.
 - Open the repository root in Finder, keep file selection separate, and see consistent favorite markers. Dashboard keeps scan warnings without an Updated column and adds accessible first/last repository actions. Diff typography and colors live in Diff settings.
-- Repository Settings explains the effective Git credential source and can test Fetch access without updating refs. Native controls use shared system surfaces, and the macOS 27 sidebar uses the native material.
+- Repository Settings explains the effective Git credential source and can test Fetch access without updating refs. Credential changes wait for an active operation to finish; a moved task worktree uses its current terminal admission path. Native controls use shared system surfaces, and the primary sidebar keeps its opaque background in every theme.
 - Dashboard prevents mouse-driven native scrollbars from reappearing during list updates and centers the Branch, Changes and Sync columns. Restore the About update card background and plain Commit, History and Branches navigation buttons.
 - Finder and Dock launches can discover Codex CLI in `~/.local/bin`. Quick Open now uses ⌘K.
+- Bundle distinct file type icons across file lists, Diff, History, Stash and related workflows, with light/dark and colored/monochrome variants. Ignore files use a neutral outlined circle-slash icon; Git status remains visible in filename colors.
+- Synchronize horizontal and vertical offsets in side-by-side Diff. Switching files resets both panes to the top-left; refreshing the same file retains its position.
+- Repository refresh uses the native waiting animation and hides the track on completion while preserving the result layout. Push and Commit & Push show real transfer progress in one continuous track. Footer progress stays anchored while pane dividers move and shortens in smaller windows.
+- Round the Organizations and Credentials sidebar lists, remove their split-view divider and align header rules with the rounded corners. Restore reliable return to Ungrouped after selecting another organization.
 
-简体中文：后台操作通知可独立设置声音；新安装默认检查更新，保留已有关闭设置，下载和安装仍需确认。提交和推送使用同一工作流，并在提交前审查说明格式。仓库根目录与文件定位分开，收藏星标统一；总览移除更新时间列并提供首尾仓库的辅助功能动作，Diff 字体和颜色集中到 Diff 设置。仓库设置可核查认证来源及只读获取连接，macOS 27 侧栏使用原生材质。验收及未验证边界见[开发记录](docs/v2.2.0-native-experience.md)。
+简体中文：2.2.0（Build 36）候选版准备中，当前公开版本仍为 v2.1.0（35）；最终版本提交的 CI 及双语说明仍待维护者审核。
+
+后台操作通知可独立设置声音；新安装默认检查更新，保留已有关闭设置，下载和安装仍需确认。提交和推送使用同一工作流，并在提交前审查说明格式。仓库根目录与文件定位分开，收藏星标统一；总览移除更新时间列并提供首尾仓库的辅助功能动作，Diff 字体和颜色集中到 Diff 设置。仓库设置可核查认证来源及只读获取连接，活动操作结束后再应用凭证配置；迁移任务工作树后终端使用当前目录的准入检查。主侧栏在所有主题下保持不透明背景。验收及未验证边界见[开发记录](docs/v2.2.0-native-experience.md)。
 
 总览列表更新时持续隐藏系统滚动条，分支、修改状态及同步列的表头和内容居中。恢复关于页更新卡片的背景框，提交、历史和分支导航按钮使用普通样式。
 
 Finder 与 Dock 启动时可从 `~/.local/bin` 检测 Codex CLI，快速打开快捷键改为 ⌘K。
+
+文件列表、Diff、历史、Stash 等入口使用内置文件类型图标，适配深浅主题及彩色/单色设置；ignore 文件统一为灰色空心禁用图标，文件名颜色继续表示 Git 状态。
+
+双栏 Diff 水平与垂直偏移双向同步，切文件后两侧回到左上角，同一文件刷新保留位置。刷新仓库保留系统流动等待动画，完成后隐藏轨道但保留结果布局；推送及提交并推送按真实传输进度连续填充。底栏进度起点固定，不随面板分隔线移动，并随小窗口缩短。
+
+组织与凭证侧栏统一圆角，移除分栏竖线并使标题横线衔接圆角；修复选中其他组织后无法返回“未分组”的问题。
 
 ## 2.1.0 — 2026-11-03 (35)
 

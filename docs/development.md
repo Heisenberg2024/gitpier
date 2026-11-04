@@ -1,5 +1,21 @@
 # Development
 
+## v2.2.0 release candidate — 2026-11-05
+
+Version 2.2.0 (36) is a locally verified release candidate based on `5d6232e1112978377fe487d6f4c442c849de182f`. The working-tree version change has not been committed or pushed, and the public Latest remains v2.1.0 (35). Bundle identity, macOS 14.0 minimum, update Feed and public key are unchanged.
+
+[Base-source CI 41883417862](https://github.com/Heisenberg2024/gitpier/actions/runs/41883417862) completed full macOS validation with Swift 6.1.2. Its downloaded XUnit artifact has SHA256 `34db49fcd59f96d51438470a078ae89157104fdd2cfde9f74b9ce6c634a5eaec` and contains 1,147 tests with zero failures, errors or skips. That run validates the base commit; the final version commit must receive its own full CI before a release Tag is used.
+
+Preparation evidence and English-first / Chinese-second release notes are stored under `.cache/releases/v2.2.0/prepare-20261105/`. Local validation passed **1,147 Core tests** (429.401 s), **11 release-tool tests**, and the Universal Release build (142.462 s). The main app and CLI both contain arm64/x86_64 slices targeting macOS 14.0. All 73 icon assets and the Material Icon Theme license match the source.
+
+The Universal DMG is **31,770,816 bytes**, SHA256 `694b1cf468ecd51021db5c60ee714ceb870cbdbfe937f82ec3c99e179d0313b6`. Its 257 bundle entries match the build output, including bytes, permissions and links; the mounted bundle passed strict deep-signature verification. This is an ad-hoc application candidate without a production-signed Appcast. The existing 338-input native settings acceptance snapshot matches all current inputs except the version configuration. Outputs are isolated; the installed application, dist and historical assets are preserved.
+
+The final packaged Release passed full native UI/PTY acceptance in **227.533 s**, producing **106 screenshots**. Acceptance used a disposable bundle identifier; all 78 file-backed Mach-O sections matched the candidate before launch, and its temporary preferences/application were removed afterward. Opening the DMG itself in Finder showed the saved icon-view layout, background, GitPier icon, Applications link and bilingual instruction. Both task-owned mounts were detached. All 343 frozen build inputs, 221 existing dist entries and 182 installed-bundle entries match their snapshots. The 453 staged entries still exactly match HEAD; the raw Index digest changed during preparation and is retained as a separate audit finding rather than described as byte-preserved.
+
+No production update signing, Tag/Draft, upload or publication is part of this local preparation. Bilingual note review and phase-specific maintainer authorizations remain required. Developer ID/notarization, physical Intel/macOS 14, complete VoiceOver, notification sound/Focus, external private-service/OAuth and production self-update coverage remain incomplete. See [native acceptance](v2.2.0-native-experience.md) and the [preparation plan](superpowers/plans/2026-11-05-v2.2.0-release.md).
+
+简体中文：本地准备 2.2.0（36）候选版，当前公开 Latest 仍为 v2.1.0（35）。基线 `5d6232e` 的完整 CI 和原始报告已核实，1,147 项测试零失败、错误和跳过；版本变更提交后仍须取得自身的完整 CI。生产更新信任字段保持，候选输出与现有应用/历史包隔离，正式签名与各发布阶段等待单独批准。
+
 ## Native experience refinement (Unreleased)
 
 See [implementation and acceptance](v2.2.0-native-experience.md) for the five phases and [credential audit](v2.2.0-credential-audit.md) for transport and API boundaries. `native-experience-a` through `native-experience-d` are Debug UI scopes using disposable repositories. For phase A, pass the executable from a locally packaged Debug app to exercise the actual Sparkle preference implementation; direct SwiftPM execution does not have packaged Sparkle defaults. Phase C uses a local bare remote and never needs a production profile. Phase D captures the fixture windows through WindowServer. Use `GITPIER_APP_OUTPUT_DIR` to point the temporary DMG structure check at a local candidate without replacing `dist`.

@@ -12,6 +12,12 @@ GitPier brings repository management, change review, commits, and an integrated 
 
 ![Commit workspace with tracked and untracked changes, side-by-side Diff, and terminal](docs/screenshots/commit-workspace.png)
 
+## Native experience refinement — v2.2.0 candidate
+
+Version 2.2.0 (Build 36) is being prepared for release; the stable download remains v2.1.0 (35). The candidate adds recognizable file type icons, continuous Commit & Push progress, synchronized two-axis Diff scrolling and a top-left reset when switching files. It also refines Dashboard alignment, settings sidebars, credential-source explanations, background notification sound and Codex CLI discovery. Quick Open uses ⌘K; the primary sidebar retains its opaque background.
+
+See the [candidate changes](CHANGELOG.md#unreleased), [native validation and remaining limits](docs/v2.2.0-native-experience.md) and [release preparation](docs/development.md#v220-release-candidate--2026-11-05). Publication is pending review of the bilingual notes and validation of the final version commit.
+
 ## Push recovery and workspace performance — v2.1.0
 
 [v2.1.0 (35)](https://github.com/Heisenberg2024/gitpier/releases/tag/v2.1.0) is the current **Latest** release. Operations Center retains unresolved checkpoints, offers full-hash copying and History navigation, and explicitly verifies a saved single-branch Push against its original remote reference. A retry reviews and rechecks the original source/target and never creates another commit. Context advice highlights earlier unverified results.
