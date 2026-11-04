@@ -20,21 +20,22 @@ struct DashboardRepositoryRow: View {
         .labelsHidden().toggleStyle(.checkbox).frame(width: 18)
       Group {
         if row.canCollapse {
-          Button(action: disclose) { Image(systemName: collapsed ? "chevron.right" : "chevron.down").frame(width: 18, height: 28) }
-            .buttonStyle(.workspace).help(store.text("Expand / collapse related worktrees", "展开 / 收起关联工作树"))
-            .accessibilityLabel(store.text("Expand / collapse related worktrees", "展开 / 收起关联工作树") + " " + entry.record.name)
+          VStack(spacing: 0) {
+            Button(action: disclose) { Image(systemName: collapsed ? "chevron.right" : "chevron.down").frame(width: 18, height: 28) }
+              .buttonStyle(.workspace).help(store.text("Expand / collapse related worktrees", "展开 / 收起关联工作树"))
+              .accessibilityLabel(store.text("Expand / collapse related worktrees", "展开 / 收起关联工作树") + " " + entry.record.name)
+            dragHandle("shippingbox")
+          }
         } else {
-          Image(systemName: row.isChild ? "arrow.turn.down.right" : "shippingbox")
-            .foregroundStyle(.tertiary).frame(width: 18)
+          dragHandle(row.isChild ? "arrow.turn.down.right" : "shippingbox")
         }
       }.font(uiFont(size: 11))
       Button { store.select(entry.record.id) } label: {
         HStack(spacing: 14) {
           identity.frame(width: columns.identity, alignment: .leading)
-          if !columns.compact { branch.frame(width: columns.branch, alignment: .leading) }
-          changes.frame(width: columns.changes, alignment: .leading)
-          sync.frame(width: columns.sync, alignment: .leading)
-          if columns.showsUpdated { collection.font(uiFont(size: 11)).foregroundStyle(.secondary).frame(width: columns.updated, alignment: .leading) }
+          if !columns.compact { branch.frame(width: columns.branch, alignment: .center) }
+          changes.frame(width: columns.changes, alignment: .center)
+          sync.frame(width: columns.sync, alignment: .center)
         }.frame(minHeight: columns.compact ? 72 : 66).contentShape(Rectangle())
       }.buttonStyle(.plain).focused($focused).accessibilityLabel(store.text("Open", "打开") + " " + entry.record.name)
         .accessibilityValue(accessibleStatus)
@@ -61,13 +62,22 @@ struct DashboardRepositoryRow: View {
       .overlay(RoundedRectangle(cornerRadius: 6).stroke(focused ? Color.accentColor.opacity(0.75) : .clear))
       .onHover { hovering = $0 }
       .accessibilityIdentifier("dashboard-row-" + entry.record.id.uuidString)
+      .accessibilityAction(named: Text(store.text("Open Repository", "打开仓库"))) {
+        store.select(entry.record.id)
+      }
       .nativeContextMenu { repositoryContextMenu(entry.record, store: store) }
+  }
+  private func dragHandle(_ symbol: String) -> some View {
+    Image(systemName: symbol).foregroundStyle(.tertiary).frame(width: 18, height: 18)
+      .contentShape(Rectangle())
+      .help(store.text("Drag to reorder", "拖动以调整顺序"))
+      .repositoryDragSource(entry.record)
   }
   private var identity: some View {
     VStack(alignment: .leading, spacing: 5) {
       HStack(spacing: 6) {
         Text(entry.record.name).font(repositoryFont(sizeOffset: 2, weight: .semibold)).lineLimit(1)
-        if entry.record.favorite { Image(systemName: "star.fill").font(uiFont(size: 10)).foregroundStyle(.secondary) }
+        if entry.record.favorite { RepositoryFavoriteMark().font(uiFont(size: 10)) }
         if row.relatedCount > 1 && !row.isChild {
           Text("\(row.relatedCount)").font(uiFont(size: 10, weight: .medium)).foregroundStyle(.secondary)
             .padding(.horizontal, 5).padding(.vertical, 2).background(Color.primary.opacity(0.055), in: Capsule())
@@ -81,7 +91,7 @@ struct DashboardRepositoryRow: View {
     }.padding(.leading, row.isChild ? 12 : 0)
   }
   private var branch: some View {
-    VStack(alignment: .leading, spacing: 4) {
+    VStack(alignment: columns.compact ? .leading : .center, spacing: 4) {
       Label(entry.usable.map { $0.detached ? store.text("Detached HEAD", "分离 HEAD") : $0.branch } ?? "—",
         systemImage: "arrow.triangle.branch").lineLimit(1).truncationMode(.middle)
         .help(entry.usable?.branch ?? store.text("Status unavailable", "状态不可用"))
@@ -93,7 +103,7 @@ struct DashboardRepositoryRow: View {
     }.font(uiFont(size: 12)).foregroundStyle(.secondary)
   }
   private var changes: some View {
-    VStack(alignment: .leading, spacing: 4) {
+    VStack(alignment: .center, spacing: 4) {
       if let value = entry.usable {
         if value.conflicts > 0 {
           Label(store.text("\(value.conflicts) conflicts", "\(value.conflicts) 个冲突"), systemImage: "exclamationmark.triangle")
@@ -107,30 +117,30 @@ struct DashboardRepositoryRow: View {
         if let operation = value.operation {
           Text(localizedUI(operation.rawValue.capitalized)).foregroundStyle(.orange)
         }
-      } else { collection }
-      if entry.usable != nil && !columns.showsUpdated && entry.state != .fresh { collection }
+      }
+      if let collectionStatus { Text(collectionStatus).foregroundStyle(entry.state == .failed || entry.state == .stale ? Color.orange : Color.secondary) }
     }.font(uiFont(size: 12)).monospacedDigit().lineLimit(1)
   }
   private var accessibleStatus: String {
-    guard let value = entry.usable else { return entry.failure?.summary ?? store.text("Not scanned", "尚未采集") }
-    return value.branch + ", " + store.text("\(value.tracked + value.untracked) modified, \(value.staged) staged, \(value.conflicts) conflicts",
-      "\(value.tracked + value.untracked) 项修改，\(value.staged) 项暂存，\(value.conflicts) 个冲突")
-      + ", " + BranchSyncPresentation(state: value.syncState, store: store).accessibleText
+    var parts = [entry.record.favorite ? store.text("Favorite", "已收藏") : nil, collectionStatus].compactMap { $0 }
+    if let value = entry.usable {
+      parts += [value.branch, store.text("\(value.tracked + value.untracked) modified, \(value.staged) staged, \(value.conflicts) conflicts",
+        "\(value.tracked + value.untracked) 项修改，\(value.staged) 项暂存，\(value.conflicts) 个冲突"),
+        BranchSyncPresentation(state: value.syncState, store: store).accessibleText]
+    }
+    return parts.joined(separator: ", ")
   }
   private var sync: some View {
     RepositorySyncStatus(entry: entry, workspace: store.workspace)
   }
-  @ViewBuilder private var collection: some View {
+  private var collectionStatus: String? {
     switch entry.state {
-    case .collecting: Label(store.text("Scanning", "正在采集"), systemImage: "ellipsis.circle")
-    case .queued: Text(store.text("Queued", "等待采集"))
-    case .unscanned: Text(store.text("Not scanned", "尚未采集"))
-    case .stale: Text(store.text("Needs refresh", "需要刷新")).foregroundStyle(.orange)
-    case .failed: Text(store.text("Unavailable", "不可用")).foregroundStyle(.orange).help(entry.failure?.summary ?? "")
-    case .fresh:
-      if let date = entry.snapshot?.collectedAt {
-        Text(date, style: .relative).environment(\.locale, Locale(identifier: store.settings.language == .english ? "en" : "zh_CN")).help(date.formatted(date: .abbreviated, time: .standard))
-      }
+    case .collecting: store.text("Scanning", "正在采集")
+    case .queued: store.text("Queued", "等待采集")
+    case .unscanned: store.text("Not scanned", "尚未采集")
+    case .stale: store.text("Needs refresh", "需要刷新")
+    case .failed: store.text("Unavailable", "不可用")
+    case .fresh: nil
     }
   }
 }

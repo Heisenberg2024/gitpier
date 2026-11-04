@@ -71,7 +71,7 @@ struct PatchImportView: View {
   var body: some View {
     VStack(alignment: .leading, spacing: 12) {
       HStack {
-        Text(store.text("Import Patch", "导入补丁")).font(.title2.weight(.semibold))
+        Text(store.text("Import Patch", "导入补丁")).workspaceHeading(.sheet)
         Spacer(); Text(input.name).lineLimit(1).foregroundStyle(.secondary)
       }
       HStack {
@@ -168,7 +168,7 @@ struct PatchExportView: View {
   @State private var problem: String?
   var body: some View {
     VStack(alignment: .leading, spacing: 14) {
-      Text(store.text("Export Patch", "导出补丁")).font(.title2.weight(.semibold))
+      Text(store.text("Export Patch", "导出补丁")).workspaceHeading(.sheet)
       Picker(store.text("Format", "格式"), selection: $format) {
         Text(store.text("Git Diff Patch", "Git Diff 补丁")).tag(PatchExportFormat.diff)
         if source.emailAvailable { Text(store.text("Commit Email Patch (format-patch)", "提交邮件补丁（format-patch）")).tag(PatchExportFormat.commitEmail) }

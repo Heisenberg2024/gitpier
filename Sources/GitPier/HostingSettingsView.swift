@@ -21,7 +21,7 @@ struct HostingSettingsView: View {
     ScrollView {
       VStack(alignment: .leading, spacing: 18) {
         VStack(alignment: .leading, spacing: 6) {
-          Text(store.text("Code Hosting", "代码托管")).font(.title2.weight(.semibold))
+          Text(store.text("Code Hosting", "代码托管")).workspaceHeading(.sheet)
           Text(store.text("Connect accounts for pull requests, reviews and CI. Git authentication keeps using your existing credentials.", "连接账号以查看 PR/MR、审查和 CI。Git 认证继续使用现有凭证。"))
             .font(.callout).foregroundStyle(.secondary)
         }

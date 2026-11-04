@@ -40,7 +40,7 @@ struct WorktreesView: View {
   private var worktreesContent: some View {
     VStack(spacing: 0) {
       HStack {
-        Text(store.text("Worktrees", "工作树")).font(.headline)
+        Text(store.text("Worktrees", "工作树")).workspaceHeading()
         Spacer()
         Button(store.text("Repair Moved Worktree…", "修复已移动工作树…")) { repair() }.disabled(model.busy)
         Button(store.text("New Worktree…", "新建工作树…")) { creating = true }.disabled(model.busy)
@@ -194,7 +194,7 @@ struct WorktreeCreationSheet: View {
   }
   var body: some View {
     VStack(alignment: .leading, spacing: 14) {
-      Text(store.text("New Worktree", "新建工作树")).font(.headline)
+      Text(store.text("New Worktree", "新建工作树")).workspaceHeading(.page)
       Toggle(store.text("Create a new branch", "同时创建新分支"), isOn: $newBranch)
       if newBranch {
         TextField(store.text("Branch name", "分支名称"), text: $branch)

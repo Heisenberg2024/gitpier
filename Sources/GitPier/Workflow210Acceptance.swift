@@ -79,15 +79,27 @@ extension UIAcceptance {
         try FileManager.default.removeItem(at: observationFault)
         try FileManager.default.removeItem(at: committed)
         await model.refresh()
+        store.showDashboard = false; model.setPage("commit")
+        model.error = nil
         model.retryPush()
-        try require(model.confirmation == nil && model.busy,
-          "current retry is not hijacked by an older unknown Push checkpoint")
+        try await waitFor { model.confirmation != nil || model.busy || model.error != nil }
+        guard let review = model.confirmation, let saved = newer?.localCommit else {
+          throw GitPierError.invalidInput("Newer saved commit must receive its own Push review")
+        }
+        let fixtureGit = GitService(root: root)
+        let remote = try await fixtureGit.read(["ls-remote", "--", "origin", "refs/heads/main"]).text
+        try require(!model.busy && review.readyForConfirmation && review.detail.contains(saved)
+          && review.detail.contains("origin / main") && !review.detail.contains(checkpoint.localHead)
+          && remote.hasPrefix(checkpoint.localHead + "\t"),
+          "current retry reviews only the newer saved commit and waits for confirmation")
+        model.confirmation = nil; review.performConfirmedAction()
         try await waitFor { !model.busy && !model.refreshing }
-        try require(model.outputResult == .succeeded && store.operations.records.first(where: { $0.id == record.id })?.state == .resultUnknown,
+        let retried = try await fixtureGit.read(["ls-remote", "--", "origin", "refs/heads/main"]).text
+        try require(retried.hasPrefix(saved + "\t") && model.outputResult == .succeeded
+          && store.operations.records.first(where: { $0.id == record.id })?.state == .resultUnknown,
           "newer retry succeeds while the older unknown result remains independently retained")
         try require((try Data(contentsOf: commits)).split(separator: 10).count == 2,
           "retry of the newer local result creates no duplicate Commit")
-        let fixtureGit = GitService(root: root)
         let remotePath = root.deletingLastPathComponent().appendingPathComponent("remote.git")
         try await fixtureGit.perform(["--git-dir=" + remotePath.path, "update-ref", "refs/heads/main", checkpoint.localHead])
         try Data().write(to: faults)

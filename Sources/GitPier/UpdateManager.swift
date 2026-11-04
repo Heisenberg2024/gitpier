@@ -67,7 +67,7 @@ final class UpdateManager: NSObject, ObservableObject, SPUUpdaterDelegate,
     state = .idle
     // No automatic downloads or install-on-quit. The standard driver owns all update UI.
     controller.startUpdater()
-    // Check once at launch when the user opted in, even if the last scheduled check was recent.
+    // Check once at launch when enabled, even if the last scheduled check was recent.
     // Sparkle owns subsequent scheduling; never reset its saved check date or skipped versions.
     if controller.updater.automaticallyChecksForUpdates {
       controller.updater.checkForUpdatesInBackground()

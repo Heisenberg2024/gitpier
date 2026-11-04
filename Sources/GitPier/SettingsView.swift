@@ -30,16 +30,20 @@ struct SettingsView: View {
           Toggle(
             store.text("Watch external changes (show refresh reminder)", "监听外部变更（显示刷新提示）"),
             isOn: setting(\.automaticRefresh))
-          Toggle(
-            store.text("Completion notifications", "完成通知"),
-            isOn: Binding(
-              get: { store.settings.completionNotifications },
-              set: { store.configureNotifications($0) }))
           Stepper(
             store.text(
               "Recent repositories: \(store.settings.recentLimit)",
               "最近仓库：\(store.settings.recentLimit)"), value: setting(\.recentLimit), in: 5...50)
           ExternalEditorPicker()
+        }
+        Section(store.text("Notifications", "通知")) {
+          Toggle(store.text("Operation completion notifications", "操作完成通知"), isOn: Binding(
+            get: { store.settings.completionNotifications }, set: { store.configureNotifications($0) }))
+          Toggle(store.text("Notification sound", "通知声音"), isOn: setting(\.completionNotificationSound))
+            .disabled(!store.settings.completionNotifications)
+          Text(store.text("Receive operation results when GitPier is in the background. macOS notification settings and Focus control delivery and sound.",
+            "GitPier 在后台时发送操作结果。通知显示和声音由 macOS 通知设置和专注模式控制。"))
+            .font(.caption).foregroundStyle(.secondary)
         }
       }.formStyle(.grouped).tabItem { Label(store.text("General", "常规"), systemImage: "gearshape") }
         .tag(0)
@@ -50,14 +54,7 @@ struct SettingsView: View {
           Text(store.text("Light", "浅色")).tag(AppearanceMode.light)
         }
         Toggle(store.text("Compact file rows", "紧凑文件列表"), isOn: setting(\.compactUI))
-        diffTypography
         Toggle(store.text("Colored file icons", "彩色文件图标"), isOn: setting(\.coloredFileIcons))
-        ColorPicker(
-          store.text("Diff additions", "Diff 新增颜色"), selection: colorSetting(\.diffAddedHex),
-          supportsOpacity: false)
-        ColorPicker(
-          store.text("Diff deletions", "Diff 删除颜色"), selection: colorSetting(\.diffRemovedHex),
-          supportsOpacity: false)
         Text(
           store.text(
             "Panel sizes are saved independently for each repository. Drag the dividers in the workspace.",
@@ -166,21 +163,23 @@ struct SettingsView: View {
       }.formStyle(.grouped).tabItem { Label(store.text("Terminal", "终端"), systemImage: "terminal") }
         .tag(3)
       Form {
-        Toggle(store.text("Unified Diff", "统一 Diff"), isOn: setting(\.unifiedDiff))
-        Toggle(store.text("Wrap Lines", "自动换行"), isOn: setting(\.wrapDiff))
-        Toggle(store.text("Line Numbers", "行号"), isOn: setting(\.showLineNumbers))
-        Toggle(store.text("Show Whitespace", "显示空白"), isOn: setting(\.showWhitespace))
-        Toggle(
-          store.text("Ignore Whitespace Differences", "忽略空白差异"), isOn: setting(\.ignoreWhitespace))
-        diffTypography
-        Stepper(
-          store.text("Tab Width: \(store.settings.tabSize)", "Tab 宽度：\(store.settings.tabSize)"),
-          value: setting(\.tabSize), in: 1...8)
-        Text(
-          store.text(
-            "Whitespace filtering disables hunk mutations to preserve exact patch context.",
-            "忽略空白差异时禁用差异块修改，以保持 Patch 上下文准确。")
-        ).font(.caption).foregroundStyle(.secondary)
+        Section(store.text("Display", "显示")) {
+          Toggle(store.text("Unified Diff", "统一 Diff"), isOn: setting(\.unifiedDiff))
+          Toggle(store.text("Wrap Lines", "自动换行"), isOn: setting(\.wrapDiff))
+          Toggle(store.text("Line Numbers", "行号"), isOn: setting(\.showLineNumbers))
+          Toggle(store.text("Show Whitespace", "显示空白"), isOn: setting(\.showWhitespace))
+          Toggle(store.text("Ignore Whitespace Differences", "忽略空白差异"), isOn: setting(\.ignoreWhitespace))
+          Stepper(store.text("Tab Width: \(store.settings.tabSize)", "Tab 宽度：\(store.settings.tabSize)"),
+            value: setting(\.tabSize), in: 1...8)
+          Text(store.text("Whitespace filtering disables hunk mutations to preserve exact patch context.",
+            "忽略空白差异时禁用差异块修改，以保持 Patch 上下文准确。"))
+            .font(.caption).foregroundStyle(.secondary)
+        }
+        Section(store.text("Typography", "字体")) { diffTypography }
+        Section(store.text("Colors", "颜色")) {
+          ColorPicker(store.text("Diff additions", "Diff 新增颜色"), selection: colorSetting(\.diffAddedHex), supportsOpacity: false)
+          ColorPicker(store.text("Diff deletions", "Diff 删除颜色"), selection: colorSetting(\.diffRemovedHex), supportsOpacity: false)
+        }
       }.formStyle(.grouped).tabItem {
         Label(localizedUI("Diff"), systemImage: "arrow.left.arrow.right")
       }.tag(4)
@@ -217,7 +216,8 @@ struct SettingsView: View {
         Slider(value: setting(\.diffFontSize), in: 10...24, step: 1)
         Text("\(Int(store.settings.diffFontSize)) pt").frame(width: 44)
       }
-      Text(store.text("Only affects code in Diff views.", "仅影响 Diff 对比页的代码，其他界面使用系统字体。"))
+      Text(store.text("Used for Diff, Blame and conflict code views. Terminal has separate font settings.",
+        "用于 Diff、Blame 和冲突解决中的代码。终端字体单独设置。"))
         .font(.caption).foregroundStyle(.secondary)
     }
   }
@@ -261,7 +261,7 @@ struct AboutSettingsView: View {
         }
       }
       UpdateSettingsView(manager: store.updates)
-        .padding(16).background(Theme.panel(scheme), in: RoundedRectangle(cornerRadius: 12))
+        .padding(16).workspacePanel(Theme.sidebar(scheme), radius: 12)
       VStack(alignment: .leading, spacing: 6) {
         LabeledContent(store.text("License", "许可证")) { Text("MIT License") }
         Text(
@@ -304,7 +304,6 @@ struct RepositorySettingsView: View {
   @State private var signingKey = ""
   @State private var signingFormat = "openpgp"
   @State private var hooksPath = ""
-  @State private var credentialsMode = "system"
   var body: some View {
     Form {
       Section(store.text("Repository", "仓库")) {
@@ -331,23 +330,7 @@ struct RepositorySettingsView: View {
         Text(model.status.upstream ?? store.text("No upstream", "无 Upstream")).foregroundStyle(
           .secondary)
       }
-      Section(store.text("Remote Authentication", "远程认证")) {
-        Picker(store.text("Credentials", "凭证"), selection: $credentialsMode) {
-          Text(store.text("System Git / SSH", "系统 Git / SSH")).tag("system")
-          Text(store.text("Global Default", "全局默认")).tag("default")
-          ForEach(store.configuration.credentials) { Text($0.name).tag($0.id.uuidString) }
-        }.onChange(of: credentialsMode) { _, value in
-          model.record.useDefaultCredential = value == "default"
-          model.record.credentialID = UUID(uuidString: value)
-          store.update(model.record)
-          Task { await model.configure() }
-        }
-        Text(
-          store.text(
-            "Credentials authenticate remotes; they do not set commit authorship.",
-            "凭证用于远程认证，不会改变提交作者身份。")
-        ).font(.caption).foregroundStyle(.secondary)
-      }
+      RepositoryAuthenticationSection(model: model, workspace: store.workspace)
       Section(store.text("Repository Git Identity", "仓库 Git 身份")) {
         TextField(localizedUI("User Name"), text: $userName)
         TextField(localizedUI("User Email"), text: $userEmail)
@@ -399,9 +382,6 @@ struct RepositorySettingsView: View {
       signingKey = model.identity["user.signingkey"] ?? ""
       signingFormat = model.identity["gpg.format"].flatMap { $0.isEmpty ? nil : $0 } ?? "openpgp"
       hooksPath = model.identity["core.hooksPath"] ?? ""
-      credentialsMode =
-        model.record.credentialID?.uuidString
-        ?? (model.record.useDefaultCredential ? "default" : "system")
     }
   }
   func record<T>(_ path: WritableKeyPath<RepositoryRecord, T>) -> Binding<T> {
@@ -429,7 +409,7 @@ struct CredentialsView: View {
   var body: some View {
     VStack(spacing: 0) {
       HStack {
-        Text(store.text("Credentials", "凭证")).font(.title3.weight(.semibold))
+        Text(store.text("Credentials", "凭证")).workspaceHeading(.page)
         Spacer()
         Button(store.text("Add Account…", "添加账号…")) {
           profile = CredentialProfile(name: "", host: "")
@@ -506,7 +486,7 @@ struct CredentialsView: View {
     }
     .sheet(isPresented: $editing) {
       VStack(alignment: .leading, spacing: 14) {
-        Text(store.text("Account Credentials", "账号凭证")).font(.title2)
+        Text(store.text("Account Credentials", "账号凭证")).workspaceHeading(.sheet)
         TextField(store.text("Name", "名称"), text: $profile.name)
         TextField(store.text("Host (e.g. github.com)", "Host（如 github.com）"), text: $profile.host)
         Picker(store.text("Protocol", "协议"), selection: $profile.kind) {

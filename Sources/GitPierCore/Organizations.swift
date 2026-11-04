@@ -9,9 +9,14 @@ public struct RepositoryOrganization: Codable, Equatable, Identifiable, Sendable
   }
 }
 
+public enum RepositoryOrderPlacement: Equatable, Sendable {
+  case before, after
+}
+
 extension WorkspaceConfiguration {
   /// Array order is the persistent manual order, independent of recent-use timestamps.
-  @discardableResult public mutating func reorderRepository(_ id: UUID, relativeTo target: UUID)
+  @discardableResult public mutating func reorderRepository(_ id: UUID, relativeTo target: UUID,
+    placement: RepositoryOrderPlacement? = nil)
     -> Bool
   {
     guard id != target,
@@ -20,7 +25,12 @@ extension WorkspaceConfiguration {
       repositories[sourceIndex].group == repositories[targetIndex].group
     else { return false }
     let record = repositories.remove(at: sourceIndex)
-    repositories.insert(record, at: targetIndex)
+    if let placement {
+      let anchor = targetIndex - (sourceIndex < targetIndex ? 1 : 0)
+      repositories.insert(record, at: anchor + (placement == .after ? 1 : 0))
+    } else {
+      repositories.insert(record, at: targetIndex)
+    }
     return true
   }
 

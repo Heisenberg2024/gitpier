@@ -26,6 +26,37 @@ struct AppPopoverAppearance: ViewModifier {
   }
 }
 
+/// Keep the editor opaque. Only the primary navigation backdrop blends with the window.
+struct WorkspaceSidebarBackdrop: View {
+  @Environment(\.colorScheme) private var scheme
+  @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+  var body: some View {
+    backdrop.allowsHitTesting(false).accessibilityHidden(true)
+  }
+  @ViewBuilder private var backdrop: some View {
+    #if compiler(>=6.4)
+    if #available(macOS 27, *), !reduceTransparency {
+      SidebarMaterial().backgroundExtensionEffect()
+    } else {
+      Theme.sidebar(scheme)
+    }
+    #else
+    Theme.sidebar(scheme)
+    #endif
+  }
+}
+
+private struct SidebarMaterial: NSViewRepresentable {
+  func makeNSView(context: Context) -> NSVisualEffectView {
+    let view = NSVisualEffectView()
+    view.material = .sidebar
+    view.blendingMode = .behindWindow
+    view.state = .followsWindowActiveState
+    return view
+  }
+  func updateNSView(_ view: NSVisualEffectView, context: Context) {}
+}
+
 struct WindowAppearance: NSViewRepresentable {
   let mode: AppearanceMode
   func makeNSView(context: Context) -> AppearanceAnchor {

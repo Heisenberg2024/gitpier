@@ -59,6 +59,7 @@ import UserNotifications
   @Published var dashboardOrganization: String?
   @Published private(set) var systemColorScheme: ColorScheme = .light
   private var pendingSave: Task<Void, Never>?
+  private var notificationAuthorizationID: UUID?
   nonisolated(unsafe) private var appearanceObserver: NSObjectProtocol?
   nonisolated(unsafe) private var foregroundObserver: NSObjectProtocol?
   @Published var models: [UUID: RepositoryModel] = [:]
@@ -133,6 +134,7 @@ import UserNotifications
     settings.language == .english ? english : chinese
   }
   func configureNotifications(_ enabled: Bool) {
+    notificationAuthorizationID = nil
     if !enabled {
       var settings = settings
       settings.completionNotifications = false
@@ -143,23 +145,31 @@ import UserNotifications
       error = text("Notifications require the packaged GitPier.app.", "通知需要打包后的 GitPier.app。 ")
       return
     }
+    let request = UUID()
+    notificationAuthorizationID = request
     UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) {
       [weak self] granted, _ in
       Task { @MainActor [weak self] in
-        guard let self else { return }
+        guard let self, self.notificationAuthorizationID == request else { return }
+        self.notificationAuthorizationID = nil
         var settings = self.settings
         settings.completionNotifications = granted
         self.updateSettings(settings)
+        if !granted {
+          self.error = self.text("Allow GitPier notifications in System Settings to receive operation alerts.",
+            "要接收操作通知，请在系统设置中允许 GitPier 发送通知。")
+        }
       }
     }
   }
-  func notifyCompletion(_ message: String) {
+  func notifyCompletion(_ id: UUID, result: OperationResult, operation: String, repository: String) {
     guard settings.completionNotifications, Bundle.main.bundleIdentifier != nil else { return }
-    let content = UNMutableNotificationContent()
-    content.title = "GitPier"
-    content.body = message
-    UNUserNotificationCenter.current().add(
-      UNNotificationRequest(identifier: UUID().uuidString, content: content, trigger: nil))
+    guard let record = operations.records.first(where: { $0.id == id }) else { return }
+    let foreground = NSApp.isActive && NSApp.windows.contains { $0.isVisible && !$0.isMiniaturized && $0.canBecomeKey }
+    guard let request = CompletionNotifications.request(id: id, kind: record.kind, result: result,
+      operation: operation, repository: repository, localCommit: record.localCommit,
+      settings: settings, foreground: foreground) else { return }
+    UNUserNotificationCenter.current().add(request)
   }
   func updateSystemAppearance() {
     let scheme: ColorScheme =
@@ -237,7 +247,7 @@ import UserNotifications
         || previous.defaultCredentialID != settings.defaultCredentialID
       {
         Task {
-          await model.configure()
+          await model.reconfigureWhenIdle()
           if previous.gitPath != settings.gitPath && model.available { await model.refresh() }
         }
       }
@@ -295,8 +305,9 @@ import UserNotifications
       await current?.activate(refresh: true)
     }
   }
-  @discardableResult func reorderRepository(_ id: UUID, relativeTo target: UUID) -> Bool {
-    guard configuration.reorderRepository(id, relativeTo: target) else { return false }
+  @discardableResult func reorderRepository(_ id: UUID, relativeTo target: UUID,
+    placement: RepositoryOrderPlacement? = nil) -> Bool {
+    guard configuration.reorderRepository(id, relativeTo: target, placement: placement) else { return false }
     save()
     return true
   }
@@ -369,27 +380,34 @@ import UserNotifications
     cloning = true
     notice = nil
     let progressTicket = cloneActivity.begin(text("Cloning", "克隆仓库"), kind: .clone)
-    let progress = cloneActivity.receiver()
     cloneTask = Task {
       var result = OperationResult.succeeded
       defer {
         cloneActivity.finish(result, ticket: progressTicket)
+        notifyCompletion(progressTicket.id, result: result, operation: text("Clone", "克隆"), repository: destination.lastPathComponent)
         cloning = false
         cloneTask = nil
       }
       do {
         let profile = configuration.credentials.first { $0.id == credential }
+        guard credential == nil || profile != nil else { throw AuthenticationFailure(.configurationInvalid) }
         let auth = try AuthenticationContext.make(
           profile: profile, executable: Bundle.main.executablePath ?? CommandLine.arguments[0],
           configurationPath: persistence.url.path)
         cloneActivity.markRunning()
+        cloneActivity.markExecuting()
         try await GitService.clone(
           url: url, destination: destination, gitPath: settings.gitPath,
-          environment: auth.environment, authArguments: auth.arguments, progress: progress)
+          environment: auth.environment, authArguments: auth.arguments, progress: cloneActivity.receiver())
+        cloneActivity.advance(text("Adding to workspace", "添加到工作空间"), cancellable: false, phase: .refreshing)
         showClone = false
-        await addRepository(destination, credential: credential)
+        guard await addRepository(destination, credential: credential) else {
+          result = .needsAttention
+          notice = text("Clone saved on disk. Open the repository again to add it to your workspace.",
+            "克隆已保存到磁盘。请重新打开仓库，将其添加到工作空间。")
+          return
+        }
         notice = text("Clone completed.", "克隆已完成。")
-        notifyCompletion(notice!)
       } catch is CancellationError {
         result = .cancelled
         notice = text(
@@ -408,7 +426,7 @@ import UserNotifications
       configuration.credentials.append(profile)
     }
     save()
-    for model in models.values { Task { await model.configure() } }
+    for model in models.values { Task { await model.reconfigureWhenIdle() } }
     workspace.credentialsChanged(Set(repositories.filter {
       ($0.credentialID ?? ($0.useDefaultCredential ? settings.defaultCredentialID : nil)) == profile.id
     }.map(\.id)))
@@ -428,7 +446,7 @@ import UserNotifications
     }
     for model in models.values where model.record.credentialID == id {
       model.record.credentialID = nil
-      Task { await model.configure() }
+      Task { await model.reconfigureWhenIdle() }
     }
     save()
     workspace.credentialsChanged(affected)
@@ -538,6 +556,7 @@ struct DiffTab: Identifiable, Equatable {
   }
   @Published var output: String?
   @Published var outputResult: OperationResult = .succeeded
+  private(set) var operationFeedbackID: UUID?
   @Published var pushFailed = false
   @Published var rejectedPush: PushRejection?
   private var pendingPushRecovery: PushRejection?
@@ -616,7 +635,7 @@ struct DiffTab: Identifiable, Equatable {
     self.store = store
     panels = WorkspacePanels(record.layout)
     terminal = TerminalManager(root: record.path)
-    terminal.canStart = { [weak store] in store?.admitWorktreeProcess(record.path) ?? false }
+    configureTerminalAdmission(at: record.path)
     activity.center = store.operations
     activity.repositoryID = record.id
     activity.repositoryIdentity = { [weak self] in
@@ -631,9 +650,8 @@ struct DiffTab: Identifiable, Equatable {
   var trackedCount: Int { fileIndex.trackedCount }
   var untrackedCount: Int { fileIndex.untrackedCount }
   var canCommit: Bool {
-    let title = record.draft.components(separatedBy: "\n").first ?? ""
     return available && !busy && !refreshing && snapshot != nil && !includedPaths.isEmpty
-      && !title.trimmingCharacters(in: .whitespaces).isEmpty
+      && record.draft.contains(where: { !$0.isWhitespace })
       && status.operation == nil && !fileIndex.hasConflicts
   }
   var selectedFile: FileChange? { selectedPath.flatMap { fileIndex.byPath[$0] } }
@@ -659,24 +677,67 @@ struct DiffTab: Identifiable, Equatable {
     service = new
     return new
   }
-  @discardableResult func configure(reportErrors: Bool = true) async -> Bool {
+  var credentialBinding: GitCredentialBinding {
+    GitCredentialBinding(record: record, settings: store.settings, profiles: store.configuration.credentials)
+  }
+  private func authenticationContext(for binding: GitCredentialBinding) throws -> AuthenticationContext {
+    try binding.context(executable: Bundle.main.executablePath ?? CommandLine.arguments[0],
+      configurationPath: store.persistence.url.path)
+  }
+  private func configureTerminalAdmission(at path: String) {
+    terminal.canStart = { [weak store] in store?.admitWorktreeProcess(path) ?? false }
+    terminal.authenticationForNewSession = { [weak self] in self?.terminalAuthenticationForNewSession() }
+  }
+  private func terminalAuthenticationForNewSession() -> AuthenticationContext? {
     do {
-      let id =
-        record.credentialID
-        ?? (record.useDefaultCredential ? store.settings.defaultCredentialID : nil)
-      let profile = store.configuration.credentials.first { $0.id == id }
-      var auth = try AuthenticationContext.make(
-        profile: profile, executable: Bundle.main.executablePath ?? CommandLine.arguments[0],
-        configurationPath: store.persistence.url.path)
-      let canonical = URL(fileURLWithPath: record.path).resolvingSymlinksInPath().path
+      var auth = try authenticationContext(for: credentialBinding)
+      // A Git task may still own the previous context. Reuse only a prepared
+      // socket that belongs to the binding selected for this new shell.
+      if let cached = terminal.authentication,
+        cached.environment["GITPIER_AUTH_IDENTITY"] == auth.environment["GITPIER_AUTH_IDENTITY"] {
+        auth.environment["SSH_AUTH_SOCK"] = cached.environment["SSH_AUTH_SOCK"]
+      }
+      return auth
+    } catch {
+      self.error = localizedUI(error.localizedDescription)
+      return nil
+    }
+  }
+  func reconfigureWhenIdle() async {
+    if let activeTask { await activeTask.value }
+    guard !Task.isCancelled, store.models[record.id] === self else { return }
+    await configure()
+  }
+  @discardableResult func configure(reportErrors: Bool = true, forOperation operation: UUID? = nil) async -> Bool {
+    func canConfigure() -> Bool {
+      operation.map { busy && activity.ticket.id == $0 } ?? !busy
+    }
+    guard canConfigure() else { return false }
+    let binding = credentialBinding
+    let path = record.path
+    let executable = store.settings.gitPath
+    func isCurrent() -> Bool {
+      !Task.isCancelled && canConfigure() && record.path == path && store.settings.gitPath == executable && credentialBinding == binding
+    }
+    do {
+      var auth = try authenticationContext(for: binding)
+      let canonical = URL(fileURLWithPath: path).resolvingSymlinksInPath().path
       if let socket = await SSHAgentSession.shared.currentSocket(repository: canonical,
         authenticationIdentity: auth.environment["GITPIER_AUTH_IDENTITY"] ?? "") { auth.environment["SSH_AUTH_SOCK"] = socket }
-      await git().configure(
-        gitPath: store.settings.gitPath, authArguments: auth.arguments,
-        authEnvironment: auth.environment)
+      let git = await git()
+      guard isCurrent() else { return false }
+      await git.configure(gitPath: executable, authArguments: auth.arguments, authEnvironment: auth.environment)
+      guard isCurrent() else { return false }
       terminal.configure(authentication: auth)
       return true
-    } catch { if reportErrors { self.error = error.localizedDescription }; return false }
+    } catch {
+      if isCurrent() {
+        // Existing terminal sessions retain their own environment. Do not give a new one the previous profile.
+        terminal.authentication = nil
+        if reportErrors { self.error = localizedUI(error.localizedDescription) }
+      }
+      return false
+    }
   }
   func activate(refresh: Bool = false) async {
     activationRefreshRequested = activationRefreshRequested || refresh
@@ -1104,6 +1165,7 @@ struct DiffTab: Identifiable, Equatable {
   func run(
     label: String? = nil, completion: String? = nil, notify: Bool = false,
     kind: WorkflowOperationKind = .git, updatesCommitState: CommitStateUpdate? = nil,
+    retryCheckpoint: PushCheckpoint? = nil,
     _ action: @escaping (GitService) async throws -> Void
   ) {
     guard !busy else { return }
@@ -1115,12 +1177,24 @@ struct DiffTab: Identifiable, Equatable {
     confirmationReviewTask = nil
     busy = true
     error = nil
+    operationFeedbackID = nil
     output = nil
     outputResult = .succeeded
     let progressTicket = activity.begin(label ?? store.text("Git operation", "Git 操作"), kind: kind)
+    if kind == .commit || kind == .commitAndPush {
+      activity.advance(store.text("Preparing commit", "准备提交"), step: .prepare)
+    }
     if [.push, .commitAndPush, .mergeAndPush].contains(kind) { pushRetryOperationID = progressTicket.id }
     else if kind == .commit { pushRetryOperationID = nil }
-    activity.recordBranch(status.branch)
+    if let retryCheckpoint {
+      // Keep the source and destination on this attempt even if authentication,
+      // cancellation or preflight prevents the Git observer from running.
+      activity.recordBranch(String(retryCheckpoint.localReference.dropFirst(11)))
+      activity.recordLocalCommit(retryCheckpoint.localHead)
+      activity.recordPushCheckpoint(retryCheckpoint)
+    } else {
+      activity.recordBranch(status.branch)
+    }
     let hadConflicts = status.files.contains(where: \.isConflicted)
     activeTask = Task {
       defer {
@@ -1152,6 +1226,8 @@ struct DiffTab: Identifiable, Equatable {
           ownCommitStateEntry = before
         }
         try Task.checkCancellation()
+        if kind != .commit && kind != .commitAndPush { activity.markExecuting() }
+        if [.fetch, .pull, .push].contains(kind) { try await requireRemoteAuthentication() }
         try await action(git)
         if outputResult == .resultUnknown {
           result = .resultUnknown
@@ -1166,7 +1242,7 @@ struct DiffTab: Identifiable, Equatable {
           ? (completion ?? (label ?? store.text("Git operation", "Git 操作"))
             + store.text(" · Completed", " · 已完成")) : ""
         output = [summary, details].filter { !$0.isEmpty }.joined(separator: "\n")
-        if result == .failed { outputResult = .needsAttention }
+        if result == .failed { outputResult = .failed }
       } catch let unverified as CommitCompletionUnverified {
         result = .needsAttention
         outputResult = .needsAttention
@@ -1183,14 +1259,15 @@ struct DiffTab: Identifiable, Equatable {
         }
       } catch {
         result = outputResult == .resultUnknown ? .resultUnknown : .failed
-        if output != nil, result != .resultUnknown { outputResult = .needsAttention }
+        if result != .resultUnknown { outputResult = .failed }
         self.error = localizedUI(error.localizedDescription)
       }
       // Preserve diagnostics separately from the user-dismissible error Sheet.
       let operationError = error
       let errorDismissal = errorDismissalGeneration
       await store.workspace.endManualOperation()
-      activity.advance(store.text("Refreshing", "刷新仓库"), cancellable: false, phase: .refreshing)
+      activity.advance(store.text("Refreshing", "刷新仓库"), cancellable: false, phase: .refreshing,
+        previousCompleted: result == .succeeded)
       // A read started during the write may still contain an older snapshot.
       await refresh(afterCurrent: true)
       if let operationError, errorDismissal == errorDismissalGeneration { error = operationError }
@@ -1214,8 +1291,16 @@ struct DiffTab: Identifiable, Equatable {
       }
       activity.finish(result, ticket: progressTicket,
         waitingForUser: result == .needsAttention && (status.operation != nil || pendingPushRecovery != nil || pendingMergeReview != nil || needsUpstream),
-        detail: result == .succeeded ? nil : [output, operationError ?? error].compactMap { $0 }.joined(separator: "\n\n"))
-      if notify, let output { store.notifyCompletion(output) }
+        detail: result == .succeeded ? (kind == .commitAndPush ? output : nil)
+          : [output, operationError ?? error].compactMap { $0 }.joined(separator: "\n\n"))
+      if [.commit, .commitAndPush, .push, .mergeAndPush].contains(kind) {
+        operationFeedbackID = progressTicket.id
+        if output?.isEmpty != false { output = operationError ?? error }
+      }
+      if notify {
+        store.notifyCompletion(progressTicket.id, result: result,
+          operation: label ?? store.text("Git operation", "Git 操作"), repository: record.name)
+      }
     }
   }
   private func recordOwnCommitState(_ git: GitService, update: CommitStateUpdate) async {
@@ -1226,7 +1311,7 @@ struct DiffTab: Identifiable, Equatable {
     indexReview.observe(completed, ownedChangeFrom: matches ? entry?.identity : nil)
   }
   func cancel() {
-    guard !committing else { return }
+    guard !committing, activity.canCancel else { return }
     activity.advance(store.text("Cancelling", "取消中"), cancellable: false, phase: .cancelling)
     activeTask?.cancel()
   }
@@ -1235,26 +1320,42 @@ struct DiffTab: Identifiable, Equatable {
       "Local commit result unverified. Inspect History or Reflog before committing or pushing again.",
       "本地提交结果尚未核实。再次提交或推送前，请在历史或引用日志中检查。") + "\n" + issue.diagnostic
   }
+  private func requireRemoteAuthentication() async throws {
+    let configured = await configure(reportErrors: false, forOperation: activity.ticket.id)
+    try Task.checkCancellation()
+    guard configured else { throw AuthenticationFailure(.configurationInvalid) }
+  }
   func commit(push: Bool) {
-    guard canCommit, let expected = snapshot else { return }
+    guard confirmation == nil, canCommit, let expected = snapshot else { return }
     let selection = status.files.filter { includedPaths.contains($0.path) }
-    if amend || requiresIndexReview {
+    let draft = record.draft
+    let proposed = CommitMessageFormatter.format(draft)
+    let needsFormatReview = draft != proposed
+    let reviewingAmend = amend
+    let start: (String) -> Void = { [weak self] message in
+      guard let self, self.canCommit, self.record.draft == draft, self.amend == reviewingAmend,
+        self.snapshot?.identity == expected.identity,
+        self.status.files.filter({ self.includedPaths.contains($0.path) }) == selection else { return }
+      self.indexReview.acknowledge(expected)
+      self.performCommit(push: push, expected: expected, selection: selection, message: message, draft: draft)
+    }
+    if amend || requiresIndexReview || needsFormatReview {
+      let originalTitle = draft.components(separatedBy: "\n").first ?? ""
+      let formatReview = needsFormatReview ? CommitMessageReview(original: draft, proposed: proposed,
+        useOriginal: originalTitle.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : { start(draft) }) : nil
       confirmation = PendingAction(
         title: store.text("Review Commit", "确认提交"),
         detail: commitReviewDetail(expected: expected, selection: selection),
         confirmTitle: store.text(push ? "Commit & Push" : "Commit", push ? "提交并推送" : "提交"),
-        reviewedAction: requiresIndexReview ? { [weak self] in self?.indexReview.acknowledge(expected) } : nil
-      ) { [weak self] in
-        guard let self else { return }
-        indexReview.acknowledge(expected)
-        performCommit(push: push, expected: expected, selection: selection)
-      }
+        destructive: reviewingAmend,
+        reviewedAction: requiresIndexReview ? { [weak self] in self?.indexReview.acknowledge(expected) } : nil,
+        messageReview: formatReview
+      ) { start(proposed) }
     } else {
-      performCommit(push: push, expected: expected, selection: selection)
+      start(draft)
     }
   }
-  private func performCommit(push: Bool, expected: IndexSnapshot, selection: [FileChange]) {
-    let message = record.draft
+  private func performCommit(push: Bool, expected: IndexSnapshot, selection: [FileChange], message: String, draft: String) {
     let amend = amend
     var reviewedPatches: [String: Data] = [:]
     for file in selection where !file.isStaged {
@@ -1263,13 +1364,13 @@ struct DiffTab: Identifiable, Equatable {
     }
     let reviewed = reviewedPatches
     run(
-      label: store.text(push ? "Commit & Push" : "Committing", push ? "提交并推送" : "提交"),
+      label: store.text(push ? "Commit & Push" : "Commit", push ? "提交并推送" : "提交"),
       completion: "", notify: true, kind: push ? .commitAndPush : .commit
     ) {
       [weak self] git in
       guard let self else { return }
       committing = true
-      activity.advance(store.text("Committing", "提交"), cancellable: false)
+      activity.advance(store.text("Committing", "正在提交"), cancellable: false, step: .commit)
       defer { committing = false }
       let result: CommitResult
       do {
@@ -1280,7 +1381,7 @@ struct DiffTab: Identifiable, Equatable {
         // A successful native command without a trustworthy hash must not leave
         // the same draft ready for an accidental second Commit or automatic Push.
         recentMessages = Array(([message] + recentMessages).prefix(15))
-        editDraft("")
+        if record.draft == draft { editDraft("") }
         self.amend = false
         lastCommit = nil
         activity.recordUnverifiedCommit()
@@ -1295,7 +1396,7 @@ struct DiffTab: Identifiable, Equatable {
       includedPaths.subtract(selection.map(\.path))
       recentMessages.insert(message, at: 0)
       recentMessages = Array(recentMessages.prefix(15))
-      editDraft("")
+      if record.draft == draft { editDraft("") }
       self.amend = false
       committing = false
       let localOutput =
@@ -1312,16 +1413,19 @@ struct DiffTab: Identifiable, Equatable {
         pushFailed = push
         outputResult = .needsAttention
         output = localOutput + store.text(
-          "\nPost-commit verification did not complete. Refresh and review before retrying Push; the local commit is saved.",
-          "\n提交后的校验未完成。重试推送前请刷新并审查；本地提交已保存。") + "\n" + warning
+          "\nPost-commit verification did not complete. Refresh and review the saved commit before pushing.",
+          "\n提交后的校验未完成。请刷新并审查已保存的提交，再推送。") + "\n" + warning
         return
       }
       if push {
+        activity.advance(store.text("Checking Push target", "检查推送目标"), cancellable: true, step: .pushTarget)
         var pushAttempted = false
         do {
+          try await requireRemoteAuthentication()
           // Preparing Push is already a separate phase after a successful local
           // commit. Observation failures and cancellation must preserve that result.
           let status = try await git.status()
+          try Task.checkCancellation()
           guard status.head == result.hash, status.branch == expected.branch, status.operation == nil else {
             throw GitPierError.indexChanged
           }
@@ -1332,7 +1436,7 @@ struct DiffTab: Identifiable, Equatable {
               localOutput + store.text("\nChoose a remote and branch to push.", "\n请选择 Remote 和分支推送。")
               + indexNote
           } else {
-            activity.advance(store.text("Pushing", "推送"), cancellable: true)
+            activity.advance(store.text("Pushing", "正在推送"), cancellable: true, step: .push)
             let progress = activity.receiver()
             pushAttempted = true
             let details = GitOutputSummary.details(
@@ -1371,8 +1475,8 @@ struct DiffTab: Identifiable, Equatable {
             + String(result.hash.prefix(8)) + indexNote
           self.error =
             store.text(
-              "Local commit succeeded. Push failed; retrying will only push.\n",
-              "本地提交成功，推送失败；重试只会推送。\n") + error.localizedDescription
+              "Local commit succeeded. Review the saved commit and the current destination before starting a new Push.\n",
+              "本地提交成功。请审查已保存的提交及当前目标，再发起推送。\n") + error.localizedDescription
         }
       }
     }
@@ -1485,15 +1589,20 @@ struct DiffTab: Identifiable, Equatable {
       await self?.activity.recordPushCheckpoint(checkpoint)
     })
   }
-  func confirmCheckpointPush(_ checkpoint: PushCheckpoint) {
+  func confirmCheckpointPush(_ checkpoint: PushCheckpoint, reviewedDestination: String? = nil) {
     guard !busy, record.path == checkpoint.workingTree else { return }
+    let explanation = reviewedDestination != nil
+      ? store.text("Review the current Push destination. Only the saved commit shown here can be pushed.",
+                   "请审查当前推送目标。仅可推送此处所示的已保存提交。")
+      : store.text("Recheck the current source, original target and remote reference. Push only this saved commit if needed.",
+                   "重新核查当前来源、原目标和远端引用；需要时仅推送此已保存提交。")
     confirmation = PendingAction(title: store.text("Retry saved Push?", "重试已保存的推送？"),
       detail: checkpoint.workingTree + "\n" + String(checkpoint.localReference.dropFirst(11)) + " → "
-        + checkpoint.remote + " / " + String(checkpoint.remoteReference.dropFirst(11)) + "\n" + checkpoint.localHead + "\n\n"
-        + store.text("Recheck the current source, original target and remote reference. Push only this saved commit if needed.",
-          "重新核查当前来源、原目标和远端引用；需要时仅推送此已保存提交。"),
+        + checkpoint.remote + " / " + String(checkpoint.remoteReference.dropFirst(11))
+        + (reviewedDestination.map { "\n" + $0 } ?? "") + "\n" + checkpoint.localHead
+        + "\n\n" + explanation,
       confirmTitle: store.text("Retry Push", "重试推送"), destructive: false) { [weak self] in
-      self?.run(label: self?.store.text("Pushing", "推送"), kind: .push) { [weak self] git in
+      self?.run(label: self?.store.text("Pushing", "推送"), kind: .push, retryCheckpoint: checkpoint) { [weak self] git in
         guard let self else { return }
         do {
           _ = try await git.retryPush(checkpoint, observer: self.pushCheckpointObserver(), progress: self.activity.receiver())
@@ -1524,6 +1633,7 @@ struct DiffTab: Identifiable, Equatable {
       guard let self else { return }
       defer { committing = false }
       do {
+        try await requireRemoteAuthentication()
         let details = try await git.mergeAndPush(rejection, observer: PushRecoveryObserver(localCommit: { [weak self] head in
           await self?.recordRecoveryCommit(head)
         }, checkpoint: { [weak self] checkpoint in await self?.activity.recordPushCheckpoint(checkpoint) })) { [weak self] phase in
@@ -1532,12 +1642,13 @@ struct DiffTab: Identifiable, Equatable {
             guard let self else { return nil }
             self.committing = phase == .merging
             let title: String
+            let step: OperationWorkflowStep
             switch phase {
-            case .fetching: title = self.store.text("Fetching", "获取")
-            case .merging: title = self.store.text("Merging", "合并")
-            case .pushing: title = self.store.text("Pushing", "推送")
+            case .fetching: title = self.store.text("Fetching", "获取"); step = .execute
+            case .merging: title = self.store.text("Merging", "合并"); step = .commit
+            case .pushing: title = self.store.text("Pushing", "推送"); step = .push
             }
-            self.activity.advance(title, cancellable: phase != .merging)
+            self.activity.advance(title, cancellable: phase != .merging, step: step)
             return self.activity.receiver()
           }
         }
@@ -1635,7 +1746,8 @@ struct DiffTab: Identifiable, Equatable {
     ) { [weak self] git in
       guard let self else { return }
       committing = true
-      activity.advance(store.text("Creating merge commit", "创建合并提交"), cancellable: false)
+      activity.advance(store.text("Creating merge commit", "创建合并提交"), cancellable: false,
+        step: target == nil ? .execute : .commit)
       defer { committing = false }
       let commit = try await git.completeMerge(review)
       activity.recordLocalCommit(commit.hash)
@@ -1654,8 +1766,9 @@ struct DiffTab: Identifiable, Equatable {
       }
       if let target {
         conflictPush = target
-        activity.advance(store.text("Pushing", "推送"), cancellable: true)
+        activity.advance(store.text("Pushing", "推送"), cancellable: true, step: .push)
         do {
+          try await requireRemoteAuthentication()
           let details = try await git.pushCompletedMerge(
             target, head: commit.hash,
             observer: PushRecoveryObserver(localCommit: { [weak self] head in await self?.recordRecoveryCommit(head) },
@@ -1690,11 +1803,25 @@ struct DiffTab: Identifiable, Equatable {
     }
   }
   func retryPush() {
-    if let id = pushRetryOperationID,
-      let operation = store.operations.records.first(where: { $0.id == id }), operation.state == .resultUnknown {
-      if let checkpoint = operation.pushCheckpoint { confirmCheckpointPush(checkpoint) }
-      else { store.showOperationsCenter = true }
-      return
+    guard !busy else { return }
+    if let id = pushRetryOperationID {
+      guard let operation = store.operations.records.first(where: { $0.id == id }) else {
+        store.showOperationsCenter = true
+        return
+      }
+      if let checkpoint = operation.pushCheckpoint {
+        if operation.state == .succeeded { store.showOperationsCenter = true }
+        else { confirmCheckpointPush(checkpoint) }
+        return
+      }
+      if operation.state == .resultUnknown || operation.kind == .commitAndPush {
+        if operation.state != .resultUnknown, let savedHead = operation.localCommit,
+                let savedBranch = operation.localBranch {
+          reviewPushForSavedCommit(savedHead, branch: savedBranch)
+        }
+        else { store.showOperationsCenter = true }
+        return
+      }
     }
     guard let target = conflictPush, let head = status.head, status.operation == nil else {
       network("push")
@@ -1719,6 +1846,36 @@ struct DiffTab: Identifiable, Equatable {
       } catch let issue as PushResultUnverified {
         conflictPush = target
         preserveUnverifiedPush(issue)
+      }
+    }
+  }
+  private func reviewPushForSavedCommit(_ head: String, branch: String) {
+    let id = UUID()
+    confirmationReviewID = id
+    confirmationReviewTask?.cancel()
+    let selection = store.selectionIdentity
+    let binding = credentialBinding
+    confirmationReviewTask = Task { [weak self] in
+      guard let self else { return }
+      @MainActor func isCurrent() -> Bool {
+        !Task.isCancelled && confirmationReviewID == id && !busy
+          && store.selectionIdentity == selection && store.current === self && !store.showDashboard
+          && credentialBinding == binding
+      }
+      guard isCurrent(), await configure(), isCurrent() else { return }
+      do {
+        let review = try await git().reviewPushCheckpointWithDestination()
+        guard isCurrent() else { return }
+        guard let review, review.checkpoint.localHead == head, review.checkpoint.localReference == "refs/heads/" + branch,
+              status.head == head, status.branch == branch, status.operation == nil else {
+          error = store.text(
+            "The saved commit or its Push destination could not be confirmed. Review History and the current remote before pushing.",
+            "无法确认已保存的提交或其推送目标。请查看历史记录和当前远端，再发起推送。")
+          return
+        }
+        confirmCheckpointPush(review.checkpoint, reviewedDestination: review.destination)
+      } catch {
+        if isCurrent() { self.error = localizedUI(GitService.redact(error.localizedDescription)) }
       }
     }
   }
@@ -2013,10 +2170,15 @@ struct DiffTab: Identifiable, Equatable {
       NSWorkspace.shared.open(url)
     }
   }
-  func reveal(_ path: String? = nil) {
-    NSWorkspace.shared.activateFileViewerSelecting([
-      URL(fileURLWithPath: record.path).appendingPathComponent(path ?? "")
-    ])
+  func openRepositoryFolder() {
+    showInFinder { try .repository(record.path) }
+  }
+  func revealFile(_ path: String) {
+    showInFinder { try .file(path, in: record.path) }
+  }
+  private func showInFinder(_ location: () throws -> FinderLocation) {
+    do { try location().show { [weak self] error in self?.error = error.localizedDescription } }
+    catch { self.error = error.localizedDescription }
   }
   func relocateWorktree(to path: String) async {
     // The manager has already protected this model's drafts and active terminal sessions.
@@ -2034,7 +2196,7 @@ struct DiffTab: Identifiable, Equatable {
     invalidateDiffCache()
     service = nil
     terminal.shutdown(); terminal = TerminalManager(root: path)
-    terminal.canStart = { [weak store] in store?.admitWorktreeProcess(path) ?? false }
+    configureTerminalAdmission(at: path)
     record.path = path; store.update(record)
     historyReadyKey = nil; selectedHistoryCommit = nil
     available = false; snapshot = nil; error = nil
@@ -2064,6 +2226,7 @@ struct PendingAction: Identifiable {
   var canConfirm = true
   var asynchronousReview = false
   var reviewedAction: (() -> Void)? = nil
+  var messageReview: CommitMessageReview? = nil
   var diffCommit: CommitRecord? = nil
   var replayReview: CommitReplayReview? = nil
   var mainlineParents: [CommitRecord]? = nil
@@ -2081,6 +2244,12 @@ struct PendingAction: Identifiable {
     if let mainlineParent, let mainlineAction { mainlineAction(mainlineParent) }
     else { action() }
   }
+}
+
+struct CommitMessageReview {
+  let original: String
+  let proposed: String
+  let useOriginal: (() -> Void)?
 }
 
 func copyText(_ text: String) {

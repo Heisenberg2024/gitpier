@@ -18,7 +18,7 @@ struct TaskWorkspacesView: View {
   var body: some View {
     VStack(spacing: 0) {
       HStack {
-        Text(store.text("Task Workspaces", "任务工作空间")).font(.headline)
+        Text(store.text("Task Workspaces", "任务工作空间")).workspaceHeading()
         Spacer()
         Toggle(store.text("Archived", "已归档"), isOn: $includeArchived).toggleStyle(.checkbox)
         Button(store.text("New Task…", "新建任务…")) { creating = true }.disabled(!manager.ready || manager.problem != nil || model.busy)
@@ -110,7 +110,7 @@ struct TaskWorkspaceDetail: View {
     ScrollView {
       if let task {
         VStack(alignment: .leading, spacing: 12) {
-          Text(task.name).font(.title2.bold()).textSelection(.enabled)
+          Text(task.name).workspaceHeading(.sheet).textSelection(.enabled)
           Label(taskStatusTitle(manager.displayStatus(task), store: store), systemImage: task.agent?.state.active == true ? "play.circle" : "square.stack.3d.up")
           field(store.text("Repository", "仓库"), task.repositoryRoot)
           field(store.text("Branch", "分支"), task.branch.isEmpty ? "Detached HEAD" : task.branch)
@@ -436,7 +436,7 @@ struct CodexSettingsSection: View {
       WorkflowProblem(request: request)
       Text(store.text("Checks run only on request. Codex manages login, credential storage and renewal. GitPier never reads or copies credentials. Start a session explicitly from a Task Workspace.", "仅主动检查。Codex 负责登录、凭证保存及刷新；GitPier 不读取或复制凭证。请从任务工作空间主动启动会话。"))
         .font(.caption).foregroundStyle(.secondary)
-      Text(store.text("Finder and Dock do not inherit variables set only in shell profiles. HOME and PATH come from this app's environment, with standard command folders appended. If your shell uses a custom CODEX_HOME, configure it above or launch GitPier from that environment.", "Finder 与 Dock 不会继承仅在 Shell 配置中设置的变量。HOME 与 PATH 来自应用环境，并补充标准命令目录。如 Shell 使用自定义 CODEX_HOME，请在上方配置或从该环境启动 GitPier。"))
+      Text(store.text("Finder and Dock do not inherit variables set only in shell profiles. HOME and PATH come from this app's environment, with ~/.local/bin and standard command folders appended. If your shell uses a custom CODEX_HOME, configure it above or launch GitPier from that environment.", "Finder 与 Dock 不会继承仅在 Shell 配置中设置的变量。HOME 与 PATH 来自应用环境，并补充 ~/.local/bin 和标准命令目录。如 Shell 使用自定义 CODEX_HOME，请在上方配置或从该环境启动 GitPier。"))
         .font(.caption).foregroundStyle(.secondary)
       Link(store.text("Official Codex CLI guide", "Codex CLI 官方指南"), destination: URL(string: "https://developers.openai.com/codex/cli")!)
     }.onChange(of: store.settings.codexExecutablePath) { _, _ in invalidate() }

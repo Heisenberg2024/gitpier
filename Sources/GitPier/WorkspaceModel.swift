@@ -73,6 +73,10 @@ import GitPierCore
         guard allowed else { throw AutomaticFetchError.skipped("Automatic check deferred.") }
       }
       guard await model.configure(reportErrors: !automatic) else {
+        if await model.busy {
+          if automatic { throw AutomaticFetchError.skipped("Repository busy. Check deferred.") }
+          throw GitPierError.invalidInput("Repository busy. Review Fetch again.")
+        }
         if automatic { throw AuthenticationFailure(.configurationInvalid) }
         throw GitPierError.invalidInput(await model.error ?? "Authentication could not be configured.")
       }

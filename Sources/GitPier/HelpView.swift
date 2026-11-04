@@ -90,6 +90,7 @@ struct HelpView: View {
         }
         section("Keyboard Shortcuts", "键盘快捷键", symbol: "keyboard") {
           shortcut("⌘O", "Open repository", "打开仓库")
+          shortcut("⌘K", "Quick Open", "快速打开")
           shortcut("⌘R", "Refresh current repository", "刷新当前仓库")
           shortcut("⌘1 / ⌘2 / ⌘3", "Commit / History / Branches", "提交 / 历史 / 分支")
           shortcut("⌘F", "Search the current page or terminal", "搜索当前页面或终端")

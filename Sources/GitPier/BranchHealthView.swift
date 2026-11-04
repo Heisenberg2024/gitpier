@@ -76,7 +76,7 @@ struct BranchHealthPanel: View {
   }
   private var header: some View {
     HStack {
-      Text(store.text("Branch Health", "分支健康")).font(.callout.weight(.semibold))
+      Text(store.text("Branch Health", "分支健康")).workspaceHeading()
       if request.loading { ProgressView().controlSize(.small) }
       if let snapshot = health.snapshot {
         if snapshot.detached { Text(store.text("Detached HEAD", "分离 HEAD")).foregroundStyle(.orange) }
@@ -197,9 +197,9 @@ struct BranchSyncBadge: View {
   var body: some View {
     Group {
       if stacked {
-        VStack(alignment: .leading, spacing: 3) {
+        VStack(alignment: .center, spacing: 3) {
           statusLabel
-          if let counts = display.counts { Text(counts).padding(.leading, 16) }
+          if let counts = display.counts { Text(counts) }
         }
       } else {
         HStack(spacing: 5) { statusLabel; if let counts = display.counts { Text(counts) } }

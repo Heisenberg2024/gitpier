@@ -35,6 +35,7 @@ public struct WorkflowOperationRecord: Identifiable, Equatable, Sendable {
   public var progress: Double?
   public var phase: WorkflowOperationPhase = .queued
   public var transferPhase: GitTransferPhase?
+  public var workflow: OperationWorkflowProgress?
   public var repositoryIdentity: OperationRepositoryIdentity?
   public var localCommit: String?
   public var localBranch: String?
@@ -105,6 +106,7 @@ public struct OperationCenterHistory: Sendable {
       records[index].pushCheckpoint == observation.checkpoint else { return false }
     var record = records.remove(at: index)
     record.state = .succeeded; record.phase = .completed
+    record.workflow?.confirmRemoteResult()
     record.verifiedAt = observation.checkedAt; record.completedAt = observation.checkedAt
     record.canCancel = false; record.progress = nil; record.revision += 1
     records.insert(record, at: 0); prune(); return true

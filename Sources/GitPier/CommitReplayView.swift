@@ -21,7 +21,7 @@ struct CommitReplayView: View {
   var selectedIndex: Int? { order.firstIndex { $0 == selected } }
   var body: some View {
     VStack(alignment: .leading, spacing: 12) {
-      Text(store.text("Review Cherry-pick", "审查 Cherry-pick")).font(.title2.weight(.semibold))
+      Text(store.text("Review Cherry-pick", "审查 Cherry-pick")).workspaceHeading(.sheet)
       if let review {
         reviewSummary(review)
         orderControls

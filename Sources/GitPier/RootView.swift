@@ -5,6 +5,7 @@ import SwiftUI
 struct RootView: View {
   @EnvironmentObject var store: AppStore
   @Environment(\.colorScheme) var scheme
+  @Environment(\.colorSchemeContrast) private var contrast
   @State private var sidebarVisible = true
   @State private var repositorySearch = ""
   @State private var removing: RepositoryRecord?
@@ -24,7 +25,7 @@ struct RootView: View {
       }
       HStack(spacing: 0) {
         if sidebarVisible {
-          sidebar.frame(width: 202)
+          sidebar.frame(width: 206)
           Divider()
         }
         VStack(spacing: 0) {
@@ -237,7 +238,8 @@ struct RootView: View {
                     }
                   ) { record in
                     sidebarButton(
-                      record.name, icon: record.favorite ? "star.fill" : "shippingbox",
+                      record.name, icon: "shippingbox",
+                      favorite: record.favorite,
                       active: !store.showDashboard && store.selectedID == record.id
                     ) { store.select(record.id) }
                     .padding(.leading, 22)
@@ -269,7 +271,7 @@ struct RootView: View {
       )
       .padding(
         .bottom, 12)
-    }.background(Theme.sidebar(scheme)).contentShape(Rectangle()).contextMenu {
+    }.background { WorkspaceSidebarBackdrop() }.contentShape(Rectangle()).contextMenu {
       Button(store.text("Open Repository…", "打开仓库…")) { store.openRepository() }
       Button(store.text("Clone Repository…", "克隆仓库…")) { store.showClone = true }
       Divider()
@@ -289,21 +291,25 @@ struct RootView: View {
   }
   var groupNames: [String] { [""] + store.organizations.map(\.name) }
   var allOrganizationsCollapsed: Bool { Set(groupNames).isSubset(of: collapsedGroups) }
-  func sidebarButton(_ title: String, icon: String, active: Bool, action: @escaping () -> Void)
+  func sidebarButton(_ title: String, icon: String, favorite: Bool = false, active: Bool, action: @escaping () -> Void)
     -> some View
   {
     Button(action: action) {
       HStack(spacing: 9) {
-        Image(systemName: icon).frame(width: 15).foregroundStyle(
-          active ? Color.accentColor : .secondary)
+        Group {
+          if favorite { RepositoryFavoriteMark() }
+          else { Image(systemName: icon).foregroundStyle(active ? Color.accentColor : .secondary) }
+        }.frame(width: 15)
         Text(title).lineLimit(1)
         Spacer()
       }.font(repositoryFont()).frame(maxWidth: .infinity, alignment: .leading).padding(
         .horizontal, 10
       ).padding(.vertical, 9).contentShape(Rectangle()).background(
-        active ? Color.accentColor.opacity(0.14) : Color.clear
-      ).clipShape(RoundedRectangle(cornerRadius: 5))
+        active ? Theme.selection(increasedContrast: contrast == .increased) : Color.clear
+      ).clipShape(RoundedRectangle(cornerRadius: Theme.controlRadius))
     }.buttonStyle(.workspace).padding(.horizontal, 6)
+      .accessibilityValue(favorite ? store.text("Favorite", "已收藏") : "")
+      .accessibilityAddTraits(active ? [.isSelected] : [])
   }
 }
 
@@ -318,8 +324,8 @@ struct RootView: View {
           store.update(model.record)
         }
       },
-      NativeMenuItems.action(store.text("Reveal in Finder", "在 Finder 中显示")) {
-        store.models[record.id]?.reveal()
+      NativeMenuItems.action(store.text("Open Repository Folder", "打开仓库文件夹")) {
+        store.models[record.id]?.openRepositoryFolder()
       },
       NativeMenuItems.action(store.text("Copy Path", "复制路径")) { copyText(record.path) },
     ]
@@ -354,11 +360,11 @@ struct CloneSheet: View {
   @State private var credential: UUID?
   var body: some View {
     VStack(alignment: .leading, spacing: 18) {
-      Text(store.text("Clone Repository", "克隆仓库")).font(.title2.weight(.semibold))
+      Text(store.text("Clone Repository", "克隆仓库")).workspaceHeading(.sheet)
       Text(
         store.text(
-          "HTTPS or SSH. Credentials are stored separately in Keychain.",
-          "支持 HTTPS 和 SSH，凭证单独保存于 Keychain。 ")
+          "Use your existing Git helpers and SSH configuration, or choose a GitPier credential. A chosen profile is saved with the new repository.",
+          "可使用现有 Git 凭证助手和 SSH 配置，也可选择 GitPier 凭证。所选凭证会绑定到新仓库。")
       ).font(.callout).foregroundStyle(.secondary)
       TextField(store.text("Repository URL", "仓库 URL"), text: $url)
       HStack {
@@ -376,12 +382,7 @@ struct CloneSheet: View {
         ForEach(store.configuration.credentials) { Text($0.name).tag(Optional($0.id)) }
       }
       if store.cloning {
-        HStack {
-          ProgressView().controlSize(.small)
-          Text(store.text("Cloning…", "克隆中…"))
-          Spacer()
-          Button(store.text("Cancel Clone", "取消克隆")) { store.cloneTask?.cancel() }
-        }
+        OperationProgressView(progress: store.cloneActivity) { store.cloneTask?.cancel() }
       }
       HStack {
         Spacer()
@@ -398,12 +399,13 @@ struct CloneSheet: View {
 }
 
 struct ErrorSheet: View {
+  @EnvironmentObject var store: AppStore
   let title: String
   let detail: String
   var dismiss: () -> Void
   var body: some View {
     VStack(alignment: .leading, spacing: 16) {
-      Label(title, systemImage: "exclamationmark.triangle").font(.title3.weight(.semibold))
+      Label(title, systemImage: "exclamationmark.triangle").workspaceHeading(.page)
       ScrollView {
         Text(detail).font(uiFont(size: 12, design: .monospaced)).textSelection(.enabled).frame(
           maxWidth: .infinity, alignment: .leading)
@@ -414,5 +416,6 @@ struct ErrorSheet: View {
         Button(localizedUI("Close"), action: dismiss).keyboardShortcut(.defaultAction)
       }
     }.padding(24).frame(width: 640, height: 380)
+      .modifier(AppAppearance(store: store)).onExitCommand(perform: dismiss)
   }
 }

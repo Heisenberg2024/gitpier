@@ -2,6 +2,33 @@ import XCTest
 @testable import GitPierCore
 
 final class GitAuthenticationTests: XCTestCase {
+  func testRepositoryBindingSeparatesSameHostAccountsAndDoesNotSilentlyFallback() throws {
+    let first = CredentialProfile(name: "First", host: "example.invalid", username: "alice")
+    let second = CredentialProfile(name: "Second", host: "example.invalid", username: "bob")
+    var record = RepositoryRecord(path: "/fixture")
+    var settings = AppSettings()
+    settings.defaultCredentialID = first.id
+    let profiles = [first, second]
+    let system = GitCredentialBinding(record: record, settings: settings, profiles: profiles)
+    XCTAssertEqual(system.source, .system)
+    XCTAssertNil(try system.context(executable: "/fixture/app", configurationPath: "/fixture/settings").environment["GITPIER_CREDENTIAL_ID"])
+    record.useDefaultCredential = true
+    let inherited = GitCredentialBinding(record: record, settings: settings, profiles: profiles)
+    XCTAssertEqual(inherited.source, .workspaceDefault)
+    XCTAssertEqual(try inherited.context(executable: "/fixture/app", configurationPath: "/fixture/settings").environment["GITPIER_CREDENTIAL_ID"], first.id.uuidString)
+    record.credentialID = second.id
+    let explicit = GitCredentialBinding(record: record, settings: settings, profiles: profiles)
+    XCTAssertEqual(explicit.source, .repository)
+    XCTAssertEqual(try explicit.context(executable: "/fixture/app", configurationPath: "/fixture/settings").environment["GITPIER_CREDENTIAL_ID"], second.id.uuidString)
+    let deleted = GitCredentialBinding(record: record, settings: settings, profiles: [first])
+    XCTAssertThrowsError(try deleted.context(executable: "/fixture/app", configurationPath: "/fixture/settings"))
+    record.credentialID = nil
+    settings.defaultCredentialID = nil
+    let unsetDefault = GitCredentialBinding(record: record, settings: settings, profiles: profiles)
+    XCTAssertEqual(unsetDefault.source, .workspaceDefault)
+    XCTAssertFalse(unsetDefault.missingProfile)
+    XCTAssertNil(try unsetDefault.context(executable: "/fixture/app", configurationPath: "/fixture/settings").environment["GITPIER_CREDENTIAL_ID"])
+  }
   private var root: URL!
   private var service: GitService!
   private var record: RepositoryRecord!

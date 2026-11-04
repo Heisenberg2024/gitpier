@@ -478,7 +478,7 @@ struct DiffTable: NSViewRepresentable, Equatable {
       table.canReviewLine = onReviewLine == nil ? nil : { [weak c] row in c?.reviewableLine(row, side: side) != nil }
       table.reviewActionTitle = reviewActionTitle
       host.scrolls[side].verticalThumbOnLeft = !settings.unifiedDiff && side == indexSide
-      table.backgroundColor = NSColor(hex: dark ? 0x191B1F : 0xFAFBFC)
+      table.backgroundColor = Theme.editorColor
       table.tableColumns[0].title =
         settings.unifiedDiff ? localizedUI("Changes") : side == 0 ? beforeTitle : afterTitle
       table.tableColumns[0].headerCell.font = NSFont.systemFont(ofSize: 10, weight: .medium)
@@ -702,7 +702,7 @@ struct DiffTable: NSViewRepresentable, Equatable {
       cell.reviewMarker.toolTip = "\(comments) " + reviewCountTitle
       cell.reviewMarker.setAccessibilityLabel("\(comments) " + reviewCountTitle)
       cell.gutter.constant = settings.showLineNumbers || onReviewLine != nil ? 46 : 4
-      var background = NSColor(hex: dark ? 0x191B1F : 0xFAFBFC)
+      var background = Theme.editorColor
       if line?.kind == .addition {
         background =
           background.blended(

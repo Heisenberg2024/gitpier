@@ -26,7 +26,7 @@ struct InteractiveRebaseView: View {
   var valid: Bool { plan.map { (try? $0.validate()) != nil } ?? false }
   var body: some View {
     VStack(alignment: .leading, spacing: 12) {
-      Text(store.text("Interactive Rebase", "交互式变基")).font(.title2.weight(.semibold))
+      Text(store.text("Interactive Rebase", "交互式变基")).workspaceHeading(.sheet)
       HStack {
         Text(store.text("Starting point", "起点"))
         TextField(store.text("Ancestor commit or upstream", "祖先提交或 Upstream"), text: $upstream)
@@ -172,7 +172,7 @@ struct RebaseRecoveryView: View {
   var body: some View {
     VStack(alignment: .leading, spacing: 12) {
       HStack {
-        Text(store.text("Rebase in Progress", "变基进行中")).font(.title2.weight(.semibold))
+        Text(store.text("Rebase in Progress", "变基进行中")).workspaceHeading(.sheet)
         Spacer(); Button(store.text("Refresh Review", "刷新审查")) { load() }.disabled(request.loading || model.busy)
       }
       WorkflowProblem(request: request)

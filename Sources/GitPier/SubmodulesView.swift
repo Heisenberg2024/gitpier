@@ -14,7 +14,7 @@ struct SubmodulesView: View {
   var body: some View {
     VStack(alignment: .leading, spacing: 12) {
       HStack {
-        Text(store.text("Submodules", "子模块")).font(.title3.weight(.semibold))
+        Text(store.text("Submodules", "子模块")).workspaceHeading(.page)
         Spacer()
         Toggle(store.text("Show nested", "显示嵌套"), isOn: $nested).toggleStyle(.checkbox)
         Button(store.text("Refresh", "刷新")) { load() }.disabled(request.loading || model.busy)

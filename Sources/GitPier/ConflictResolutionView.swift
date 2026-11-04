@@ -342,7 +342,7 @@ struct ConflictResolutionView: View {
   var header: some View {
     VStack(alignment: .leading, spacing: 8) {
       HStack {
-        Text(editor.path ?? store.text("Resolve Conflicts", "解决冲突")).font(.headline).lineLimit(1)
+        Text(editor.path ?? store.text("Resolve Conflicts", "解决冲突")).workspaceHeading().lineLimit(1)
           .truncationMode(.middle)
         Spacer()
         if editor.snapshot?.base != nil {

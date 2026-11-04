@@ -58,7 +58,8 @@ def main():
                     CFBundleIconFile=args.icon, LSMinimumSystemVersion=config['minimumSystemVersion'],
                     NSHighResolutionCapable=True, CFBundleDevelopmentRegion='en', CFBundleLocalizations=['en', 'zh-Hans'],
                     NSHumanReadableCopyright='Copyright (c) 2026 Heisenberg2024. MIT License.',
-                    SUEnableAutomaticChecks=False, SUAutomaticallyUpdate=False, SUAllowsAutomaticUpdates=False,
+                    # Existing loopback installation fixtures drive checks explicitly.
+                    SUEnableAutomaticChecks=not testing, SUAutomaticallyUpdate=False, SUAllowsAutomaticUpdates=False,
                     SUSendProfileInfo=False, SUScheduledCheckInterval=86400,
                     SUVerifyUpdateBeforeExtraction=True, SURequireSignedFeed=True,
                     SUSignedFeedFailureExpirationInterval=0)

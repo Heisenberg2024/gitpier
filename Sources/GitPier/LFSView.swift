@@ -17,7 +17,7 @@ struct LFSView: View {
     VStack(alignment: .leading, spacing: 12) {
       ScrollView(.horizontal, showsIndicators: false) {
         HStack(spacing: 12) {
-          Text("Git LFS").font(.title3.weight(.semibold))
+          Text("Git LFS").workspaceHeading(.page)
           if let state { Text(state.installed ? state.version : store.text("Not Installed", "未安装")).font(.caption).foregroundStyle(.secondary) }
           Button(store.text("Refresh", "刷新")) { load() }.disabled(request.loading || model.busy)
           Picker(store.text("Remote", "远程"), selection: $remote) {

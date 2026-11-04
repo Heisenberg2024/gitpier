@@ -26,7 +26,7 @@ private struct WorkspaceDashboard: View {
       VStack(spacing: 14) {
         header(compact: compact)
         overview(listing)
-        toolbar(listing, wide: columns.showsUpdated)
+        toolbar(listing, wide: geometry.size.width >= 1148)
         repositoryList(listing, columns: columns)
       }
       .padding(.horizontal, 24).padding(.top, 20).padding(.bottom, 12)
@@ -213,31 +213,56 @@ private struct WorkspaceDashboard: View {
           Button(store.text("Reset search and filters", "重置搜索和筛选")) { search = ""; workspace.filters.removeAll() }.padding(.bottom, 24)
         }
       } else {
-        ScrollView {
-          LazyVStack(spacing: 0, pinnedViews: [.sectionHeaders]) {
-            Section {
-              ForEach(listing.rows) { row in
-              DashboardRepositoryRow(row: row, columns: columns, selected: workspace.selected.contains(row.id),
-                collapsed: row.familyKey.map { collapsed.contains($0) } ?? false,
-                select: { if $0 { workspace.selected.insert(row.id) } else { workspace.selected.remove(row.id) } },
-                disclose: { if let key = row.familyKey { if !collapsed.insert(key).inserted { collapsed.remove(key) } } })
-                .repositoryReordering(row.entry.record) { sort = "manual" }
-                .onAppear { workspace.visible(row.id) }
-                .padding(.horizontal, 6)
-              Divider().padding(.leading, 58)
+        columnHeadings(columns)
+        ScrollViewReader { scroll in
+          List {
+            ForEach(listing.rows) { row in
+              VStack(spacing: 0) {
+                DashboardRepositoryRow(row: row, columns: columns, selected: workspace.selected.contains(row.id),
+                  collapsed: row.familyKey.map { collapsed.contains($0) } ?? false,
+                  select: { if $0 { workspace.selected.insert(row.id) } else { workspace.selected.remove(row.id) } },
+                  disclose: { if let key = row.familyKey { if !collapsed.insert(key).inserted { collapsed.remove(key) } } })
+                  .onAppear { workspace.visible(row.id) }
+                  .padding(.horizontal, 6)
+                Divider().padding(.leading, 58)
               }
-            } header: {
-              columnHeadings(columns)
+              .accessibilityElement(children: .contain)
+              .listRowInsets(EdgeInsets())
+              .listRowSeparator(.hidden)
+              .listRowBackground(Color.clear)
+            }.repositoryInsertionTarget { source, offset in
+              let from = listing.rows.firstIndex { $0.id == source }
+              let usePreviousRow = from.map { $0 < offset } ?? (offset == listing.rows.count)
+              let target = usePreviousRow ? offset - 1 : offset
+              guard listing.rows.indices.contains(target),
+                    store.reorderRepository(source, relativeTo: listing.rows[target].id,
+                      placement: usePreviousRow ? .after : .before)
+              else { return }
+              sort = "manual"
             }
           }
-        }.scrollIndicators(.hidden).contentMargins(.horizontal, 0, for: .scrollContent)
+          // Reusing the native table across filter and sort changes can
+          // reenter AppKit's row-height calculation.
+          .id(DashboardListScope(filters: workspace.filters, sort: sort))
+          .listStyle(.plain)
+          .scrollContentBackground(.hidden)
+          // `.hidden` permits macOS to restore native scrollers when a mouse is connected.
+          // Keep SwiftUI's list updates aligned with our shared overlay scrollbars.
+          .scrollIndicators(.never)
+          .contentMargins(.horizontal, 0, for: .scrollContent)
           .accessibilityIdentifier("dashboard-repositories")
+          .accessibilityAction(named: Text(store.text("Scroll to First Repository", "滚动到第一个仓库"))) {
+            if let id = listing.rows.first?.id { scroll.scrollTo(id, anchor: .top) }
+          }
+          .accessibilityAction(named: Text(store.text("Scroll to Last Repository", "滚动到最后一个仓库"))) {
+            if let id = listing.rows.last?.id { scroll.scrollTo(id, anchor: .bottom) }
+          }
+        }
       }
       Divider()
       selectionBar(listing)
-    }.background(Theme.editor(scheme), in: RoundedRectangle(cornerRadius: 10))
-      .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.primary.opacity(0.08)))
-      .clipShape(RoundedRectangle(cornerRadius: 10))
+    }.workspacePanel(Theme.editor(scheme))
+      .clipShape(Theme.panelShape(radius: Theme.panelRadius))
   }
   private func toggleMatching(_ ids: Set<UUID>) {
     if ids.isSubset(of: workspace.selected) { workspace.selected.subtract(ids) }
@@ -245,13 +270,15 @@ private struct WorkspaceDashboard: View {
   }
   private func columnHeadings(_ columns: DashboardColumns) -> some View {
     HStack(spacing: 14) {
-      Text(store.text("REPOSITORY", "仓库")).frame(width: columns.identity, alignment: .leading)
-      if !columns.compact { Text(store.text("BRANCH", "分支")).frame(width: columns.branch, alignment: .leading) }
-      Text(store.text("CHANGES", "修改状态")).frame(width: columns.changes, alignment: .leading)
-      Text(store.text("SYNC", "同步")).frame(width: columns.sync, alignment: .leading)
-      if columns.showsUpdated { Text(store.text("UPDATED", "更新时间")).frame(width: columns.updated, alignment: .leading) }
+      Text(store.text("REPOSITORY", "仓库"))
+        .padding(.leading, 16).frame(width: columns.identity, alignment: .leading)
+        .accessibilityAddTraits(.isHeader)
+      if !columns.compact { Text(store.text("BRANCH", "分支")).frame(width: columns.branch, alignment: .center) }
+      Text(store.text("CHANGES", "修改状态")).frame(width: columns.changes, alignment: .center)
+      Text(store.text("SYNC", "同步")).frame(width: columns.sync, alignment: .center)
     }.font(uiFont(size: 10, weight: .medium)).foregroundStyle(.secondary)
-      .padding(.leading, 72).padding(.trailing, 44).frame(height: 26)
+      // Match the native List's 8pt leading row inset without changing column widths.
+      .padding(.leading, 72 + 8).padding(.trailing, 44 - 8).frame(height: 26)
       .background(Theme.panel(scheme))
   }
   private func selectionBar(_ listing: WorkspaceListing) -> some View {
@@ -273,7 +300,9 @@ private struct WorkspaceDashboard: View {
         Text(store.text("\(listing.matching.count) matching", "\(listing.matching.count) 个匹配"))
         if listing.hiddenCount > 0 { Text(store.text("· \(listing.hiddenCount) collapsed worktrees", "· \(listing.hiddenCount) 个折叠工作树")) }
         Spacer()
-        OperationProgressView(progress: store.cloneActivity) { store.cloneTask?.cancel() }
+        if !store.showClone {
+          OperationProgressView(progress: store.cloneActivity) { store.cloneTask?.cancel() }
+        }
         Text("GitPier " + AppResources.version).foregroundStyle(.tertiary)
       }
     }.font(uiFont(size: 11)).foregroundStyle(.secondary).padding(.horizontal, 16).frame(height: 44)
@@ -285,20 +314,23 @@ private struct WorkspaceDashboard: View {
   private func filterName(_ filter: WorkspaceFilter) -> String { dashboardFilterName(filter, store: store) }
 }
 
+private struct DashboardListScope: Hashable {
+  let filters: Set<WorkspaceFilter>
+  let sort: String
+}
+
 /// Shared column widths; only repository identity expands.
 struct DashboardColumns {
   let compact: Bool
-  let showsUpdated: Bool
   let branch: CGFloat
   let changes: CGFloat = 132
   let sync: CGFloat = 92
-  let updated: CGFloat = 100
   let identity: CGFloat
   init(width: CGFloat) {
-    compact = width < 850; showsUpdated = width >= 1100; branch = width >= 1100 ? 164 : 140
+    compact = width < 850; branch = width >= 1100 ? 164 : 140
     // 72pt leading selection/disclosure area and 44pt trailing diagnostic area.
     let fixed = 72 + 44 + changes + sync + 28
-      + (compact ? 0 : branch + 14) + (showsUpdated ? updated + 14 : 0)
+      + (compact ? 0 : branch + 14)
     identity = max(80, width - fixed)
   }
 }

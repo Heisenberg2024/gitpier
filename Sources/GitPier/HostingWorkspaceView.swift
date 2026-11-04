@@ -208,7 +208,7 @@ struct HostingBindingSheet: View {
   }
   var body: some View {
     VStack(alignment: .leading, spacing: 16) {
-      Text(store.text("Repository Binding", "仓库关联")).font(.title2.weight(.semibold))
+      Text(store.text("Repository Binding", "仓库关联")).workspaceHeading(.sheet)
       Form {
         Picker(store.text("Account", "账号"), selection: $accountID) {
           Text(store.text("Choose Account", "选择账号")).tag(UUID?.none)
@@ -283,7 +283,7 @@ struct HostingRequestDetail: View {
     VStack(alignment: .leading, spacing: 10) {
       HStack(alignment: .top) {
         VStack(alignment: .leading, spacing: 5) {
-          Text("#\(current.number) " + current.title).font(.title3.weight(.semibold)).textSelection(.enabled)
+          Text("#\(current.number) " + current.title).workspaceHeading(.page).textSelection(.enabled)
           Text("@" + current.author + " · " + current.source + " → " + current.target).font(.caption).foregroundStyle(.secondary)
           Text(store.text("Created ", "创建于 ") + current.createdAt + " · " + current.state + (current.draft ? " · Draft" : "")).font(.caption2).foregroundStyle(.secondary)
         }

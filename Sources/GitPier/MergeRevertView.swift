@@ -8,7 +8,7 @@ struct MergeRevertParentPicker: View {
   @EnvironmentObject var store: AppStore
   var body: some View {
     VStack(alignment: .leading, spacing: 10) {
-      Text(store.text("Mainline parent", "主线父提交")).font(.headline)
+      Text(store.text("Mainline parent", "主线父提交")).workspaceHeading()
       Text(store.text("Parent numbers follow Git's commit order. Choose the history to keep as the reference; branch names are not inferred.",
         "父提交编号遵循 Git 的提交顺序。请选择作为参照保留的历史，不会根据分支名自动推断。"))
         .font(.caption).foregroundStyle(.secondary).textSelection(.enabled)

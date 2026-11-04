@@ -38,7 +38,7 @@ struct QuickOpenView: View {
   }
   var body: some View {
     VStack(alignment: .leading, spacing: 14) {
-      Text(store.text("Quick Open", "快速打开")).font(.title2.weight(.semibold))
+      Text(store.text("Quick Open", "快速打开")).workspaceHeading(.sheet)
       Text(store.showDashboard ? store.text("Dashboard", "仓库总览") : store.current?.title ?? store.text("No repository selected", "未选择仓库")).font(.caption).foregroundStyle(.secondary).id(contextRevision)
       TextField(store.text("Search repositories and commands", "搜索仓库和命令"), text: $query)
         .textFieldStyle(.roundedBorder).focused($focused)
@@ -67,12 +67,13 @@ struct QuickOpenView: View {
             ForEach(Array((mode == "commands" ? [] : records).enumerated()), id: \.element.id) { index, record in
               Button { open(record) } label: {
                 VStack(alignment: .leading, spacing: 3) {
-                  HStack { Text(record.name).fontWeight(.medium); if record.favorite { Image(systemName: "star.fill").foregroundStyle(.yellow) }; Spacer(); Text(record.group).foregroundStyle(.secondary) }
+                  HStack { Text(record.name).fontWeight(.medium); if record.favorite { RepositoryFavoriteMark() }; Spacer(); Text(record.group).foregroundStyle(.secondary) }
                   Text(record.path).font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1)
                 }.padding(10).frame(maxWidth: .infinity).contentShape(Rectangle())
                   .background(index + commands.count == selection ? Color.accentColor.opacity(0.15) : Color.clear)
                   .clipShape(RoundedRectangle(cornerRadius: 6))
               }.buttonStyle(.workspace).id(record.id)
+                .accessibilityValue(record.favorite ? store.text("Favorite", "已收藏") : "")
             }
             if resultCount == 0 { Text(store.text("No matching repositories", "没有匹配的仓库")).foregroundStyle(.secondary).padding() }
           }

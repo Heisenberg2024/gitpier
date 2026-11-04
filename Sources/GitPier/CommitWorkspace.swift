@@ -26,34 +26,7 @@ struct RepositoryWorkspace: View {
         Divider()
       }
       if let output = model.output {
-        HStack(alignment: .center, spacing: 10) {
-          Image(
-            systemName: model.outputResult == .needsAttention
-              ? "exclamationmark.triangle"
-              : model.outputResult == .cancelled ? "stop.circle" : "checkmark.circle"
-          )
-          .font(.system(size: 14)).foregroundStyle(
-            model.outputResult == .needsAttention
-              ? Color.orange : model.outputResult == .cancelled ? Color.secondary : Color.mint
-          )
-          .frame(width: 20, height: 20)
-          Text(output.trimmingCharacters(in: .whitespacesAndNewlines)).font(uiFont(size: 11))
-            .lineLimit(3).textSelection(.enabled)
-            .fixedSize(horizontal: false, vertical: true)
-          Spacer()
-          if let rejection = model.rejectedPush {
-            Button(store.text("Merge & Push…", "合并并推送…")) { model.confirmMergeAndPush(rejection) }
-              .disabled(model.busy)
-          } else if model.pushFailed {
-            Button(store.text("Retry Push", "重试推送")) { model.retryPush() }
-              .disabled(model.busy || model.status.operation != nil || model.status.files.contains(where: \.isConflicted))
-          }
-          if model.needsUpstream {
-            Button(store.text("Choose Upstream…", "选择 Upstream…")) { model.needsUpstream = true }
-          }
-          IconButton("xmark", help: localizedUI("Dismiss")) { model.output = nil }
-        }.frame(minHeight: 28, alignment: .center).padding(.horizontal, 10).padding(.vertical, 6)
-          .background(Color.accentColor.opacity(0.05))
+        operationFeedback(output)
         Divider()
       }
       GeometryReader { geometry in
@@ -107,6 +80,62 @@ struct RepositoryWorkspace: View {
       }
     }
   }
+  private func operationFeedback(_ output: String) -> some View {
+    let record = model.operationFeedbackID.flatMap { id in store.operations.records.first { $0.id == id } }
+    let verified = record?.verifiedAt != nil
+    let presentation = record.map { OperationStatusPresentation($0.state) }
+      ?? OperationStatusPresentation(model.busy ? .running : model.outputResult)
+    let summary = verified ? store.text("The remote reference matches the saved local commit.", "远端引用与已保存的本地提交一致。")
+      : record?.state == .succeeded ? output.components(separatedBy: "\n").prefix(while: {
+          !$0.hasPrefix("To ") && !$0.hasPrefix("refs/")
+        }).prefix(2).joined(separator: "\n") : output
+    return HStack(alignment: .center, spacing: 10) {
+      Image(systemName: presentation.symbol).font(.system(size: 14)).foregroundStyle(presentation.color)
+        .frame(width: 20).accessibilityHidden(true)
+      VStack(alignment: .leading, spacing: 3) {
+        if let record {
+          Text([model.record.name, operationTitle(record.kind, store: store), operationStateTitle(record, store: store)].joined(separator: " · "))
+            .font(.callout.weight(.semibold)).lineLimit(2)
+        }
+        Text(summary.trimmingCharacters(in: .whitespacesAndNewlines)).font(.caption)
+          .lineLimit(3).textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
+      }
+      Spacer(minLength: 4)
+      if !verified, record?.state == .resultUnknown || record == nil && model.outputResult == .resultUnknown {
+        Button(store.text("Verify Remote…", "核实远端…")) { store.showOperationsCenter = true }
+          .disabled(model.busy)
+      } else if !verified, let rejection = model.rejectedPush, record?.kind != .commitAndPush || record?.localCommit != nil {
+        Button(store.text("Merge & Push…", "合并并推送…")) { model.confirmMergeAndPush(rejection) }.disabled(model.busy)
+      } else if !verified, model.pushFailed, let record, record.kind == .commitAndPush,
+        record.localCommit != nil, record.pushCheckpoint == nil {
+        Button(store.text("Review Push…", "审查推送…")) { model.retryPush() }
+          .disabled(model.busy || model.status.operation != nil || model.status.files.contains(where: \.isConflicted))
+      } else if !verified, model.pushFailed, record?.kind != .commitAndPush || record?.localCommit != nil {
+        Button(store.text("Retry Push", "重试推送")) { model.retryPush() }
+          .disabled(model.busy || model.status.operation != nil || model.status.files.contains(where: \.isConflicted))
+      }
+      if model.needsUpstream {
+        Button(store.text("Choose Upstream…", "选择 Upstream…")) { model.needsUpstream = true }.disabled(model.busy)
+      }
+      if let record {
+        Menu {
+          if let hash = record.localCommit {
+            Button(store.text("Copy Commit Hash", "复制提交 Hash")) { copyText(hash) }
+          }
+          if record.localCommit != nil || record.localCommitUnverified {
+            Button(store.text("Open History", "打开历史")) { Task { await store.openOperationHistory(record) } }
+              .disabled(model.busy)
+          }
+          Button(store.text("Open Operations Center", "打开操作中心")) { store.showOperationsCenter = true }
+        } label: {
+          Image(systemName: "ellipsis.circle").frame(width: 24, height: 24)
+        }.menuStyle(.borderlessButton).fixedSize().accessibilityLabel(store.text("Commit result actions", "提交结果操作"))
+      }
+      IconButton("xmark", help: localizedUI("Dismiss")) { model.output = nil }
+    }.frame(minHeight: 32).padding(.horizontal, 12).padding(.vertical, 7)
+      .background(presentation.color.opacity(0.075))
+      .accessibilityElement(children: .contain).accessibilityIdentifier("gitpier.operation.feedback")
+  }
   @ViewBuilder func pageContent(height: Double) -> some View {
     switch model.page {
     case "history": HistoryView(model: model)
@@ -144,10 +173,19 @@ struct RepositoryWorkspace: View {
   /// Keep actions outside the scroll region and allow async reviews to update in place.
   private var workflowReview: some View {
     VStack(alignment: .leading, spacing: 16) {
-      Text(model.confirmation?.title ?? "").font(.headline)
+      Text(model.confirmation?.title ?? "").workspaceHeading(.page)
       if model.confirmation?.canConfirm == false { ProgressView().controlSize(.small) }
       ScrollView {
         VStack(alignment: .leading, spacing: 14) {
+          if let message = model.confirmation?.messageReview {
+            Text(store.text("Proposed commit message", "建议的提交说明")).font(.headline)
+            Text(message.proposed).font(.system(.callout, design: .monospaced)).textSelection(.enabled)
+            DisclosureGroup(store.text("View original draft", "查看原始草稿")) {
+              Text(message.original).font(.system(.callout, design: .monospaced)).textSelection(.enabled)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            Divider()
+          }
           Text(model.confirmation?.detail ?? "").font(.callout).textSelection(.enabled)
             .frame(maxWidth: .infinity, alignment: .leading)
           if let commit = model.confirmation?.diffCommit {
@@ -168,6 +206,12 @@ struct RepositoryWorkspace: View {
             model.confirmation = nil
             reviewedAction()
           }.accessibilityIdentifier("gitpier.workflow.review.reviewed")
+        }
+        if let original = model.confirmation?.messageReview?.useOriginal {
+          Button(store.text("Commit with Original", "使用原文提交"), role: model.confirmation?.destructive == true ? .destructive : nil) {
+            model.confirmation = nil
+            original()
+          }.accessibilityIdentifier("gitpier.commit.message.original")
         }
         Button(
           model.confirmation?.confirmTitle ?? store.text("Confirm", "确认"),
@@ -227,7 +271,7 @@ struct RepositoryWorkspace: View {
           Text(store.text(page.1, page.2)).font(
             .system(size: 12, weight: model.page == page.0 ? .semibold : .regular)
           ).foregroundStyle(model.page == page.0 ? Color.accentColor : Color.secondary)
-        }.buttonStyle(.workspace)
+        }.buttonStyle(.plain)
       }
       Menu {
         Button(store.text("Resolve Conflicts", "解决冲突")) { model.openConflicts() }
@@ -462,7 +506,7 @@ struct ChangesPanel: View {
       .separator(),
       NativeMenuItems.editor(model: model, path: file.path),
       NativeMenuItems.action(store.text("Reveal in Finder", "在 Finder 中显示")) {
-        model.reveal(file.path)
+        model.revealFile(file.path)
       },
       NativeMenuItems.action(store.text("Copy Path", "复制路径")) { copyText(file.path) },
       NativeMenuItems.action(store.text("Blame", "逐行溯源")) {
@@ -502,6 +546,9 @@ struct ChangesPanel: View {
     VStack(spacing: 0) {
       HStack(spacing: 7) {
         Text(store.text("Commit Message", "提交说明")).font(uiFont(size: 11, weight: .semibold))
+          .accessibilityAddTraits(.isHeader)
+          .help(store.text("Aim for a 50-character title and 72-character body lines. GitPier never wraps your message.",
+            "建议标题约 50 个字符、正文每行约 72 个字符。GitPier 不会自动折行。"))
         Spacer()
         Toggle(localizedUI("Amend"), isOn: $model.amend).toggleStyle(.checkbox).font(
           uiFont(size: 10)
@@ -545,6 +592,13 @@ struct ChangesPanel: View {
         )
         .foregroundStyle(.secondary)
         Spacer()
+        let subjectLength = model.record.draft.prefix(while: { !$0.isNewline }).count
+        if subjectLength > CommitMessageFormatter.suggestedSubjectLength {
+          Image(systemName: "text.line.first.and.arrowtriangle.forward").foregroundStyle(.secondary)
+            .help(store.text("Aim for a title under 50 characters and body lines around 72. Long lines are kept.",
+              "建议标题不超过 50 字符、正文每行约 72 字符。长行会保留。"))
+            .accessibilityLabel(store.text("Long commit title", "提交标题较长"))
+        }
         Text(store.text("\(model.stagedCount) in Index", "Index 中 \(model.stagedCount) 个文件"))
           .foregroundStyle(.secondary)
       }.font(uiFont(size: 10, design: .monospaced)).padding(.horizontal, 10).frame(height: 26)
@@ -558,10 +612,7 @@ struct ChangesPanel: View {
               .disabled(!model.canContinueMerge).accessibilityIdentifier("gitpier.merge.complete-push")
           }
         } else {
-          Button(store.text("Commit", "提交")) { model.commit(push: false) }.buttonStyle(
-            .borderedProminent).disabled(!model.canCommit)
-          Button(store.text("Commit & Push…", "提交并推送…")) { model.commit(push: true) }
-            .disabled(!model.canCommit)
+          CommitActionButtons(model: model, activity: model.activity)
         }
         Spacer()
       }.controlSize(.small).padding(10)
@@ -604,6 +655,33 @@ struct ChangesPanel: View {
       }
     }
     return result
+  }
+}
+
+private struct CommitActionButtons: View {
+  let model: RepositoryModel
+  @ObservedObject var activity: OperationProgress
+  @EnvironmentObject var store: AppStore
+  var body: some View {
+    Button(title(push: false)) { model.commit(push: false) }
+      .buttonStyle(.borderedProminent).disabled(!model.canCommit)
+      .accessibilityIdentifier("gitpier.commit.execute")
+    Button(title(push: true)) { model.commit(push: true) }
+      .disabled(!model.canCommit).accessibilityIdentifier("gitpier.commit.push")
+  }
+  private func title(push: Bool) -> String {
+    let idle = push ? store.text("Commit & Push…", "提交并推送…") : store.text("Commit", "提交")
+    guard model.busy, let workflow = activity.state?.workflow, workflow.outcome == nil,
+      workflow.steps.contains(where: { $0.kind == .commit }),
+      workflow.steps.contains(where: { $0.kind == .push }) == push else { return idle }
+    return switch workflow.current {
+    case .prepare: store.text("Preparing…", "准备中…")
+    case .commit: store.text("Committing…", "提交中…")
+    case .pushTarget: store.text("Checking target…", "检查目标…")
+    case .push: store.text("Pushing…", "推送中…")
+    case .refresh: store.text("Refreshing…", "刷新中…")
+    case .execute: idle
+    }
   }
 }
 
@@ -670,7 +748,7 @@ struct CommitEditor: NSViewRepresentable {
     context.coordinator.parent = self
     guard let view = scroll.documentView as? CommitTextView else { return }
     if view.string != text { view.string = text }
-    let background = scheme == .dark ? NSColor(hex: 0x191B1F) : NSColor(hex: 0xFAFBFC)
+    let background = Theme.editorColor
     if view.backgroundColor != background { view.backgroundColor = background }
     if view.textColor != .labelColor { view.textColor = .labelColor }
     if view.insertionPointColor != .labelColor { view.insertionPointColor = .labelColor }

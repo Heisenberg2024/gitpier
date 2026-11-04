@@ -56,6 +56,12 @@ The release retains Operations Center checkpoints, verifies the exact remote ref
 
 操作中心保留未决检查点，支持主动核实精确远端引用及审查原目标重试。Dashboard 和 Push 预检在既有校验边界内复用观察结果。验收范围与配对性能见上述记录。
 
+## v2.2.0 — Native Experience Refinement / 原生体验完善
+
+In development. Improve operation outcomes and progress, message review, settings and credential clarity; adopt current macOS sidebar material and shared native presentation while retaining macOS 14 compatibility. [Implementation and acceptance](docs/v2.2.0-native-experience.md) records the local results and outstanding gates separately. The stable download remains v2.1.0 (35).
+
+开发中。完善操作结果、提交说明、偏好和凭证来源展示；更新原生窗口表现并保留 macOS 14 兼容路径。发布候选须经过单独验收，稳定下载仍为 v2.1.0（35）。
+
 ## Later: Trusted Distribution / 后续独立工作：可信分发
 
 **Planned / 计划中.** Developer ID production signing, Apple notarization, Hardened Runtime production adaptation, staple/ticket validation, Gatekeeper distribution and related production-key/pipeline work form a separate milestone. They are excluded from v2.0.0 development. Existing Universal/ad-hoc/DMG/Sparkle behavior and production update trust remain in place.

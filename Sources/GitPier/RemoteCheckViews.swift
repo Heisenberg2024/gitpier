@@ -52,7 +52,7 @@ struct RepositorySyncStatus: View {
   var body: some View {
     let check = RemoteCheckText(workspace: workspace, id: entry.record.id)
     let help = check.help
-    VStack(alignment: .leading, spacing: 4) {
+    VStack(alignment: .center, spacing: 4) {
       if let value = entry.usable {
         BranchSyncBadge(state: value.syncState, stacked: true)
         if entry.state == .stale {
@@ -66,7 +66,7 @@ struct RepositorySyncStatus: View {
           }.font(uiFont(size: 10)).foregroundStyle(check.warning ? .orange : .secondary)
         }
       } else { BranchSyncBadge(state: .unknown, stacked: true) }
-    }.font(uiFont(size: 12)).foregroundStyle(.secondary).help(help)
+    }.font(uiFont(size: 12)).foregroundStyle(.secondary).multilineTextAlignment(.center).help(help)
       .accessibilityElement(children: .combine).accessibilityHint(help)
   }
 }

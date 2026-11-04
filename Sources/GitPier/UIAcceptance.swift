@@ -95,6 +95,30 @@ import SwiftUI
           exit(0)
         }
         #if DEBUG
+        if acceptanceScope == "native-experience-d" {
+          try await verifyNativeExperienceD(store: store, model: model, window: window, output: output)
+          window.close(); store.shutdown()
+          print("Native experience phase D acceptance passed.")
+          exit(0)
+        }
+        if acceptanceScope == "native-experience-c" {
+          try await verifyNativeExperienceC(store: store, model: model, root: root, window: window, output: output)
+          window.close(); store.shutdown()
+          print("Native experience phase C acceptance passed.")
+          exit(0)
+        }
+        if acceptanceScope == "native-experience-b" {
+          try await verifyNativeExperienceB(store: store, model: model, root: root, window: window, output: output)
+          window.close(); store.shutdown()
+          print("Native experience phase B acceptance passed.")
+          exit(0)
+        }
+        if acceptanceScope == "native-experience-a" {
+          try await verifyNativeExperienceA(store: store, root: root, output: output)
+          window.close(); store.shutdown()
+          print("Native experience phase A acceptance passed.")
+          exit(0)
+        }
         if acceptanceScope == "workflow210" {
           try await verifyWorkflow210(store: store, model: model, root: root, window: window, output: output)
           window.close(); store.shutdown()
@@ -381,10 +405,11 @@ import SwiftUI
         try await settle()
         try await waitFor { !model.busy }
         guard
+          model.activity.state?.result == .succeeded,
+          model.activity.state?.workflow.steps.allSatisfy({ $0.state == .completed }) == true,
           descendants(host).compactMap({ $0 as? NSProgressIndicator }).contains(where: {
-            $0.style == .bar
-          }),
-          model.activity.state?.result == .succeeded
+            $0.style == .bar && !$0.isIndeterminate && $0.doubleValue == 1
+          })
         else {
           throw GitPierError.invalidInput("Status bar did not display native operation progress")
         }
@@ -1810,7 +1835,7 @@ import SwiftUI
         host.rootView = AnyView(page.environmentObject(store).modifier(AppAppearance(store: store)))
         try await settle()
         _ = try validate(host, context: "\(language)-\(name)")
-        if name == "help" || name == "settings-3" {
+        if name == "help" || name == "settings-3" || name == "settings-7" {
           try capture(host, to: output.appendingPathComponent("scrollbars-\(language)-\(name).png"))
         }
       }

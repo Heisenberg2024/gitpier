@@ -33,6 +33,38 @@ final class LocalAgentTests: XCTestCase {
     let detected = try await AgentExecutable.detect(searchPath: ".:" + root.path)
     XCTAssertEqual(detected.path, file.path)
   }
+  func testFinderEnvironmentFindsCodexInUserLocalBin() async throws {
+    let file = try executable("printf 'codex-cli 1.0.0\\n'", name: "standalone-codex")
+    let bin = root.appendingPathComponent(".local/bin")
+    try FileManager.default.createDirectory(at: bin, withIntermediateDirectories: true)
+    try FileManager.default.createSymbolicLink(at: bin.appendingPathComponent("codex"), withDestinationURL: file)
+    let environment = try AgentEnvironment(inheriting: ["HOME": root.path, "PATH": "/usr/bin:/bin"])
+    let paths = environment.values["PATH", default: ""].split(separator: ":").map(String.init)
+    _ = try XCTUnwrap(paths.firstIndex(of: bin.path), "Finder's environment must include the user's local command directory")
+    let detected = try await AgentExecutable.detect(environment: environment)
+    XCTAssertEqual(detected.path, file.path)
+    XCTAssertEqual(detected.environment, environment)
+    try detected.validate()
+  }
+  func testInheritedPathKeepsPriorityOverUserLocalBin() async throws {
+    let preferred = try executable("printf 'codex-cli 2.0.0\\n'")
+    let bin = root.appendingPathComponent(".local/bin")
+    try FileManager.default.createDirectory(at: bin, withIntermediateDirectories: true)
+    let alternate = try executable("printf 'codex-cli 1.0.0\\n'", name: "alternate-codex")
+    try FileManager.default.createSymbolicLink(at: bin.appendingPathComponent("codex"), withDestinationURL: alternate)
+    let environment = try AgentEnvironment(inheriting: ["HOME": root.path, "PATH": root.path + ":/usr/bin:/bin"])
+    let detected = try await AgentExecutable.detect(environment: environment)
+    XCTAssertEqual(detected.path, preferred.path)
+  }
+  func testLocalBinFallbackIsUniqueAndRejectsInvalidHomePaths() throws {
+    let bin = root.appendingPathComponent(".local/bin").path
+    let environment = try AgentEnvironment(inheriting: ["HOME": root.path, "PATH": "/usr/bin:" + bin])
+    XCTAssertEqual(environment.values["PATH", default: ""].split(separator: ":").filter { $0 == bin }.count, 1)
+    for home in ["relative-home", "/invalid\u{0}home"] {
+      let invalid = try AgentEnvironment(inheriting: ["HOME": home, "PATH": "/usr/bin:/bin"])
+      XCTAssertFalse(invalid.values["PATH", default: ""].contains(".local/bin"))
+    }
+  }
   func testMissingNonExecutableWrongToolAndNonzeroExitAreRefused() async throws {
     let file = try executable("printf 'other-cli 1.0.0\\n'")
     for path in [root.appendingPathComponent("missing").path, root.path, file.path, "relative"] {

@@ -269,6 +269,7 @@ public struct AppSettings: Codable, Equatable, Sendable {
   public var diffAddedHex = "55B982"
   public var diffRemovedHex = "CF6679"
   public var completionNotifications = false
+  public var completionNotificationSound = true
   public var recentLimit = 20
   public var launchPage = "dashboard"
   public var editorPath = ""
@@ -329,6 +330,9 @@ public struct AppSettings: Codable, Equatable, Sendable {
     completionNotifications =
       try values.decodeIfPresent(Bool.self, forKey: .completionNotifications)
       ?? completionNotifications
+    completionNotificationSound =
+      try values.decodeIfPresent(Bool.self, forKey: .completionNotificationSound)
+      ?? completionNotificationSound
     recentLimit = try values.decodeIfPresent(Int.self, forKey: .recentLimit) ?? recentLimit
     launchPage = try values.decodeIfPresent(String.self, forKey: .launchPage) ?? launchPage
     editorPath = try values.decodeIfPresent(String.self, forKey: .editorPath) ?? editorPath

@@ -14,7 +14,8 @@ import SwiftUI
   var records: [WorkflowOperationRecord] { history.records }
   var activeCount: Int { records.filter { $0.state.active }.count }
   func begin(id: UUID, kind: WorkflowOperationKind, repositoryID: UUID?,
-    state: WorkflowOperationState = .queued, started: Date = Date(), identity: OperationRepositoryIdentity? = nil, cancel: (() -> Void)? = nil) {
+    state: WorkflowOperationState = .queued, started: Date = Date(), identity: OperationRepositoryIdentity? = nil,
+    workflow: OperationWorkflowProgress? = nil, cancel: (() -> Void)? = nil) {
     guard !records.contains(where: { $0.id == id }) else { return }
     if let repositoryID {
       for waiting in records where waiting.repositoryID == repositoryID && waiting.state == .waitingForUser {
@@ -26,6 +27,7 @@ import SwiftUI
     var record = WorkflowOperationRecord(id: id, kind: kind, repositoryID: repositoryID,
       startedAt: started, state: state, canCancel: cancel != nil)
     record.repositoryIdentity = identity
+    record.workflow = workflow
     record.phase = state == .queued ? .queued : .executing
     history.insert(record)
     pruneCallbacks()
@@ -33,7 +35,8 @@ import SwiftUI
   func update(_ id: UUID, state: WorkflowOperationState? = nil, transfer: GitTransferProgress? = nil,
     cancellable: Bool? = nil, phase: WorkflowOperationPhase? = nil, recovery: OperationRecoveryAction? = nil,
     localCommit: String? = nil, detail: String? = nil, branch: String? = nil,
-    pushCheckpoint: PushCheckpoint? = nil, localCommitUnverified: Bool? = nil) {
+    pushCheckpoint: PushCheckpoint? = nil, localCommitUnverified: Bool? = nil,
+    workflow: OperationWorkflowProgress? = nil) {
     guard var record = records.first(where: { $0.id == id }), !record.state.finished else { return }
     if let state { record.state = state; record.phase = state.active ? (state == .queued ? .queued : .executing) : state == .resultUnknown ? .verification : .completed }
     if let phase { record.phase = phase; record.progress = nil; record.transferPhase = nil }
@@ -49,6 +52,7 @@ import SwiftUI
     }
     if let localCommitUnverified { record.localCommitUnverified = localCommitUnverified }
     if let detail { record.setDetail(detail) }
+    if let workflow, workflow.id == id { record.workflow = workflow }
     if record.cancellationRequested && record.state.active { record.phase = .cancelling; record.canCancel = false }
     if !record.state.active { cancellations[id] = nil; record.canCancel = false }
     if record.state.finished { record.completedAt = Date() }
@@ -71,6 +75,7 @@ import SwiftUI
         store.repositories.contains(where: { $0.id == id && $0.path == checkpoint.workingTree }) else { return }
       if observation.confirmed, history.reconcilePush(record.id, observation: observation) {
         verificationMessages[record.id] = store.text("The remote reference matches the saved local commit.", "远端引用与已保存的本地提交一致。")
+        if let verified = records.first(where: { $0.id == record.id }) { model.activity.applyVerifiedPush(verified) }
         model.objectWillChange.send()
       } else {
         verificationMessages[record.id] = store.text("The remote reference does not prove this Push completed. The result remains unconfirmed.", "远端引用不足以证明此次推送完成，结果仍未确认。")
@@ -137,11 +142,12 @@ struct OperationsCenterView: View {
   @ObservedObject var center: OperationsCenter
   @EnvironmentObject var store: AppStore
   @Environment(\.dismiss) var dismiss
+  @Environment(\.colorScheme) private var scheme
   var body: some View {
     let records = center.records
     VStack(alignment: .leading, spacing: 14) {
       HStack {
-        Text(store.text("Operations Center", "操作中心")).font(.title2.bold())
+        Text(store.text("Operations Center", "操作中心")).workspaceHeading(.sheet)
         Spacer()
         Button(store.text("Close", "关闭")) { dismiss() }.keyboardShortcut(.cancelAction)
       }
@@ -160,12 +166,11 @@ struct OperationsCenterView: View {
       }
     }.padding(22).frame(minWidth: 660, idealWidth: 760, minHeight: 440, idealHeight: 580)
       .modifier(AppAppearance(store: store))
-      .presentationBackground(.regularMaterial)
       .accessibilityIdentifier("gitpier.operations.center")
   }
   private func section(_ title: String, _ values: [WorkflowOperationRecord]) -> some View {
     VStack(alignment: .leading, spacing: 12) {
-    Text(title).font(.headline)
+    Text(title).workspaceHeading()
     if values.isEmpty { Text(store.text("No operations", "暂无操作")).foregroundStyle(.secondary) }
     ForEach(values) { record in
       VStack(alignment: .leading, spacing: 6) {
@@ -188,7 +193,10 @@ struct OperationsCenterView: View {
           Label(store.text("Saved local commit: ", "已保存的本地提交：") + String(hash.prefix(8)), systemImage: "checkmark.circle")
             .font(.caption).foregroundStyle(.green).help(hash).textSelection(.enabled)
         }
-        if record.state.active {
+        if let workflow = record.workflow {
+          Text(WorkflowProgressPresentation.label(workflow, store: store)).font(.caption).foregroundStyle(.secondary)
+          WorkflowProgressBar(workflow: workflow).frame(height: 8)
+        } else if record.state.active {
           if let transfer = record.transferPhase {
             Text(operationTransferTitle(transfer, store: store) + (record.progress.map { " \(Int($0 * 100))%" } ?? "")).font(.caption).foregroundStyle(.secondary)
           } else if record.phase == .refreshing { Text(store.text("Refreshing local status", "刷新本地状态")).font(.caption).foregroundStyle(.secondary) }
@@ -220,7 +228,7 @@ struct OperationsCenterView: View {
             }
           }
         }
-      }.padding(12).background(Color.secondary.opacity(0.07)).clipShape(RoundedRectangle(cornerRadius: 8))
+      }.padding(12).workspacePanel(Theme.panel(scheme))
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("gitpier.operation." + record.id.uuidString)
     }
@@ -253,9 +261,11 @@ struct OperationsCenterView: View {
 }
 @MainActor func operationStateTitle(_ record: WorkflowOperationRecord, store: AppStore) -> String {
   if record.cancellationRequested && record.state.active { return store.text("Cancelling…", "取消中…") }
-  if record.kind == .commitAndPush, record.localCommit != nil {
+  if [.commitAndPush, .mergeAndPush].contains(record.kind), record.localCommit != nil {
     if record.state == .failed { return store.text("Push failed · local commit preserved", "推送失败 · 本地提交已保留") }
     if record.state == .cancelled { return store.text("Push cancelled · local commit preserved", "推送已取消 · 本地提交已保留") }
+    if record.state == .resultUnknown { return store.text("Local commit saved · verify Push result", "本地提交已保存 · 请核实推送结果") }
+    if record.state == .needsAttention || record.state == .waitingForUser { return store.text("Local commit saved · Push needs attention", "本地提交已保存 · 推送需要处理") }
   }
   switch record.state {
   case .queued: return store.text("Queued", "排队中")
@@ -276,7 +286,7 @@ struct OperationsCenterView: View {
   }
 }
 
-@MainActor private func operationTransferTitle(_ phase: GitTransferPhase, store: AppStore) -> String {
+@MainActor func operationTransferTitle(_ phase: GitTransferPhase, store: AppStore) -> String {
   switch phase {
   case .counting: return store.text("Counting", "统计对象")
   case .compressing: return store.text("Compressing", "压缩对象")

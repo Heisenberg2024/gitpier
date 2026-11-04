@@ -69,6 +69,12 @@ extension UIAcceptance {
       store.models.values.allSatisfy({ $0.refreshCount == 0 }) else {
       throw GitPierError.invalidInput("Dashboard fixture summary or lightweight collection is incorrect")
     }
+    try await waitFor { descendants(host).contains { ($0 as? NSTableView)?.numberOfRows == records.count } }
+    guard let list = descendants(host).compactMap({ $0 as? NSTableView }).first(where: { $0.numberOfRows == records.count }),
+      let listScroll = list.enclosingScrollView else {
+      throw GitPierError.invalidInput("Dashboard native list is missing")
+    }
+    let scrollerProbe = DashboardScrollerProbe(listScroll)
     // Capture real visible windows at every requested size in both languages and appearances.
     for language in AppLanguage.allCases {
       for appearance in [AppearanceMode.light, .dark] {
@@ -88,6 +94,11 @@ extension UIAcceptance {
     window.setContentSize(NSSize(width: 1440, height: 900)); window.center()
     var settings = store.settings; settings.language = .english; settings.appearance = .light; store.updateSettings(settings); store.notice = nil
     try await settle()
+    func clearSelection() async throws {
+      try await waitFor { accessibleButton(host, title: "Clear Selection", enabled: true) != nil }
+      try pressNativeButton(host, title: "Clear Selection")
+      try await waitFor { store.workspace.selected.isEmpty }
+    }
     let modified = summary.counts[.modified] ?? 0
     try pressNativeButton(host, title: "Modified \(modified)")
     try await waitFor { store.workspace.filters == [.modified] }
@@ -96,15 +107,15 @@ extension UIAcceptance {
     try pressNativeButton(host, title: "Select Matching")
     try await waitFor { store.workspace.selected == [records[6].id] }
     try pressNativeButton(host, title: "All"); try await waitFor { store.workspace.filters.isEmpty }
-    try pressNativeButton(host, title: "Clear Selection")
-    try await waitFor { store.workspace.selected.isEmpty }
+    try await clearSelection()
+    try await waitFor { dashboardElement(host, label: "Select atlas-app", role: "AXCheckBox") != nil }
     guard let checkbox = dashboardElement(host, label: "Select atlas-app", role: "AXCheckBox") else {
       throw GitPierError.invalidInput("Missing independent repository checkbox")
     }
     try dashboardPress(checkbox)
     try await waitFor { store.workspace.selected == [records[0].id] }
     guard store.showDashboard else { throw GitPierError.invalidInput("Checkbox opened a repository") }
-    try pressNativeButton(host, title: "Clear Selection")
+    try await clearSelection()
     // Native text input must combine with AND filters while preserving selection.
     guard let field = descendants(host).compactMap({ $0 as? NSTextField }).first(where: {
       $0.placeholderString?.hasPrefix("Search repositories") == true
@@ -118,8 +129,9 @@ extension UIAcceptance {
     try await waitFor { store.workspace.selected == [records[3].id] }
     try pressNativeButton(host, title: "Clear search")
     try pressNativeButton(host, title: "All")
-    try pressNativeButton(host, title: "Clear Selection")
+    try await clearSelection()
     let disclosure = "Expand / collapse related worktrees atlas-app"
+    try await waitFor { accessibleButton(host, title: disclosure, enabled: true) != nil }
     try pressNativeButton(host, title: disclosure); try await settle()
     try capture(host, to: output.appendingPathComponent("dashboard-worktrees-collapsed.png"))
     try pressNativeButton(host, title: "Select Matching")
@@ -143,7 +155,7 @@ extension UIAcceptance {
       throw GitPierError.invalidInput("Small-window selection actions disappeared")
     }
     window.setContentSize(NSSize(width: 1440, height: 900)); window.center()
-    try pressNativeButton(host, title: "Clear Selection")
+    try await clearSelection()
     store.workspace.filters = [.conflicts]; try await settle()
     try capture(host, to: output.appendingPathComponent("dashboard-conflicts.png"))
     store.workspace.filters = [.unavailable]; try await settle()
@@ -180,13 +192,40 @@ extension UIAcceptance {
     guard window.appearance == nil, host.effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == NSApp.effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) else {
       throw GitPierError.invalidInput("Dashboard System appearance did not follow the application")
     }
+    window.setContentSize(NSSize(width: 960, height: 640))
+    try await settle()
+    guard let table = descendants(host).compactMap({ $0 as? NSTableView }).first(where: { $0.numberOfRows == records.count }),
+          !NSLocationInRange(records.count - 1, table.rows(in: table.visibleRect)) else {
+      throw GitPierError.invalidInput("Dashboard accessibility scroll fixture must start with its last row off screen")
+    }
+    func scrollDashboard(_ name: String, to row: Int, awayFrom other: Int) async throws {
+      let selector = NSSelectorFromString("accessibilityCustomActions")
+      let action = assistantElements(host).lazy
+        .filter { assistantString($0, "accessibilityIdentifier") == "dashboard-repositories" && $0.responds(to: selector) }
+        .compactMap { $0.value(forKey: "accessibilityCustomActions") as? [NSAccessibilityCustomAction] }
+        .compactMap { $0.first { $0.name == name } }.first
+      guard action?.handler?() == true else {
+        throw GitPierError.invalidInput("Missing Dashboard accessibility action " + name)
+      }
+      try await waitFor {
+        let visible = table.rows(in: table.visibleRect)
+        return NSLocationInRange(row, visible) && !NSLocationInRange(other, visible)
+      }
+    }
+    try await scrollDashboard("Scroll to Last Repository", to: records.count - 1, awayFrom: 0)
+    try await scrollDashboard("Scroll to First Repository", to: 0, awayFrom: records.count - 1)
+    try scrollerProbe.events.joined(separator: "\n").write(
+      to: output.appendingPathComponent("dashboard-native-scroller-events.txt"), atomically: true, encoding: .utf8)
+    guard scrollerProbe.events.isEmpty else {
+      throw GitPierError.invalidInput("Dashboard briefly enabled native scrollers during updates: \(scrollerProbe.events.count)")
+    }
     if ProcessInfo.processInfo.environment["GITPIER_DASHBOARD_INTERACTIVE"] == "1" {
       settings.appearance = .light; store.updateSettings(settings)
       window.setContentSize(NSSize(width: 1200, height: 800)); window.center(); try await settle()
       try "visible fixture ready\n".write(to: output.appendingPathComponent("gui-ready"), atomically: true, encoding: .utf8)
       while !FileManager.default.fileExists(atPath: output.appendingPathComponent("finish-gui").path) { try await Task.sleep(for: .milliseconds(250)) }
     }
-    try "Real 8-entry fixture; 20 visible language/theme/size layouts; KPI AND filters; native Select Matching/Clear; collapse preserves all 8 selected entries; Fetch review and cancellation/deduplication; errors; rapid filters; empty recovery; local refresh/manual identity/drafts; real scanning; System appearance passed.\n"
+    try "Real 8-entry fixture; 20 visible language/theme/size layouts; KPI AND filters; native Select Matching/Clear; collapse preserves all 8 selected entries; Fetch review and cancellation/deduplication; errors; rapid filters; empty recovery; local refresh/manual identity/drafts; real scanning; System appearance; native accessibility scroll to the first and last repository passed.\n"
       .write(to: output.appendingPathComponent("dashboard-results.txt"), atomically: true, encoding: .utf8)
   }
 
@@ -211,5 +250,21 @@ extension UIAcceptance {
       return nil
     }
     return walk(host)
+  }
+}
+
+@MainActor private final class DashboardScrollerProbe {
+  private var observations: [NSKeyValueObservation] = []
+  private(set) var events: [String] = []
+  init(_ scroll: NSScrollView) {
+    for keyPath in [\NSScrollView.hasVerticalScroller, \NSScrollView.hasHorizontalScroller] {
+      observations.append(scroll.observe(keyPath, options: [.new]) { [weak self] scroll, change in
+        MainActor.assumeIsolated {
+          guard change.newValue == true, let self else { return }
+          self.events.append("vertical=\(scroll.hasVerticalScroller) horizontal=\(scroll.hasHorizontalScroller)\n"
+            + Thread.callStackSymbols.prefix(24).joined(separator: "\n"))
+        }
+      })
+    }
   }
 }

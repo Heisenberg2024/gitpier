@@ -33,7 +33,9 @@ public struct AgentEnvironment: Equatable, Sendable {
     inheritedHome = env["HOME"]?.isEmpty == false
     if !inheritedHome { env["HOME"] = FileManager.default.homeDirectoryForCurrentUser.path }
     var paths = (env["PATH"] ?? "").split(separator: ":").map(String.init).filter { $0.hasPrefix("/") && !$0.utf8.contains(0) }
-    for path in ["/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/bin", "/usr/sbin", "/sbin"] where !paths.contains(path) { paths.append(path) }
+    let userBin = env["HOME", default: ""] + "/.local/bin"
+    for path in [userBin, "/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/bin", "/usr/sbin", "/sbin"]
+      where path.hasPrefix("/") && !path.utf8.contains(0) && !paths.contains(path) { paths.append(path) }
     env["PATH"] = paths.joined(separator: ":")
     inheritedCodexHome = env["CODEX_HOME"] != nil
     customHome = !codexHome.isEmpty

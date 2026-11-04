@@ -7,7 +7,7 @@ import SwiftTerm
       window.attachedSheet == nil, store.current?.confirmation == nil
     else { return false }
     let modifiers = event.modifierFlags.intersection([.command, .option, .control, .shift])
-    if modifiers == [.command, .shift], event.charactersIgnoringModifiers?.lowercased() == "p",
+    if modifiers == .command, event.charactersIgnoringModifiers?.lowercased() == "k",
        !terminalFocused(window.firstResponder) {
       store.showQuickOpen = true
       return true

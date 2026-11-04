@@ -1,5 +1,9 @@
 # Development
 
+## Native experience refinement (Unreleased)
+
+See [implementation and acceptance](v2.2.0-native-experience.md) for the five phases and [credential audit](v2.2.0-credential-audit.md) for transport and API boundaries. `native-experience-a` through `native-experience-d` are Debug UI scopes using disposable repositories. For phase A, pass the executable from a locally packaged Debug app to exercise the actual Sparkle preference implementation; direct SwiftPM execution does not have packaged Sparkle defaults. Phase C uses a local bare remote and never needs a production profile. Phase D captures the fixture windows through WindowServer. Use `GITPIER_APP_OUTPUT_DIR` to point the temporary DMG structure check at a local candidate without replacing `dist`.
+
 ## v2.1.0 publication — 2026-11-03
 
 [GitPier v2.1.0 (35)](https://github.com/Heisenberg2024/gitpier/releases/tag/v2.1.0) became **Latest** at **2026-11-03 20:45:38 (Asia/Shanghai)**. Release **432684966** and Tag `v2.1.0` point to `5ff81be6d5cb3dd9594535b5bdde3c1453bf4009`. The GitHub body and signed Feed both carry the approved English and Simplified Chinese notes.

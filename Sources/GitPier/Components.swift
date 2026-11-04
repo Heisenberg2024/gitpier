@@ -1,6 +1,16 @@
 import AppKit
 import SwiftUI
 
+/// Decoration used for an existing favorite. Parents can expose the state alongside their title.
+struct RepositoryFavoriteMark: View {
+  var body: some View {
+    Image(systemName: "star.fill")
+      .symbolRenderingMode(.monochrome)
+      .foregroundStyle(Color(nsColor: .systemYellow))
+      .accessibilityHidden(true)
+  }
+}
+
 extension NSColor {
   convenience init(hex: UInt32) {
     self.init(
@@ -9,14 +19,59 @@ extension NSColor {
   }
 }
 enum Theme {
-  static func panel(_ scheme: ColorScheme) -> Color {
-    Color(nsColor: NSColor(hex: scheme == .dark ? 0x23262D : 0xF0F2F5))
+  static var editorColor: NSColor { .textBackgroundColor }
+  static func panel(_: ColorScheme) -> Color { Color(nsColor: .windowBackgroundColor) }
+  static func editor(_: ColorScheme) -> Color { Color(nsColor: editorColor) }
+  static func sidebar(_: ColorScheme) -> Color { Color(nsColor: .underPageBackgroundColor) }
+  static var separator: Color { Color(nsColor: .separatorColor) }
+  static let controlRadius: CGFloat = 6
+  static let panelRadius: CGFloat = 10
+  static let iconTarget: CGFloat = 25
+
+  static func selection(increasedContrast: Bool) -> Color {
+    Color.accentColor.opacity(increasedContrast ? 0.24 : 0.14)
   }
-  static func editor(_ scheme: ColorScheme) -> Color {
-    Color(nsColor: NSColor(hex: scheme == .dark ? 0x191B1F : 0xFAFBFC))
+
+  static func panelShape(radius: CGFloat) -> AnyShape {
+    #if compiler(>=6.4)
+    if #available(macOS 27, *) {
+      return AnyShape(ConcentricRectangle(corners: .concentric(minimum: .fixed(radius))))
+    }
+    #endif
+    return AnyShape(RoundedRectangle(cornerRadius: radius, style: .continuous))
   }
-  static func sidebar(_ scheme: ColorScheme) -> Color {
-    Color(nsColor: NSColor(hex: scheme == .dark ? 0x202229 : 0xF4F5F7))
+}
+
+enum WorkspaceHeading {
+  case section, page, sheet
+  var font: Font {
+    switch self {
+    case .section: .headline
+    case .page: .title3.weight(.semibold)
+    case .sheet: .title2.weight(.semibold)
+    }
+  }
+}
+
+extension View {
+  func workspaceHeading(_ level: WorkspaceHeading = .section) -> some View {
+    font(level.font).accessibilityAddTraits(.isHeader)
+  }
+  func workspacePanel(_ fill: Color, radius: CGFloat = Theme.panelRadius) -> some View {
+    modifier(WorkspacePanelSurface(fill: fill, radius: radius))
+  }
+}
+
+private struct WorkspacePanelSurface: ViewModifier {
+  @Environment(\.colorSchemeContrast) private var contrast
+  let fill: Color
+  let radius: CGFloat
+  func body(content: Content) -> some View {
+    let shape = Theme.panelShape(radius: radius)
+    content.background(fill, in: shape).overlay {
+      shape.stroke(Theme.separator.opacity(contrast == .increased ? 1 : 0.65))
+        .allowsHitTesting(false)
+    }
   }
 }
 @MainActor func uiFont(
@@ -35,7 +90,7 @@ struct IconButton: View {
   }
   var body: some View {
     Button(action: action) {
-      Image(systemName: symbol).font(.system(size: 12)).frame(width: 23, height: 23).contentShape(
+      Image(systemName: symbol).font(.system(size: 12)).frame(width: Theme.iconTarget, height: Theme.iconTarget).contentShape(
         Rectangle())
     }.buttonStyle(.workspace).help(help).foregroundStyle(.secondary).accessibilityLabel(help)
   }
@@ -47,7 +102,7 @@ struct EmptyState: View {
   var body: some View {
     VStack(spacing: 14) {
       Image(systemName: symbol).font(.system(size: 34, weight: .light)).foregroundStyle(.secondary)
-      Text(title).font(.title3.weight(.medium))
+      Text(title).workspaceHeading(.page)
       Text(detail).font(.callout).foregroundStyle(.secondary).multilineTextAlignment(.center).frame(
         maxWidth: 460)
     }.padding(30).frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -110,18 +165,21 @@ struct FeedbackSurface<Content: View>: View {
   let pressed: Bool
   @ViewBuilder var content: () -> Content
   @Environment(\.isEnabled) private var enabled
+  @Environment(\.isFocused) private var focused
+  @Environment(\.colorSchemeContrast) private var contrast
   @State private var hovering = false
   var body: some View {
     content().background {
-      RoundedRectangle(cornerRadius: 5).fill(
+      RoundedRectangle(cornerRadius: Theme.controlRadius).fill(
         enabled
           ? (pressed
-            ? Color.accentColor.opacity(0.27) : hovering ? Color.primary.opacity(0.08) : .clear)
+            ? Theme.selection(increasedContrast: true) : hovering ? Color.primary.opacity(contrast == .increased ? 0.15 : 0.08) : .clear)
           : .clear)
     }
     .overlay {
-      RoundedRectangle(cornerRadius: 5).stroke(
-        enabled && pressed ? Color.accentColor.opacity(0.55) : .clear, lineWidth: 1)
+      RoundedRectangle(cornerRadius: Theme.controlRadius).stroke(
+        enabled && focused ? Color.accentColor : enabled && pressed ? Color.accentColor.opacity(0.55) : .clear,
+        lineWidth: focused && contrast == .increased ? 2 : 1).allowsHitTesting(false)
     }
     .opacity(enabled ? 1 : 0.45).contentShape(Rectangle()).onHover { hovering = $0 }
   }

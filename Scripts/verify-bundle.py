@@ -47,5 +47,6 @@ if config['publicEDKey'] and info['CFBundleIdentifier'] == config['bundleIdentif
     assert info['SUPublicEDKey'] == config['publicEDKey'] and info['SUFeedURL'] == config['feedURL']
 assert info['SUVerifyUpdateBeforeExtraction'] and info['SURequireSignedFeed']
 assert info['SUSignedFeedFailureExpirationInterval'] == 0, 'Signed-feed failures must not expire'
-assert not info['SUEnableAutomaticChecks'] and not info['SUAllowsAutomaticUpdates'] and not info['SUSendProfileInfo']
+assert info['SUEnableAutomaticChecks'] is (not testing)
+assert all(info[key] is False for key in ('SUAllowsAutomaticUpdates', 'SUAutomaticallyUpdate', 'SUSendProfileInfo'))
 print(f'Bundle verified: {config["version"]} ({config["build"]}), {", ".join(architectures)}')

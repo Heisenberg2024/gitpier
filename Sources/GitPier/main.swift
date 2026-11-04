@@ -130,7 +130,7 @@ struct GitPierApp: App {
           Button(store.text("Open Repository…", "打开仓库…")) { store.openRepository() }
             .keyboardShortcut("o")
           Button(store.text("Clone Repository…", "克隆仓库…")) { store.showClone = true }
-          Button(store.text("Quick Open (⌘⇧P)…", "快速打开 (⌘⇧P)…")) { if !terminalFocused() { store.showQuickOpen = true } }
+          Button(store.text("Quick Open (⌘K)…", "快速打开 (⌘K)…")) { if !terminalFocused() { store.showQuickOpen = true } }
           Button(store.text("Workspace Search…", "工作空间搜索…")) { store.showWorkspaceSearch = true }
           Button(store.text("New Workspace Window", "新建工作空间窗口")) { openWindow(id: "workspace") }
             .keyboardShortcut("n", modifiers: [.command, .shift])

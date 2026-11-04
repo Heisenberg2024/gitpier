@@ -324,6 +324,7 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable,
   @Published var splitID: UUID?
   let root: String
   var authentication: AuthenticationContext?
+  var authenticationForNewSession: (() -> AuthenticationContext?)?
   var canStart: (() -> Bool)?
   private var number = 0
   init(root: String) { self.root = root }
@@ -331,9 +332,16 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable,
   var selected: TerminalSession? { sessions.first { $0.id == selectedID } }
   func add(settings: AppSettings) {
     guard canStart?() != false else { return }
+    let sessionAuthentication: AuthenticationContext?
+    if let authenticationForNewSession {
+      guard let current = authenticationForNewSession() else { return }
+      sessionAuthentication = current
+    } else {
+      sessionAuthentication = authentication
+    }
     number += 1
     let session = TerminalSession(
-      root: root, number: number, settings: settings, authentication: authentication, canStart: canStart)
+      root: root, number: number, settings: settings, authentication: sessionAuthentication, canStart: canStart)
     sessions.append(session)
     selectedID = session.id
   }

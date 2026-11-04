@@ -37,7 +37,7 @@ struct HistoryView: View {
         VStack(spacing: 0) {
           ScrollView(.horizontal, showsIndicators: false) {
           HStack {
-            Text(store.text("History", "历史")).font(uiFont(size: 13, weight: .semibold))
+            Text(store.text("History", "历史")).workspaceHeading()
             Button(store.text("Reflog", "引用日志")) { model.setPage("reflog") }
             Button(store.text("Cherry-pick Selected (\(replayHashes.count))…", "Cherry-pick 所选提交（\(replayHashes.count)）…")) {
               model.commitReplayRequest = CommitReplayRequest(commits: replayHashes)

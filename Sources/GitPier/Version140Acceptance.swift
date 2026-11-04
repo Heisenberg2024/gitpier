@@ -99,11 +99,20 @@ extension UIAcceptance {
       throw GitPierError.invalidInput("Worktree drafts were mixed")
     }
     // Shortcut route and real native sheet key delivery.
-    let shortcut = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [.command, .shift],
+    let previousShortcut = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [.command, .shift],
       timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber, context: nil,
       characters: "P", charactersIgnoringModifiers: "p", isARepeat: false, keyCode: 35)!
+    guard !ShortcutRouter.handleKeyDown(previousShortcut, store: store, window: window), !store.showQuickOpen else {
+      throw GitPierError.invalidInput("The replaced Quick Open shortcut is still active")
+    }
+    let shortcut = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: .command,
+      timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber, context: nil,
+      characters: "k", charactersIgnoringModifiers: "k", isARepeat: false, keyCode: 40)!
     guard ShortcutRouter.handleKeyDown(shortcut, store: store, window: window) else { throw GitPierError.invalidInput("Quick Open shortcut was not routed") }
     try await waitFor { window.attachedSheet != nil }; try await settle()
+    guard !ShortcutRouter.handleKeyDown(shortcut, store: store, window: window) else {
+      throw GitPierError.invalidInput("Quick Open intercepted a key while a sheet was active")
+    }
     try capture(window.attachedSheet!.contentView!, to: output.appendingPathComponent("v140-quick-open.png"))
     try sendWorkspaceKey(53, window: window.attachedSheet!)
     try await waitFor { !store.showQuickOpen && window.attachedSheet == nil }

@@ -3,6 +3,16 @@ import XCTest
 @testable import GitPierCore
 
 final class LayoutMigrationTests: XCTestCase {
+  func testNotificationSoundPreferenceKeepsLegacyNotificationAndFontSettings() throws {
+    let old = Data(#"{"completionNotifications":true,"diffFont":"Monaco","diffFontSize":16}"#.utf8)
+    var settings = try JSONDecoder().decode(AppSettings.self, from: old)
+    XCTAssertTrue(settings.completionNotifications)
+    XCTAssertTrue(settings.completionNotificationSound)
+    XCTAssertEqual(settings.diffFont, "Monaco")
+    XCTAssertEqual(settings.diffFontSize, 16)
+    settings.completionNotificationSound = false
+    XCTAssertEqual(try JSONDecoder().decode(AppSettings.self, from: JSONEncoder().encode(settings)), settings)
+  }
   func testOldLayoutPreservesExistingSizesAndDefaultsHistoryPanes() throws {
     let old = Data(
       #"{"changesWidth":351,"messageHeight":207,"terminalHeight":181,"terminalVisible":true,"terminalMaximized":false}"#

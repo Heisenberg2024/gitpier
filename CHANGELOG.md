@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+- Background operation notifications can use the system sound or stay silent; the foreground keeps in-app feedback. Automatic background Fetch stays quiet.
+- New installations check for updates automatically. Explicit Sparkle opt-outs are preserved; downloads and installation still require confirmation.
+- Commit and Push use a single workflow with real transfer counters, durable outcomes and existing recovery controls. Optional message formatting is reviewed before it changes what is sent to Git.
+- Open the repository root in Finder, keep file selection separate, and see consistent favorite markers. Dashboard keeps scan warnings without an Updated column and adds accessible first/last repository actions. Diff typography and colors live in Diff settings.
+- Repository Settings explains the effective Git credential source and can test Fetch access without updating refs. Native controls use shared system surfaces, and the macOS 27 sidebar uses the native material.
+- Dashboard prevents mouse-driven native scrollbars from reappearing during list updates and centers the Branch, Changes and Sync columns. Restore the About update card background and plain Commit, History and Branches navigation buttons.
+- Finder and Dock launches can discover Codex CLI in `~/.local/bin`. Quick Open now uses ⌘K.
+
+简体中文：后台操作通知可独立设置声音；新安装默认检查更新，保留已有关闭设置，下载和安装仍需确认。提交和推送使用同一工作流，并在提交前审查说明格式。仓库根目录与文件定位分开，收藏星标统一；总览移除更新时间列并提供首尾仓库的辅助功能动作，Diff 字体和颜色集中到 Diff 设置。仓库设置可核查认证来源及只读获取连接，macOS 27 侧栏使用原生材质。验收及未验证边界见[开发记录](docs/v2.2.0-native-experience.md)。
+
+总览列表更新时持续隐藏系统滚动条，分支、修改状态及同步列的表头和内容居中。恢复关于页更新卡片的背景框，提交、历史和分支导航按钮使用普通样式。
+
+Finder 与 Dock 启动时可从 `~/.local/bin` 检测 Codex CLI，快速打开快捷键改为 ⌘K。
+
 ## 2.1.0 — 2026-11-03 (35)
 
 - Published as [Latest](https://github.com/Heisenberg2024/gitpier/releases/tag/v2.1.0) from `5ff81be`. Full source CI passed 1,128 Core tests, and Tag CI reused the successful validation for the same SHA. The Universal DMG and production Sparkle Feed passed signature, asset readback and public download checks. [Publication evidence](docs/development.md#v210-publication--2026-11-03)

@@ -32,7 +32,7 @@ Recent completed non-sensitive summaries are bounded to 100 in memory. Active/wa
 
 Repository-level [contextual advice](context-workflow.md) explains the next useful step and reuses existing reviews and confirmations.
 
-**⌘⇧P Quick Open** remains the single palette, with Repositories, Commands, Recent and Favorites. Commands reuse existing navigation and panels; unavailable commands show their reason. Up/Down, Return and Esc remain sheet-local. The global shortcut retains the terminal focus guard. Recent command choices stay in memory.
+**⌘K Quick Open** remains the single palette, with Repositories, Commands, Recent and Favorites. Commands reuse existing navigation and panels; unavailable commands show their reason. Up/Down, Return and Esc remain sheet-local. The global shortcut retains the terminal focus guard. Recent command choices stay in memory.
 
 ## History retention decision
 
@@ -52,7 +52,7 @@ Confirmed remote Review writes have a different recovery requirement: an interru
 
 恢复入口复核仓库、Common Directory、HEAD、Index、Git操作身份和Remote；变化后要求重新审查。原写入确认与队列检查保持。[仓库上下文建议](context-workflow.md)解释当前状态、原因并复用既有审查与确认；远程跟踪计数明确来自 Fetch 快照。
 
-**⌘⇧P**继续使用原有快速打开，增加仓库/命令/最近/收藏。命令复用原页面和弹窗，禁用项展示原因；方向键、回车和Esc限定于当前面板窗口，终端焦点保护保持。最近命令仅保存在内存。
+**⌘K**继续使用原有快速打开，增加仓库/命令/最近/收藏。命令复用原页面和弹窗，禁用项展示原因；方向键、回车和Esc限定于当前面板窗口，终端焦点保护保持。最近命令仅保存在内存。
 
 持久化评估：普通操作继续采用**会话级记录**。操作摘要无法恢复已经结束的进程，也不能证明中断的 Git 命令是否完成；启动后仍需从 Git 重新读取真实状态。自动获取已有最近检查、认证和退避元数据，长期保存每次任务会重复记录。界面明确说明本次会话及最近 100 条的边界。
 

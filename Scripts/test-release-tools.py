@@ -98,7 +98,8 @@ class ReleaseToolsTests(unittest.TestCase):
             config, _ = load()
             self.assertEqual(info['CFBundleVersion'], config['build'])
             self.assertEqual(info['CFBundleShortVersionString'], config['version'])
-            for key in ['SUEnableAutomaticChecks', 'SUAllowsAutomaticUpdates', 'SUAutomaticallyUpdate', 'SUSendProfileInfo']:
+            self.assertIs(info['SUEnableAutomaticChecks'], True)
+            for key in ['SUAllowsAutomaticUpdates', 'SUAutomaticallyUpdate', 'SUSendProfileInfo']:
                 self.assertFalse(info[key])
             self.assertTrue(info['SURequireSignedFeed'])
             self.assertTrue(info['SUVerifyUpdateBeforeExtraction'])
@@ -123,6 +124,18 @@ class ReleaseToolsTests(unittest.TestCase):
             file.write_text(json.dumps(config))
             with self.assertRaises(AssertionError):
                 load(file)
+
+    def test_loopback_installation_fixture_remains_manual(self):
+        config, _ = load()
+        config.update(bundleIdentifier='com.heisenberg2024.gitpier.update-test.plist',
+                      publicEDKey=base64.b64encode(bytes(32)).decode(),
+                      feedURL='http://127.0.0.1:45678/appcast.xml',
+                      testWorkspacePath='/private/tmp/GitPier-update-acceptance-plist/workspace.json')
+        with tempfile.TemporaryDirectory(prefix='GitPier-release-tests-') as folder:
+            metadata, info = Path(folder) / 'metadata.json', Path(folder) / 'Info.plist'
+            metadata.write_text(json.dumps(config))
+            subprocess.run(['python3', 'Scripts/release_metadata.py', '--config', str(metadata), '--plist', str(info)], check=True)
+            self.assertIs(plistlib.loads(info.read_bytes())['SUEnableAutomaticChecks'], False)
 
     def test_installer_background_dimensions(self):
         data = (ROOT / 'Resources/Installer/background@2x.png').read_bytes()

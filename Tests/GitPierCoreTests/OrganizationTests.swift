@@ -29,6 +29,20 @@ final class OrganizationTests: XCTestCase {
     config.repositories[1].lastOpened = Date().addingTimeInterval(100)
     XCTAssertEqual(config.repositories.map(\.id), [other.id, a.id, b.id, c.id])
   }
+  func testDashboardDropAfterAnchorWhenNameSortReversesManualOrder() {
+    var config = WorkspaceConfiguration()
+    let a = RepositoryRecord(path: "/project/a", name: "A")
+    let b = RepositoryRecord(path: "/project/b", name: "B")
+    let c = RepositoryRecord(path: "/project/c", name: "C")
+    config.repositories = [c, b, a]
+    // The name-sorted list shows A, B, C. A was dragged to the gap after B.
+    XCTAssertTrue(config.reorderRepository(a.id, relativeTo: b.id, placement: .after))
+    XCTAssertEqual(config.repositories.map(\.name), ["C", "B", "A"])
+    // Moving C above B after a sort can also require the side the storage would not infer.
+    config.repositories = [c, a, b]
+    XCTAssertTrue(config.reorderRepository(c.id, relativeTo: b.id, placement: .before))
+    XCTAssertEqual(config.repositories.map(\.name), ["A", "C", "B"])
+  }
   func testFirstReleaseConfigurationMigratesGroupsAndManualRefresh() throws {
     var old = WorkspaceConfiguration()
     var a = RepositoryRecord(path: "/project/client")

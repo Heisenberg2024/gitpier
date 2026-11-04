@@ -95,7 +95,7 @@ Git LFS 页面检测可选工具，展示规则 / 文件 / OID / Pointer，审�
 
 **已发布 [v1.4.4](https://github.com/Heisenberg2024/gitpier/releases/tag/v1.4.4)（构建号 24）。**自动获取统一复用 Git 原生认证，覆盖 HTTP、HTTPS、SSH、Git 和本地传输，不区分 GitHub、GitLab、Gitee 等平台。命名助手、绝对路径助手和 Shell 助手保留原顺序、URL/账号/路径匹配及完整协议响应；自动 Git 只请求 get，不调用 store/erase。不再把已保存密码或 Agent 当成获取前提：公开仓库可匿名获取，是否需要认证由实际服务器决定。SSH 保留原始命令、配置、Agent、文件私钥、Provider 和原生钥匙串行为。终端 Clone、GitPier Clone 以及 init/push 仓库使用相同流程；Clone 所选账号在自动检查前绑定。HTTP 仍是明文传输，设置中显示提示；GitPier 托管 HTTPS Token 仍拒绝 HTTP。既有凭证必须能被应用的 Git 进程访问，无法恢复未保存的密码或仅存在于另一个终端会话的环境变量。详见[安全边界](SECURITY.md)和[验证记录](docs/development.md#unified-native-authentication)。
 
-“工作空间搜索”支持名称、路径、组织、分支、远程名称，以及按需查询已跟踪文件路径和提交信息 / 哈希。范围可选全部 / 当前组织 / 当前仓库 / 已选仓库，结果打开仓库、已有 Diff / 文件历史或提交详情。Git 查询可取消、分页并限制结果及输出，不建立源码内容索引或上传到第三方。**⌘⇧P** 打开快速切换，支持最近 / 收藏仓库、组织匹配、上下方向键、回车和 Esc；终端焦点保留原有按键。Universal DMG 是当前正式下载，发布验证结果见[开发指南](docs/development.md#v210-publication--2026-11-03)。
+“工作空间搜索”支持名称、路径、组织、分支、远程名称，以及按需查询已跟踪文件路径和提交信息 / 哈希。范围可选全部 / 当前组织 / 当前仓库 / 已选仓库，结果打开仓库、已有 Diff / 文件历史或提交详情。Git 查询可取消、分页并限制结果及输出，不建立源码内容索引或上传到第三方。**⌘K** 打开快速切换，支持最近 / 收藏仓库、组织匹配、上下方向键、回车和 Esc；终端焦点保留原有按键。Universal DMG 是当前正式下载，发布验证结果见[开发指南](docs/development.md#v210-publication--2026-11-03)。
 
 ## 代码托管与凭证存储 — v1.5.0
 
@@ -121,7 +121,7 @@ Git LFS 页面检测可选工具，展示规则 / 文件 / OID / Pointer，审�
 
 ## 工作流整合 — v1.7.0
 
-已发布的 [v1.7.0](https://github.com/Heisenberg2024/gitpier/releases/tag/v1.7.0)（构建号29）增加跨窗口[操作中心](docs/operations-center.md)、既有 **⌘⇧P 快速打开**中的命令，以及仅负责导航的 [GitPier CLI](docs/cli.md)。使用 `gitpier open . --page history` 可从终端返回选定应用；在设置 → 终端安装/卸载，保留已有文件和 Shell 配置。继续复用原有 Git 写入确认、凭证和 Review Journal 恢复。上下文助手包含五级真实状态、原生磨砂浮层和残留蓝框修复。同源码 Swift 6.1.2 CI 通过932项Core，独立审核、签名附件回读与公开下载核验均通过；[发布证据与系统验收边界](docs/development.md#v170-publication--2026-10-19)分别记录。
+已发布的 [v1.7.0](https://github.com/Heisenberg2024/gitpier/releases/tag/v1.7.0)（构建号29）增加跨窗口[操作中心](docs/operations-center.md)、既有**快速打开**中的命令，以及仅负责导航的 [GitPier CLI](docs/cli.md)。使用 `gitpier open . --page history` 可从终端返回选定应用；在设置 → 终端安装/卸载，保留已有文件和 Shell 配置。继续复用原有 Git 写入确认、凭证和 Review Journal 恢复。上下文助手包含五级真实状态、原生磨砂浮层和残留蓝框修复。同源码 Swift 6.1.2 CI 通过932项Core，独立审核、签名附件回读与公开下载核验均通过；[发布证据与系统验收边界](docs/development.md#v170-publication--2026-10-19)分别记录。
 
 [上下文工作流助手](docs/context-workflow.md)位于**仓库工具栏分支名称左侧的紧凑状态按钮**。正常、建议、注意、警告及冲突/阻塞采用不同图标，宽度固定；仅落后跟踪提交不会被判为冲突。浮层主体和箭头共用系统原生磨砂材质，移除关闭按钮，通过 Esc、外部点击或再次点击入口关闭。原生 Popover 根据当前 Worktree、分支、修改和 Fetch 快照解释建议及原因，风险优先；提交页内普通修改保持低调。比较页先打开再读取本地跟踪快照，同步审查在核对完成前禁用写入按钮。继续复用原确认与目标复核。尚未结束的合并会持续显示独立状态栏，直至完成或中止；助手不会自动执行 Git 操作。
 
@@ -161,6 +161,8 @@ GitPier 要求 **macOS 14 或更高版本**。
 从 [GitHub Latest Release](https://github.com/Heisenberg2024/gitpier/releases/latest) 下载当前正式版。请选择最新发行版附带的通用 DMG。打开 DMG，将真实的 GitPier 图标拖入 Applications，然后从 Applications 启动。
 
 v1.1.0 的内置更新采用 Sparkle 2、GitHub Releases 和 EdDSA 签名 DMG；自动检查默认关闭，下载与安装需要确认。生产公钥已配置，发行资产必须在发布前完成签名和验证。v1.0.3 没有内置更新，需要手动升级一次。
+
+开发中的[原生体验完善](docs/v2.2.0-native-experience.md)为新安装默认开启更新检查，并保留用户明确关闭的设置。当前正式版仍为 v2.1.0；下载与安装仍需确认。
 
 当前采用 ad-hoc 签名，未使用 Apple Developer ID，也未完成 Apple 公证。首次安装可能遇到 Gatekeeper 提示；请核实来源并遵循 macOS 提供的安全选项，不要关闭 Gatekeeper 或移除隔离属性。
 

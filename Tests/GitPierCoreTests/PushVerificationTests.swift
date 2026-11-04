@@ -235,6 +235,20 @@ final class PushVerificationTests: XCTestCase {
     let fetchHead = try await raw(["--git-dir=" + remote.path, "rev-parse", "refs/heads/main"]).text.trimmingCharacters(in: .newlines)
     XCTAssertNotEqual(fetchHead, target.localHead)
   }
+  func testPushReviewDisplaysEffectiveDestinationWithoutURLCredentials() async throws {
+    let cases = [
+      ("https://fixture-user:fixture-password@example.invalid:9443/team/review.git?token=fixture-query#fragment",
+       "https://example.invalid:9443/team/review.git"),
+      ("fixture-user@[2001:db8::1]:team/review.git", "[2001:db8::1]:team/review.git"),
+    ]
+    for (effectiveURL, display) in cases {
+      try await raw(["remote", "set-url", "--push", "origin", effectiveURL])
+      let reviewed = try await git.reviewPushCheckpointWithDestination()
+      XCTAssertEqual(reviewed?.destination, display)
+      let exact = try await checkpoint()
+      XCTAssertEqual(reviewed?.checkpoint, exact)
+    }
+  }
   func testChangedDestinationCannotResolveOriginalUnknownResult() async throws {
     let target = try await checkpoint()
     try await raw(["remote", "set-url", "--push", "origin", fixture.appendingPathComponent("other.git").path])

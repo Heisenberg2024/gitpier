@@ -9,7 +9,8 @@ struct OperationTicket: Sendable, Equatable {
 }
 struct OperationState {
   var title: String
-  var transfer: GitTransferProgress?
+  var workflow: OperationWorkflowProgress
+  var transfer: GitTransferProgress? { workflow.transfer }
   var result: OperationResult = .running
 }
 /// Frequent transfer updates affect only this object and the status-bar child view.
@@ -31,17 +32,29 @@ struct OperationState {
     stage = 0
     originalTitle = title
     canCancel = cancellable
-    state = OperationState(title: title)
-    if observed { center?.begin(id: id, kind: kind, repositoryID: repositoryID, identity: repositoryIdentity?(), cancel: cancellable ? cancelOperation : nil) }
+    let workflow = OperationWorkflowProgress(id: id, kind: kind)
+    state = OperationState(title: title, workflow: workflow)
+    if observed { center?.begin(id: id, kind: kind, repositoryID: repositoryID, identity: repositoryIdentity?(), workflow: workflow, cancel: cancellable ? cancelOperation : nil) }
     return ticket
   }
-  func advance(_ title: String, cancellable: Bool? = nil, phase: WorkflowOperationPhase = .executing) {
+  func advance(_ title: String, cancellable: Bool? = nil, phase: WorkflowOperationPhase = .executing,
+    step: OperationWorkflowStep? = nil, previousCompleted: Bool = true) {
+    guard var value = state, value.result == .running else { return }
     stage += 1
     if let cancellable { canCancel = cancellable }
-    state = OperationState(title: title)
-    center?.update(id, cancellable: canCancel, phase: phase)
+    value.title = title
+    if phase != .cancelling {
+      value.workflow.advance(to: step ?? (phase == .refreshing ? .refresh : .execute), previousCompleted: previousCompleted)
+    }
+    state = value
+    center?.update(id, cancellable: canCancel, phase: phase, workflow: value.workflow)
   }
   func markRunning() { center?.update(id, state: .running) }
+  func markExecuting() {
+    guard let value = state, value.workflow.current == .prepare,
+      value.workflow.steps.contains(where: { $0.kind == .execute }) else { return }
+    advance(value.title, step: .execute)
+  }
   func recordLocalCommit(_ hash: String) {
     guard state?.result == .running else { return }
     center?.update(id, localCommit: hash)
@@ -56,19 +69,17 @@ struct OperationState {
     let expected = ticket
     return { [weak self] progress in
       Task { @MainActor [weak self] in
-        guard let self, self.ticket == expected, self.state?.result == .running else { return }
-        self.state?.transfer = progress
-        self.center?.update(expected.id, transfer: progress)
+        guard let self, self.ticket == expected, var value = self.state, value.result == .running else { return }
+        let step = value.workflow.current
+        guard value.workflow.receive(progress, step: step) else { return }
+        self.state = value
+        self.center?.update(expected.id, transfer: progress, workflow: value.workflow)
       }
     }
   }
   func finish(_ result: OperationResult, ticket expected: OperationTicket, waitingForUser: Bool = false,
     detail: String? = nil) {
-    guard id == expected.id, state?.result == .running else { return }
-    state?.title = originalTitle
-    state?.result = result
-    state?.transfer = nil
-    canCancel = false
+    guard id == expected.id, var value = state, value.result == .running else { return }
     let outcome: WorkflowOperationState
     switch result {
     case .running: return
@@ -78,10 +89,31 @@ struct OperationState {
     case .resultUnknown: outcome = .resultUnknown
     case .needsAttention: outcome = waitingForUser ? .waitingForUser : .needsAttention
     }
-    center?.update(id, state: outcome, detail: detail)
+    value.title = originalTitle
+    value.result = result
+    value.workflow.finish(outcome)
+    state = value
+    canCancel = false
+    center?.update(id, state: outcome, detail: detail, workflow: value.workflow)
+    scheduleDismissal(result)
+  }
+
+  /// Only the Center's confirmed readback can change an unknown terminal result.
+  /// An older record must never take the place of a newer operation in the footer.
+  func applyVerifiedPush(_ record: WorkflowOperationRecord) {
+    guard record.id == id, record.state == .succeeded, record.verifiedAt != nil,
+      let workflow = record.workflow, var value = state, value.result == .resultUnknown else { return }
+    value.result = .succeeded
+    value.workflow = workflow
+    state = value
+    scheduleDismissal(.succeeded)
+  }
+
+  private func scheduleDismissal(_ result: OperationResult) {
+    dismissal?.cancel()
     let completed = id
     dismissal = Task { [weak self] in
-      do { try await Task.sleep(for: .seconds(result == .succeeded ? 1.5 : 3)) } catch { return }
+      do { try await Task.sleep(for: .seconds(result == .succeeded ? 5 : 8)) } catch { return }
       guard self?.id == completed else { return }
       self?.state = nil
     }
@@ -99,14 +131,9 @@ struct OperationProgressView: View {
           .foregroundStyle(OperationStatusPresentation(state.result).color).accessibilityHidden(true)
         Text(label(state)).lineLimit(1).truncationMode(.middle).frame(
           maxWidth: 240, alignment: .leading)
-        OperationBar(
-          value: state.result == .running
-            ? state.transfer?.fraction : state.result == .succeeded ? 1 : 0
-        )
-        .frame(width: 100, height: 8)
+        WorkflowProgressBar(workflow: state.workflow).frame(width: 100, height: 8)
         if state.result == .running && progress.canCancel {
-          Button(action: cancel) { Image(systemName: "xmark.circle") }.buttonStyle(.workspace)
-            .help(store.text("Cancel operation", "取消操作"))
+          IconButton("xmark.circle", help: store.text("Cancel operation", "取消操作"), action: cancel)
         }
       }.font(.system(size: 10)).foregroundStyle(
         state.result == .failed
@@ -114,6 +141,8 @@ struct OperationProgressView: View {
       )
       .accessibilityElement(children: .contain).accessibilityIdentifier(
         "gitpier.operation.progress")
+    } else {
+      OtherOperationProgressView(center: store.operations)
     }
   }
   func label(_ state: OperationState) -> String {
@@ -124,17 +153,86 @@ struct OperationProgressView: View {
     case .cancelled: return state.title + store.text(" · Cancelled", " · 已取消")
     case .resultUnknown: return state.title + store.text(" · Result unknown", " · 结果未知")
     case .running:
-      guard let transfer = state.transfer else { return state.title }
-      let phase: String
-      switch transfer.phase {
-      case .counting: phase = store.text("Counting", "统计对象")
-      case .compressing: phase = store.text("Compressing", "压缩对象")
-      case .receiving: phase = store.text("Receiving", "接收对象")
-      case .resolving: phase = store.text("Resolving", "整理差异")
-      case .writing: phase = store.text("Writing", "写入对象")
-      case .checkout: phase = store.text("Updating files", "更新文件")
+      return WorkflowProgressPresentation.label(state.workflow, currentTitle: state.title, store: store)
+    }
+  }
+}
+
+/// Keep other repositories' operations reachable while the user changes pages or opens Dashboard.
+private struct OtherOperationProgressView: View {
+  @ObservedObject var center: OperationsCenter
+  @EnvironmentObject var store: AppStore
+  var body: some View {
+    if let record = center.records.first(where: { $0.state.active && $0.kind != .automaticFetch && $0.workflow != nil }),
+      let workflow = record.workflow {
+      Button { store.showOperationsCenter = true } label: {
+        HStack(spacing: 8) {
+          Text([record.repositoryID.flatMap { store.models[$0]?.record.name }, operationTitle(record.kind, store: store),
+            WorkflowProgressPresentation.label(workflow, store: store)].compactMap { $0 }.joined(separator: " · "))
+            .lineLimit(1).truncationMode(.middle)
+          WorkflowProgressBar(workflow: workflow).frame(width: 100, height: 8)
+        }
+      }.buttonStyle(.workspace).help(store.text("Open Operations Center", "打开操作中心"))
+    }
+  }
+}
+
+enum WorkflowProgressPresentation {
+  @MainActor static func label(_ workflow: OperationWorkflowProgress, currentTitle: String? = nil, store: AppStore) -> String {
+    if workflow.outcome != nil {
+      let count = workflow.steps.filter { $0.state == .completed }.count
+      return store.text("\(count) of \(workflow.steps.count) steps completed", "已完成 \(count)/\(workflow.steps.count) 步")
+    }
+    let fallbackTitle = switch workflow.current {
+    case .prepare: store.text("Preparing", "准备中")
+    case .execute: store.text("Running Git", "正在执行 Git")
+    case .commit: store.text("Committing", "正在提交")
+    case .pushTarget: store.text("Checking Push target", "检查推送目标")
+    case .push: store.text("Pushing", "正在推送")
+    case .refresh: store.text("Refreshing results", "正在刷新结果")
+    }
+    let step = store.text("Step \(workflow.index + 1)/\(workflow.steps.count)", "第 \(workflow.index + 1)/\(workflow.steps.count) 步")
+    let transfer = workflow.transfer.map { " · " + operationTransferTitle($0.phase, store: store) + " \(Int($0.fraction * 100))%" } ?? ""
+    return step + " · " + (currentTitle ?? fallbackTitle) + transfer
+  }
+}
+
+/// Completed steps stay filled. Only the active step uses the native transfer indicator.
+struct WorkflowProgressBar: View {
+  @Environment(\.accessibilityReduceMotion) private var reduceMotion
+  let workflow: OperationWorkflowProgress
+  var body: some View {
+    Group {
+      if workflow.outcome == .succeeded && workflow.steps.allSatisfy({ $0.state == .completed }) {
+        OperationBar(value: 1)
+      } else {
+        steps
       }
-      return state.title + " · " + phase + " \(Int(transfer.fraction * 100))%"
+    }.clipShape(Capsule()).accessibilityHidden(true)
+  }
+  private var steps: some View {
+    GeometryReader { geometry in
+      let width = max(0, (geometry.size.width - CGFloat(workflow.steps.count - 1) * 2) / CGFloat(workflow.steps.count))
+      HStack(spacing: 2) {
+        ForEach(workflow.steps.indices, id: \.self) { index in
+          Group {
+            switch workflow.steps[index].state {
+            case .completed:
+              Rectangle().fill(Color.accentColor)
+            case .active:
+              if reduceMotion, workflow.transfer == nil {
+                Rectangle().fill(Color.accentColor.opacity(0.40))
+              } else {
+                OperationBar(value: workflow.transfer?.fraction)
+              }
+            case .interrupted:
+              Rectangle().fill(Color.orange.opacity(0.5))
+            case .pending, .skipped:
+              Rectangle().fill(Color.secondary.opacity(0.16))
+            }
+          }.frame(width: width).clipped()
+        }
+      }
     }
   }
 }

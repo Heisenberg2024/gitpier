@@ -20,7 +20,7 @@ struct BranchesView: View {
   var body: some View {
     VStack(spacing: 0) {
       HStack {
-        Text(store.text("Branches", "分支")).font(.title3.weight(.semibold))
+        Text(store.text("Branches", "分支")).workspaceHeading(.page)
         Spacer()
         TextField(store.text("Search branches", "搜索分支"), text: $search).frame(width: 200)
         Button(store.text("Compare Branches", "比较分支")) { model.setPage("compare") }
@@ -344,7 +344,7 @@ struct StashView: View {
     VSplitView {
       VStack(spacing: 0) {
         HStack {
-          Text(localizedUI("Stashes")).font(.title3.weight(.semibold))
+          Text(localizedUI("Stashes")).workspaceHeading(.page)
           Spacer()
           Button(localizedUI("Create Stash…")) { creating = true }
         }.padding(18)

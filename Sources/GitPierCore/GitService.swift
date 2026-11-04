@@ -1955,6 +1955,24 @@ public actor GitService {
   public func workspaceFetch(_ target: WorkspaceFetchTarget) async throws -> String {
     try await checkedWorkspaceFetch(target).output
   }
+  /// Explicit read-only test of a reviewed Fetch target. Public access can succeed without any credential.
+  public func testFetchConnection(_ target: WorkspaceFetchTarget) async throws {
+    try InputValidation.reference(target.remote.name)
+    try await lifecycleWrite {
+      try await validateWorkspaceRoot()
+      let revision = authenticationRevision
+      let common = try await commonDirectory()
+      let name = target.remote.name
+      guard root.path == URL(fileURLWithPath: target.record.path).resolvingSymlinksInPath().path,
+        common.path == target.commonDirectory else { throw AuthenticationFailure(.configurationInvalid) }
+      let arguments = try await safeCredentialArguments()
+      guard try await workspaceFetchContext(name, common: common).identity == target.configurationIdentity,
+        revision == authenticationRevision else { throw AuthenticationFailure(.configurationInvalid) }
+      _ = try await read(arguments + ["ls-remote", "--", name, "HEAD"], limit: 512 * 1024, timeout: 20)
+      guard try await workspaceFetchIdentity(name) == target.configurationIdentity,
+        revision == authenticationRevision else { throw AuthenticationFailure(.configurationInvalid) }
+    }
+  }
   public func checkedWorkspaceFetch(_ target: WorkspaceFetchTarget, automatic: Bool = false) async throws -> WorkspaceFetchResult {
     try InputValidation.reference(target.remote.name)
     // Automatic work never queues behind an in-app write. Manual requests retain the normal FIFO.
@@ -2486,7 +2504,7 @@ public actor GitService {
           .trimmingCharacters(in: .whitespacesAndNewlines) : ""
       if operation == "push", !forceWithLease, let observer,
         let checkpoint = try? await capturePushCheckpoint(localReference: localReference, localHead: localHead,
-          remote: remote, branch: branch) {
+          remote: remote, branch: branch)?.checkpoint {
         await observer.localCommit(localHead)
         await observer.checkpoint?(checkpoint)
         _ = try await validatePushCheckpoint(checkpoint, requireSource: true)
@@ -2505,6 +2523,15 @@ public actor GitService {
     }
   }
   public func reviewPushCheckpoint(remote: String? = nil, branch: String? = nil) async throws -> PushCheckpoint? {
+    try await captureCurrentPushCheckpoint(remote: remote, branch: branch)?.checkpoint
+  }
+  /// User-facing only. Keep credentials and the effective URL out of the saved checkpoint.
+  public func reviewPushCheckpointWithDestination() async throws -> (checkpoint: PushCheckpoint, destination: String)? {
+    guard let capture = try await captureCurrentPushCheckpoint(remote: nil, branch: nil),
+          let destination = Self.pushReviewDestination(capture.effectiveURL) else { return nil }
+    return (capture.checkpoint, destination)
+  }
+  private func captureCurrentPushCheckpoint(remote: String?, branch: String?) async throws -> PushCheckpointCapture? {
     try await lifecycleWrite {
       let reference = try await read(["symbolic-ref", "-q", "HEAD"], allowFailure: true).text.trimmingCharacters(in: .newlines)
       let head = try await read(["rev-parse", "--verify", "HEAD"], allowFailure: true).text.trimmingCharacters(in: .newlines)
@@ -2624,8 +2651,12 @@ public actor GitService {
     guard let git = directories.first, let common = directories.last else { throw GitPierError.indexChanged }
     return (git.resolvingSymlinksInPath().path, common.resolvingSymlinksInPath().path)
   }
+  private struct PushCheckpointCapture: Sendable {
+    let checkpoint: PushCheckpoint
+    let effectiveURL: String
+  }
   private func capturePushCheckpoint(localReference: String, localHead: String, remote: String?, branch: String?,
-    remoteReference: String? = nil) async throws -> PushCheckpoint? {
+    remoteReference: String? = nil) async throws -> PushCheckpointCapture? {
     guard localReference.hasPrefix("refs/heads/"), [40, 64].contains(localHead.count),
       localHead.allSatisfy(\.isHexDigit) else { return nil }
     let explicitTarget = remote != nil && (branch != nil || remoteReference != nil)
@@ -2671,8 +2702,26 @@ public actor GitService {
       localReference: localReference, localHead: localHead, remote: name, remoteReference: destination,
       directoryIdentities: identities, configurationIdentity: configuration.identity,
       destinationIdentity: configuration.destinationIdentity(name, effective: target.bytes), explicitTarget: explicitTarget)
-    _ = try await validatePushCheckpoint(checkpoint, requireSource: true)
-    return checkpoint
+    let validatedURL = try await validatePushCheckpoint(checkpoint, requireSource: true)
+    return PushCheckpointCapture(checkpoint: checkpoint, effectiveURL: validatedURL)
+  }
+  private static func pushReviewDestination(_ url: String) -> String? {
+    guard !url.unicodeScalars.contains(where: CharacterSet.controlCharacters.contains) else { return nil }
+    if url.contains("://") {
+      guard var components = URLComponents(string: url), let scheme = components.scheme,
+            scheme == "file" || components.host?.isEmpty == false else { return nil }
+      components.user = nil
+      components.password = nil
+      components.query = nil
+      components.fragment = nil
+      return components.string.map(Self.redact)
+    }
+    // A colon before the first path slash identifies Git's scp-style SSH URL.
+    if let colon = url.firstIndex(of: ":"), !url[..<colon].contains("/"),
+       let userEnd = url[..<colon].lastIndex(of: "@") {
+      return String(url[url.index(after: userEnd)...])
+    }
+    return url
   }
   /// Passing an effective URL as a repository argument runs Git's URL aliasing
   /// again. Decline chained rewrites and named custom transports rather than
@@ -2858,7 +2907,7 @@ public actor GitService {
     }
     if let namedRemote, let observer,
       let checkpoint = try? await capturePushCheckpoint(localReference: reference, localHead: head,
-        remote: namedRemote, branch: nil, remoteReference: rejection.remoteReference) {
+        remote: namedRemote, branch: nil, remoteReference: rejection.remoteReference)?.checkpoint {
       await observer.checkpoint?(checkpoint)
       _ = try await validatePushCheckpoint(checkpoint, requireSource: true)
     }

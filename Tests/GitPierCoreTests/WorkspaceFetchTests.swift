@@ -89,6 +89,23 @@ final class WorkspaceFetchTests: XCTestCase {
     let after = try await git.status(); XCTAssertEqual(state, after); XCTAssertEqual(try Data(contentsOf: index), before)
     XCTAssertEqual(try String(contentsOf: fetchHead, encoding: .utf8), "external fetch head\n")
   }
+  func testExplicitConnectionProbeIsReadOnlyAndRejectsChangedRemote() async throws {
+    let targets = try await git.reviewWorkspaceFetch(record)
+    let reviewed = try XCTUnwrap(targets.first)
+    let fetchHead = root.appendingPathComponent(".git/FETCH_HEAD")
+    try Data("fixture FETCH_HEAD\n".utf8).write(to: fetchHead)
+    let before = try await git.snapshot()
+    let tracking = try await git.trackingReferenceIdentity("origin")
+    try await git.testFetchConnection(reviewed)
+    let after = try await git.snapshot()
+    let afterTracking = try await git.trackingReferenceIdentity("origin")
+    XCTAssertEqual(after, before)
+    XCTAssertEqual(afterTracking, tracking)
+    XCTAssertEqual(try Data(contentsOf: fetchHead), Data("fixture FETCH_HEAD\n".utf8))
+    try await raw(["remote", "set-url", "origin", fixture.appendingPathComponent("missing.git").path])
+    do { try await git.testFetchConnection(reviewed); XCTFail("Changed remote passed reviewed connection test") }
+    catch let error as AuthenticationFailure { XCTAssertEqual(error.state, .configurationInvalid) }
+  }
   func testChangedRemoteURLOrRefspecRequiresNewReview() async throws {
     let targets = try await git.reviewWorkspaceFetch(record)
     try await raw(["config", "remote.origin.fetch", "+refs/heads/other:refs/remotes/origin/other"])

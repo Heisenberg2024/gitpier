@@ -16,7 +16,7 @@ cleanup() {
 }
 trap cleanup EXIT
 mkdir -p "$task_temp/stage/.background"
-ditto dist/GitPier.app "$task_temp/stage/GitPier.app"
+ditto "${GITPIER_APP_OUTPUT_DIR:-$PWD/dist}/GitPier.app" "$task_temp/stage/GitPier.app"
 ln -s /Applications "$task_temp/stage/Applications"
 cp Resources/Installer/background.tiff "$task_temp/stage/.background/"
 gitpier_create_temporary_dmg "$task_temp/stage" "$task_temp/fixture.dmg" "GitPier Test ${task_temp##*.}"
