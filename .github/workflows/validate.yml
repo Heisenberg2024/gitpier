@@ -40,7 +40,7 @@ jobs:
     # Keep the existing required-check name; planning failures must fail it too.
     needs: plan
     if: ${{ always() }}
-    runs-on: ${{ (github.run_attempt > 1 || needs.plan.outputs.mode == 'full') && 'macos-15' || 'ubuntu-latest' }}
+    runs-on: ${{ (github.run_attempt > 1 || needs.plan.outputs.mode == 'full') && 'macos-15-intel' || 'ubuntu-latest' }}
     timeout-minutes: 40
     env:
       # Failed-jobs-only reruns can retain an earlier successful plan's outputs.
