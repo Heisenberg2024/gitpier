@@ -4,6 +4,37 @@ public enum OperationWorkflowStep: String, Equatable, Sendable {
   case prepare, execute, commit, pushTarget, push, refresh
 }
 
+/// Measured object transfer only; preparation and elapsed time never invent a percentage.
+public struct OperationProgressValue: Equatable, Sendable {
+  private let kind: WorkflowOperationKind
+  private var measured: Double?
+  public init(kind: WorkflowOperationKind) { self.kind = kind }
+
+  public mutating func receive(_ transfer: GitTransferProgress) {
+    guard transfer.fraction.isFinite, (0...1).contains(transfer.fraction) else { return }
+    let relevant: Bool
+    switch kind {
+    case .push, .commitAndPush, .mergeAndPush: relevant = transfer.phase == .writing
+    case .clone, .fetch, .batchFetch, .automaticFetch, .pull: relevant = transfer.phase == .receiving
+    default: relevant = [.receiving, .writing, .checkout].contains(transfer.phase)
+    }
+    guard relevant else { return }
+    measured = max(measured ?? 0, transfer.fraction)
+  }
+
+  public func value(for state: WorkflowOperationState) -> Double? {
+    if state == .succeeded { return 1 }
+    // A finished transfer still needs Git's result and the final local refresh.
+    if let measured { return min(0.99, measured) }
+    if !state.active { return 0 }
+    switch kind {
+    case .push, .commit, .commitAndPush, .mergeAndPush, .clone, .fetch, .batchFetch, .automaticFetch, .pull:
+      return 0
+    default: return nil
+    }
+  }
+}
+
 /// The positions represent named steps, never an estimate of total time or bytes.
 public struct OperationWorkflowProgress: Equatable, Sendable {
   public struct Step: Equatable, Sendable {
@@ -17,10 +48,15 @@ public struct OperationWorkflowProgress: Equatable, Sendable {
   public private(set) var index = 0
   public private(set) var transfer: GitTransferProgress?
   public private(set) var outcome: WorkflowOperationState?
+  private var indicator: OperationProgressValue
   public var current: OperationWorkflowStep { steps[index].kind }
+  public var indicatorValue: Double? {
+    indicator.value(for: outcome ?? .running)
+  }
 
   public init(id: UUID, kind: WorkflowOperationKind) {
     self.id = id
+    indicator = OperationProgressValue(kind: kind)
     let plan: [OperationWorkflowStep]
     switch kind {
     case .commitAndPush: plan = [.prepare, .commit, .pushTarget, .push, .refresh]
@@ -48,6 +84,7 @@ public struct OperationWorkflowProgress: Equatable, Sendable {
         progress.phase != transfer.phase || progress.fraction > transfer.fraction else { return false }
     }
     transfer = progress
+    indicator.receive(progress)
     return true
   }
 

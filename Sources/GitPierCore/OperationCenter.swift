@@ -33,6 +33,7 @@ public struct WorkflowOperationRecord: Identifiable, Equatable, Sendable {
   public var completedAt: Date?
   public var state: WorkflowOperationState
   public var progress: Double?
+  public var indicator: OperationProgressValue
   public var phase: WorkflowOperationPhase = .queued
   public var transferPhase: GitTransferPhase?
   public var workflow: OperationWorkflowProgress?
@@ -52,6 +53,7 @@ public struct WorkflowOperationRecord: Identifiable, Equatable, Sendable {
     recovery: OperationRecoveryAction = .repository) {
     self.id = id; self.kind = kind; self.repositoryID = repositoryID; self.startedAt = startedAt
     self.state = state; self.canCancel = canCancel; self.recovery = recovery
+    indicator = OperationProgressValue(kind: kind)
   }
   /// Session-only diagnostics: at most 4,096 characters and 16 KiB of UTF-8.
   /// Redact before truncating so a cut inside a secret cannot bypass masking.

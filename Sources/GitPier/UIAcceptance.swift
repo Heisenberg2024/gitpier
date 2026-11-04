@@ -80,6 +80,18 @@ import SwiftUI
         window.orderFront(nil)
         try await settle()
         try await waitFor { !model.refreshing && !model.diffLoading }
+        if acceptanceScope == "settings-sidebars" {
+          try await verifySettingsSidebars(store: store, root: root, window: window, output: output)
+          window.close(); store.shutdown()
+          print("Native settings sidebar acceptance passed.")
+          exit(0)
+        }
+        if acceptanceScope == "file-type-icons" {
+          try await verifyFileTypeIcons(store: store, model: model, root: root, window: window, output: output)
+          window.close(); store.shutdown()
+          print("Native file type icon acceptance passed.")
+          exit(0)
+        }
         if acceptanceScope == "merge-state" {
           window.close()
           try await verifyMergeState(root: root, output: output)
@@ -95,6 +107,12 @@ import SwiftUI
           exit(0)
         }
         #if DEBUG
+        if acceptanceScope == "operation-progress" {
+          try await verifyOperationProgress(store: store, model: model, window: window, output: output)
+          window.close(); store.shutdown()
+          print("Native unified operation progress acceptance passed.")
+          exit(0)
+        }
         if acceptanceScope == "native-experience-d" {
           try await verifyNativeExperienceD(store: store, model: model, window: window, output: output)
           window.close(); store.shutdown()
@@ -352,6 +370,13 @@ import SwiftUI
           print("Native conflict editor acceptance passed.")
           exit(0)
         }
+        if acceptanceScope == "diff-scroll" {
+          try await verifyDiffScrollBounds(settings: store.settings, output: output)
+          store.shutdown()
+          window.close()
+          print("Native split Diff scrolling acceptance passed.")
+          exit(0)
+        }
         if ProcessInfo.processInfo.environment["GITPIER_UI_ACCEPTANCE_SCOPE"] == "scrollbars" {
           try await verifyUnifiedScrollbars(store: store, model: model, output: output)
           try await verifyDiffScrollBounds(settings: store.settings, output: output)
@@ -407,8 +432,8 @@ import SwiftUI
         guard
           model.activity.state?.result == .succeeded,
           model.activity.state?.workflow.steps.allSatisfy({ $0.state == .completed }) == true,
-          descendants(host).compactMap({ $0 as? NSProgressIndicator }).contains(where: {
-            $0.style == .bar && !$0.isIndeterminate && $0.doubleValue == 1
+          descendants(host).compactMap({ $0 as? OperationProgressTrackView }).contains(where: {
+            !$0.isIndeterminate && $0.doubleValue == 1
           })
         else {
           throw GitPierError.invalidInput("Status bar did not display native operation progress")
@@ -1681,7 +1706,7 @@ import SwiftUI
   }
 
   static func verifyDiffScrollBounds(settings: AppSettings, output: URL) async throws {
-    let old = (1...240).map { "-old line \($0) " + String(repeating: "content ", count: 50) }
+    let old = (1...240).map { "-old line \($0) " + String(repeating: "content ", count: 20) }
     let new = (1...240).map { "+new line \($0) " + String(repeating: "content ", count: 50) }
     let patch =
       ([
@@ -1709,6 +1734,16 @@ import SwiftUI
     guard let diff = descendants(view).compactMap({ $0 as? DiffSplitContainer }).first else {
       throw GitPierError.invalidInput("Missing native scrollbar layout fixture")
     }
+    var synchronizationChecks = 0
+    func verifySynchronization(_ context: String) throws {
+      let left = diff.scrolls[0].contentView.bounds.origin
+      let right = diff.scrolls[1].contentView.bounds.origin
+      guard abs(left.x - right.x) <= 1, abs(left.y - right.y) <= 1 else {
+        throw GitPierError.invalidInput(
+          "Split Diff did not synchronize both axes: \(context), Index=\(left), workingTree=\(right)")
+      }
+      synchronizationChecks += 1
+    }
     for size in [
       NSSize(width: 640, height: 360), NSSize(width: 480, height: 120),
       NSSize(width: 820, height: 520),
@@ -1720,9 +1755,11 @@ import SwiftUI
         let lastPoint = NSPoint(
           x: max(0, documentBounds.width - scroll.contentView.bounds.width),
           y: max(0, documentBounds.height - scroll.contentView.bounds.height))
-        for point in [NSPoint.zero, lastPoint] {
+        for point in [NSPoint.zero, NSPoint(x: lastPoint.x / 2, y: 0),
+          NSPoint(x: 0, y: lastPoint.y / 2), lastPoint, NSPoint.zero] {
           scroll.contentView.scroll(to: point)
           scroll.reflectScrolledClipView(scroll.contentView)
+          try verifySynchronization("size=\(size), side=\(side), point=\(point)")
           let vertical = scroll.verticalThumb
           let horizontal = scroll.horizontalThumb
           let verticalRect = scroll.convert(vertical.bounds, from: vertical)
@@ -1761,6 +1798,26 @@ import SwiftUI
             throw GitPierError.invalidInput("Scrollbar overlay intercepted native code selection")
           }
         }
+        guard let wheel = CGEvent(
+          scrollWheelEvent2Source: nil, units: .pixel, wheelCount: 2,
+          wheel1: -180, wheel2: -260, wheel3: 0).flatMap({ NSEvent(cgEvent: $0) })
+        else { throw GitPierError.invalidInput("Cannot construct split Diff scrolling event") }
+        scroll.scrollWheel(with: wheel)
+        try await Task.sleep(for: .milliseconds(180))
+        guard scroll.contentView.bounds.minX > 0, scroll.contentView.bounds.minY > 0 else {
+          throw GitPierError.invalidInput("Split Diff wheel did not move both axes")
+        }
+        try verifySynchronization("wheel, size=\(size), side=\(side)")
+        try dragThumb(scroll.horizontalThumb, in: window)
+        guard abs(scroll.contentView.bounds.minX - lastPoint.x) <= 1 else {
+          throw GitPierError.invalidInput("Split Diff horizontal drag did not reach the end")
+        }
+        try verifySynchronization("horizontal drag, size=\(size), side=\(side)")
+        try dragThumb(scroll.verticalThumb, in: window)
+        guard abs(scroll.contentView.bounds.minY - lastPoint.y) <= 1 else {
+          throw GitPierError.invalidInput("Split Diff vertical drag did not reach the end")
+        }
+        try verifySynchronization("vertical drag, size=\(size), side=\(side)")
       }
       if size.height == 360 {
         try capture(view, to: output.appendingPathComponent("diff-fixed-scrollbars-dark.png"))
@@ -1774,9 +1831,100 @@ import SwiftUI
       settings: preferences, dark: false, selectedHunk: 0, indexSide: 0,
       beforeTitle: "Index", afterTitle: "Working Tree")
     try await settle()
+    try verifySynchronization("light appearance")
     try capture(view, to: output.appendingPathComponent("diff-fixed-scrollbars-light.png"))
+    var renderedDocument = document
+    func render(_ key: String = "scroll-bounds", afterOnly: Bool = false) {
+      view.rootView = DiffTable(
+        document: renderedDocument, path: key == "scroll-bounds" ? "example.swift" : "other.swift", key: key,
+        settings: preferences, dark: false, selectedHunk: 0, indexSide: 0,
+        afterOnly: afterOnly, beforeTitle: "Index", afterTitle: "Working Tree")
+    }
+    func verifyReset(_ context: String) throws {
+      try verifySynchronization(context)
+      guard diff.scrolls.allSatisfy({ abs($0.contentView.bounds.minX) <= 1 && abs($0.contentView.bounds.minY) <= 1 }) else {
+        throw GitPierError.invalidInput(
+          "Switching Diff files did not reset both coordinates: \(context), origins=\(diff.scrolls.map { $0.contentView.bounds.origin })")
+      }
+    }
+    diff.scrolls[1].contentView.scroll(to: NSPoint(x: 360, y: 420))
+    diff.scrolls[1].reflectScrolledClipView(diff.scrolls[1].contentView)
+    try verifySynchronization("before switching Diff files")
+    render("scroll-bounds-other")
+    try await settle()
+    try verifyReset("first visit to another file")
+    diff.scrolls[0].contentView.scroll(to: NSPoint(x: 480, y: 560))
+    diff.scrolls[0].reflectScrolledClipView(diff.scrolls[0].contentView)
+    try verifySynchronization("scrolling the other file")
+    render()
+    try await settle()
+    try verifyReset("returning to the original file")
+    render("scroll-bounds-other")
+    try await settle()
+    try verifyReset("returning to the other file")
+    render()
+    try await settle()
+    diff.scrolls[0].contentView.scroll(to: NSPoint(x: 240, y: 320))
+    diff.scrolls[0].reflectScrolledClipView(diff.scrolls[0].contentView)
+    renderedDocument = DiffParser.parse(Data(patch.utf8))
+    render()
+    try await settle()
+    try verifySynchronization("refreshing the same file")
+    guard diff.scrolls.allSatisfy({ abs($0.contentView.bounds.minX - 240) <= 1 && abs($0.contentView.bounds.minY - 320) <= 1 }) else {
+      throw GitPierError.invalidInput("Refreshing the same Diff file reset its current position")
+    }
+    preferences.wrapDiff = true
+    render()
+    try await settle()
+    guard diff.scrolls.allSatisfy({ $0.contentView.bounds.minX == 0 }) else {
+      let geometry = diff.scrolls.map {
+        "clip=\($0.contentView.bounds), document=\($0.documentView!.frame), horizontalHidden=\($0.horizontalThumb.isHidden)"
+      }.joined(separator: "; ")
+      throw GitPierError.invalidInput("Wrapped Diff retained a stale horizontal offset: " + geometry)
+    }
+    for side in 0...1 {
+      diff.scrolls[side].contentView.scroll(to: NSPoint(x: 0, y: 700 + CGFloat(side) * 200))
+      diff.scrolls[side].reflectScrolledClipView(diff.scrolls[side].contentView)
+      try verifySynchronization("wrapped Diff, side=\(side)")
+    }
+    preferences.wrapDiff = false
+    preferences.unifiedDiff = true
+    render()
+    try await settle()
+    let hiddenAfter = diff.scrolls[1].contentView.bounds.origin
+    diff.scrolls[0].contentView.scroll(to: NSPoint(x: 320, y: 600))
+    diff.scrolls[0].reflectScrolledClipView(diff.scrolls[0].contentView)
+    guard diff.scrolls[1].isHidden, diff.scrolls[1].contentView.bounds.origin == hiddenAfter else {
+      throw GitPierError.invalidInput("Unified Diff synchronized its hidden pane")
+    }
+    render("scroll-bounds-other")
+    try await settle()
+    try verifyReset("switching a unified Diff file")
+    render()
+    try await settle()
+    try verifyReset("returning to a unified Diff file")
+    preferences.unifiedDiff = false
+    render(afterOnly: true)
+    try await settle()
+    let hiddenBefore = diff.scrolls[0].contentView.bounds.origin
+    diff.scrolls[1].contentView.scroll(to: NSPoint(x: 280, y: 640))
+    diff.scrolls[1].reflectScrolledClipView(diff.scrolls[1].contentView)
+    guard diff.scrolls[0].isHidden, diff.scrolls[0].contentView.bounds.origin == hiddenBefore else {
+      throw GitPierError.invalidInput("Working-tree-only Diff synchronized its hidden pane")
+    }
+    render("scroll-bounds-other", afterOnly: true)
+    try await settle()
+    try verifyReset("switching a working-tree-only Diff file")
+    render(afterOnly: true)
+    try await settle()
+    try verifyReset("returning to a working-tree-only Diff file")
+    render()
+    try await settle()
+    diff.scrolls[1].contentView.scroll(to: NSPoint(x: 300, y: 680))
+    diff.scrolls[1].reflectScrolledClipView(diff.scrolls[1].contentView)
+    try verifySynchronization("returned to split Diff")
     try
-      "Fixed 150pt vertical / 56pt horizontal thumbs, Index-left / working-tree-right placement, header exclusion, viewport clipping, scroll endpoints, compact-window resizing, native thumb hit testing and code-selection pass-through passed.\n"
+      "\(synchronizationChecks) split Diff synchronization checks passed with unequal line lengths, both source panes, independent axes, native wheel events, thumb dragging, file-switch resets, same-file refresh and wrapping; unified and after-only panes remain independent. Fixed 150pt vertical / 56pt horizontal thumbs, Index-left / working-tree-right placement, header exclusion, viewport clipping, scroll endpoints, compact-window resizing, native thumb hit testing and code-selection pass-through passed.\n"
       .write(
         to: output.appendingPathComponent("diff-scroll-bounds.txt"), atomically: true,
         encoding: .utf8)

@@ -341,7 +341,7 @@ struct CommitDetailView: View {
           Divider()
           List(files, selection: $selected) { file in
             HStack {
-              Image(systemName: "doc.text").foregroundStyle(.secondary)
+              FileTypeIcon(path: file.path)
               Text(file.path).font(uiFont(size: 11)).lineLimit(1)
               Spacer()
               Badge(

@@ -300,10 +300,10 @@ private struct WorkspaceDashboard: View {
         Text(store.text("\(listing.matching.count) matching", "\(listing.matching.count) 个匹配"))
         if listing.hiddenCount > 0 { Text(store.text("· \(listing.hiddenCount) collapsed worktrees", "· \(listing.hiddenCount) 个折叠工作树")) }
         Spacer()
+        Text("GitPier " + AppResources.version).foregroundStyle(.tertiary)
         if !store.showClone {
           OperationProgressView(progress: store.cloneActivity) { store.cloneTask?.cancel() }
         }
-        Text("GitPier " + AppResources.version).foregroundStyle(.tertiary)
       }
     }.font(uiFont(size: 11)).foregroundStyle(.secondary).padding(.horizontal, 16).frame(height: 44)
       .background(workspace.selected.isEmpty ? Color.clear : Color.accentColor.opacity(0.045))

@@ -191,6 +191,7 @@ struct NativeChangesList: NSViewRepresentable {
   var disclose: (() -> Void)?
   private var row: ChangesListRow = .empty("")
   private var selected = false
+  private var coloredIcons = true
   private var preferredNameWidth: CGFloat = 0
   override init(frame frameRect: NSRect) {
     super.init(frame: frameRect)
@@ -206,6 +207,7 @@ struct NativeChangesList: NSViewRepresentable {
     parentPath.lineBreakMode = .byTruncatingMiddle
     badge.font = .systemFont(ofSize: 10, weight: .semibold); badge.textColor = .systemOrange
     hit.setAccessibilityElement(false); context.setAccessibilityElement(false)
+    icon.setAccessibilityElement(false)
     for view in [context, disclosure, check, icon, name, parentPath, badge, hit] { addSubview(view) }
   }
   required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
@@ -219,6 +221,7 @@ struct NativeChangesList: NSViewRepresentable {
   }
   func configure(_ row: ChangesListRow, model: RepositoryModel, coloredIcons: Bool, tree: Bool) {
     self.row = row
+    self.coloredIcons = coloredIcons
     for view in [check, disclosure, icon, parentPath, badge, hit] { view.isHidden = true }
     hit.path = ""; hit.selected = false
     selected = false; toolTip = nil; check.toolTip = nil
@@ -250,9 +253,7 @@ struct NativeChangesList: NSViewRepresentable {
       name.stringValue = (file.path as NSString).lastPathComponent; name.textColor = color
       parentPath.stringValue = (file.path as NSString).deletingLastPathComponent
       parentPath.textColor = .tertiaryLabelColor
-      icon.image = symbol(file.isConflicted ? "exclamationmark.triangle.fill" : file.submodule.hasPrefix("S")
-        ? "shippingbox" : file.kind == .deleted ? "doc.badge.minus" : "doc.text", size: 11)
-      icon.contentTintColor = coloredIcons ? color : .secondaryLabelColor
+      updateFileIcon(file)
       selected = model.selectedPaths.contains(file.path)
       hit.path = file.path; hit.selected = selected
       toolTip = file.originalPath.map { "\($0) → \(file.path)" } ?? file.path
@@ -265,6 +266,20 @@ struct NativeChangesList: NSViewRepresentable {
   }
   private func symbol(_ name: String, size: CGFloat) -> NSImage? {
     NSImage(systemSymbolName: name, accessibilityDescription: nil)?.withSymbolConfiguration(.init(pointSize: size, weight: .regular))
+  }
+  override func viewDidChangeEffectiveAppearance() {
+    super.viewDidChangeEffectiveAppearance()
+    if case .file(let file, _) = row { updateFileIcon(file) }
+  }
+  private func updateFileIcon(_ file: FileChange) {
+    if file.isConflicted || file.submodule.hasPrefix("S") {
+      icon.image = symbol(file.isConflicted ? "exclamationmark.triangle.fill" : "shippingbox", size: 11)
+      icon.contentTintColor = coloredIcons ? (file.isConflicted ? .systemOrange : name.textColor) : .secondaryLabelColor
+    } else {
+      let dark = effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+      icon.image = FileTypeIcons.image(path: file.path, colored: coloredIcons, dark: dark)
+      icon.contentTintColor = icon.image?.isTemplate == true ? .secondaryLabelColor : nil
+    }
   }
   private func setDisclosure(_ expanded: Bool) {
     disclosure.image = symbol(expanded ? "chevron.down" : "chevron.right", size: 9)
@@ -288,7 +303,7 @@ struct NativeChangesList: NSViewRepresentable {
       name.frame = box(x + 37, bounds.width - x - 47)
     case .file(_, let depth):
       let x = 32 + CGFloat(depth) * 13
-      check.frame = box(x, 14); icon.frame = box(x + 21, 13)
+      check.frame = box(x, 14); icon.frame = box(x + 21, 16)
       let badgeWidth: CGFloat = badge.isHidden ? 0 : 18
       let available = max(0, bounds.width - x - 51 - badgeWidth)
       let nameWidth = parentPath.isHidden || parentPath.stringValue.isEmpty ? available

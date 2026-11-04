@@ -31,8 +31,8 @@ extension UIAcceptance {
       }
     }
     let nativeSidebar = descendants(host).compactMap { $0 as? NSVisualEffectView }.contains { $0.material == .sidebar }
-    if #available(macOS 27, *), !NSWorkspace.shared.accessibilityDisplayShouldReduceTransparency, !nativeSidebar {
-      throw GitPierError.invalidInput("The primary sidebar did not install its native material")
+    if nativeSidebar {
+      throw GitPierError.invalidInput("The primary sidebar must keep its opaque background")
     }
     settings.appearance = .system; store.updateSettings(settings); try await settle()
     guard model.record.favorite && window.appearance == nil else {
@@ -41,26 +41,27 @@ extension UIAcceptance {
     if NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
       store.showDashboard = false
       model.setPage("commit")
-      let ticket = model.activity.begin("Reduce Motion fixture", kind: .fetch)
+      let ticket = model.activity.begin("Reduce Motion fixture", kind: .git)
       model.activity.markExecuting()
-      func indicators() -> [NSProgressIndicator] {
-        descendants(host).compactMap { $0 as? NSProgressIndicator }.filter {
+      func indicators() -> [OperationProgressTrackView] {
+        descendants(host).compactMap { $0 as? OperationProgressTrackView }.filter {
           $0.accessibilityLabel() == localizedUI("Git operation progress")
         }
       }
       try await settle()
-      guard workflowAccessibilityText(host).contains("Reduce Motion fixture"), indicators().isEmpty else {
-        throw GitPierError.invalidInput("Reduce Motion did not show a static indeterminate step")
+      guard workflowAccessibilityText(host).contains("Reduce Motion fixture"), indicators().count == 1,
+        indicators().allSatisfy({ $0.isIndeterminate && $0.layer?.sublayers?.first?.sublayers?.first?.animation(forKey: "bounce") == nil }) else {
+        throw GitPierError.invalidInput("Reduce Motion did not stop the waiting fill's movement")
       }
       model.activity.receiver()(GitTransferProgress(phase: .receiving, fraction: 0.42))
       try await waitFor {
         indicators().contains { !$0.isIndeterminate && abs($0.doubleValue - 0.42) < 0.001 }
       }
       model.activity.finish(.succeeded, ticket: ticket)
-      try Data("Reduce Motion uses a static indeterminate step and still shows determinate transfer progress.\n".utf8)
+      try Data("Reduce Motion keeps the waiting fill stationary and still shows measured transfer progress.\n".utf8)
         .write(to: output.appendingPathComponent("reduce-motion-results.txt"))
     }
-    try Data("\(captures) WindowServer images; dark compact ZH and light wide EN; system appearance and favorite preserved; native sidebar material: \(nativeSidebar).\n".utf8)
+    try Data("\(captures) WindowServer images; dark compact ZH and light wide EN; system appearance and favorite preserved; opaque sidebar; native sidebar material: \(nativeSidebar).\n".utf8)
       .write(to: output.appendingPathComponent("phase-d-results.txt"))
   }
 

@@ -40,7 +40,10 @@ import SwiftUI
     guard var record = records.first(where: { $0.id == id }), !record.state.finished else { return }
     if let state { record.state = state; record.phase = state.active ? (state == .queued ? .queued : .executing) : state == .resultUnknown ? .verification : .completed }
     if let phase { record.phase = phase; record.progress = nil; record.transferPhase = nil }
-    if let transfer { record.progress = transfer.fraction; record.transferPhase = transfer.phase; record.phase = .transferring }
+    if let transfer {
+      record.progress = transfer.fraction; record.transferPhase = transfer.phase; record.phase = .transferring
+      record.indicator.receive(transfer)
+    }
     if let cancellable { record.canCancel = cancellable && cancellations[id] != nil }
     if let recovery { record.recovery = recovery }
     if let localCommit { record.localCommit = localCommit }
@@ -179,11 +182,26 @@ struct OperationsCenterView: View {
           Text(record.repositoryID.flatMap { id in store.repositories.first { $0.id == id }?.name } ?? (record.kind == .review ? store.text("Review history", "审查历史") : "GitPier")).foregroundStyle(.secondary).lineLimit(1)
           Spacer()
           Label(operationStateTitle(record, store: store), systemImage: OperationStatusPresentation(record.state).symbol)
-            .foregroundStyle(OperationStatusPresentation(record.state).color).lineLimit(2)
+            .foregroundStyle(OperationStatusPresentation(record.state).color)
+            .help(operationStateTitle(record, store: store))
           if record.state.active && record.canCancel && !record.cancellationRequested {
             Button(store.text("Cancel", "取消")) { center.cancel(record.id) }
           }
-        }
+        }.lineLimit(1).frame(height: Theme.iconTarget)
+        HStack(spacing: 8) {
+          if let workflow = record.workflow {
+            Text(WorkflowProgressPresentation.label(workflow, store: store)).font(.caption).foregroundStyle(.secondary)
+            Spacer(minLength: 8)
+            WorkflowProgressBar(workflow: workflow)
+          } else {
+            Text((record.state.active ? record.transferPhase : nil).map {
+              operationTransferTitle($0, store: store) + (record.progress.map { " \(Int($0 * 100))%" } ?? "")
+            } ?? (record.phase == .refreshing ? store.text("Refreshing local status", "刷新本地状态")
+              : operationStateTitle(record, store: store))).font(.caption).foregroundStyle(.secondary)
+            Spacer(minLength: 8)
+            OperationBar(value: record.indicator.value(for: record.state))
+          }
+        }.lineLimit(1).frame(height: Theme.iconTarget)
         if let path = record.repositoryIdentity?.workingTree {
           Text(path).font(.caption).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
             .help(path).textSelection(.enabled)
@@ -192,15 +210,6 @@ struct OperationsCenterView: View {
         if let hash = record.localCommit {
           Label(store.text("Saved local commit: ", "已保存的本地提交：") + String(hash.prefix(8)), systemImage: "checkmark.circle")
             .font(.caption).foregroundStyle(.green).help(hash).textSelection(.enabled)
-        }
-        if let workflow = record.workflow {
-          Text(WorkflowProgressPresentation.label(workflow, store: store)).font(.caption).foregroundStyle(.secondary)
-          WorkflowProgressBar(workflow: workflow).frame(height: 8)
-        } else if record.state.active {
-          if let transfer = record.transferPhase {
-            Text(operationTransferTitle(transfer, store: store) + (record.progress.map { " \(Int($0 * 100))%" } ?? "")).font(.caption).foregroundStyle(.secondary)
-          } else if record.phase == .refreshing { Text(store.text("Refreshing local status", "刷新本地状态")).font(.caption).foregroundStyle(.secondary) }
-          OperationBar(value: record.progress).frame(height: 8)
         }
         if let detail = record.detail { OperationDiagnosticView(detail: detail) }
         OperationRecoveryControls(record: record, center: center)

@@ -92,7 +92,7 @@ struct PatchImportView: View {
         HStack(spacing: 0) {
           List(review.files, selection: $selected) { file in
             VStack(alignment: .leading, spacing: 4) {
-              Text(file.path).lineLimit(2)
+              Label { Text(file.path).lineLimit(2) } icon: { FileTypeIcon(path: file.path) }
               Text(file.binary ? store.text("Binary patch", "二进制补丁") : "+\(file.additions ?? 0) −\(file.deletions ?? 0)")
                 .font(.caption).foregroundStyle(.secondary)
             }.tag(file.path)

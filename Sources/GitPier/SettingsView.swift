@@ -418,8 +418,8 @@ struct CredentialsView: View {
         }
         Button(store.text("Close", "关闭")) { dismiss() }
       }.padding(16)
-      Divider()
-      HSplitView {
+      Divider().padding(.leading, Theme.panelRadius)
+      HStack(spacing: 0) {
         List(store.configuration.credentials, selection: $selectedID) { credential in
           VStack(alignment: .leading, spacing: 5) {
             HStack {
@@ -433,7 +433,8 @@ struct CredentialsView: View {
             Text(credential.host + " · " + credential.username).font(uiFont(size: 10))
               .foregroundStyle(.secondary)
           }.padding(.vertical, 6).tag(credential.id)
-        }.frame(minWidth: 220, maxWidth: 270).listStyle(.sidebar)
+        }.frame(minWidth: 220, maxWidth: 270).listStyle(.sidebar).scrollIndicators(.never)
+          .clipShape(Theme.panelShape(radius: Theme.panelRadius))
         if let selected {
           VStack(alignment: .leading, spacing: 16) {
             Text(selected.name).font(.title3.weight(.semibold))

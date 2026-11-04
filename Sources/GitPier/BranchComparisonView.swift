@@ -72,7 +72,8 @@ struct BranchComparisonView: View {
           Divider()
           HStack(spacing: 0) {
             List(result.files, selection: $selected) { file in
-              Label(file.path, systemImage: "doc.text").font(uiFont(size: 11)).lineLimit(1).tag(file.path)
+              Label { Text(file.path) } icon: { FileTypeIcon(path: file.path) }
+                .font(uiFont(size: 11)).lineLimit(1).tag(file.path)
             }.listStyle(.plain).frame(width: min(260, area.size.width * 0.3))
             Divider()
             VStack(spacing: 0) {

@@ -787,7 +787,7 @@ struct DiffTab: Identifiable, Equatable {
       ? nil
       : activity.begin(
         store.text(available ? "Refreshing" : "Opening repository", available ? "刷新仓库" : "打开仓库"),
-        cancellable: false, observed: false)
+        cancellable: false, observed: false, presentation: .waiting)
     let task = Task { [weak self] in
       guard let self else { return }
       await self.performRefresh()

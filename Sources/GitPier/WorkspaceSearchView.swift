@@ -53,7 +53,10 @@ struct WorkspaceSearchView: View {
                   Task { if await store.workspace.openSearchHit(hit) { dismiss() } }
                 } label: {
                   VStack(alignment: .leading, spacing: 3) {
-                    Text(kind == .commit ? hit.detail : hit.value).lineLimit(2)
+                    HStack {
+                      if kind == .file { FileTypeIcon(path: hit.value) }
+                      Text(kind == .commit ? hit.detail : hit.value).lineLimit(2)
+                    }
                     Text((store.repositories.first { $0.id == hit.repositoryID }?.name ?? "") + " · " + (kind == .commit ? String(hit.value.prefix(12)) : hit.detail))
                       .font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1)
                   }.frame(maxWidth: .infinity, alignment: .leading).contentShape(Rectangle())

@@ -77,6 +77,7 @@ struct LFSView: View {
             Text(store.text("LFS Files", "LFS 文件")).font(.headline)
             List(state.files, selection: $selected) { file in
               HStack {
+                FileTypeIcon(path: file.path)
                 VStack(alignment: .leading, spacing: 4) {
                   Text(file.path).lineLimit(2)
                   Text(ByteCountFormatter.string(fromByteCount: file.size, countStyle: .file)).font(.caption).foregroundStyle(.secondary)

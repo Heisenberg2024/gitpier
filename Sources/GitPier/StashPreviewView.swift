@@ -19,7 +19,7 @@ struct StashPreviewView: View {
   var body: some View {
     HStack(spacing: 0) {
       List(files, selection: $selected) { file in
-        Label(file.change.path, systemImage: "doc.text")
+        Label { Text(file.change.path) } icon: { FileTypeIcon(path: file.change.path) }
           .font(uiFont(size: 11)).lineLimit(1).tag(file.id)
       }.listStyle(.inset).frame(minWidth: 180, idealWidth: 240, maxWidth: 300)
       Divider()

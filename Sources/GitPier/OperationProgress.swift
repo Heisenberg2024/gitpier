@@ -7,9 +7,12 @@ struct OperationTicket: Sendable, Equatable {
   let id: UUID
   let stage: Int
 }
+enum OperationProgressPresentation: Equatable { case workflow, waiting }
+
 struct OperationState {
   var title: String
   var workflow: OperationWorkflowProgress
+  var presentation: OperationProgressPresentation = .workflow
   var transfer: GitTransferProgress? { workflow.transfer }
   var result: OperationResult = .running
 }
@@ -26,14 +29,15 @@ struct OperationState {
   private var originalTitle = ""
   private var dismissal: Task<Void, Never>?
   var ticket: OperationTicket { OperationTicket(id: id, stage: stage) }
-  @discardableResult func begin(_ title: String, cancellable: Bool = true, kind: WorkflowOperationKind = .git, observed: Bool = true) -> OperationTicket {
+  @discardableResult func begin(_ title: String, cancellable: Bool = true, kind: WorkflowOperationKind = .git,
+    observed: Bool = true, presentation: OperationProgressPresentation = .workflow) -> OperationTicket {
     dismissal?.cancel()
     id = UUID()
     stage = 0
     originalTitle = title
     canCancel = cancellable
     let workflow = OperationWorkflowProgress(id: id, kind: kind)
-    state = OperationState(title: title, workflow: workflow)
+    state = OperationState(title: title, workflow: workflow, presentation: presentation)
     if observed { center?.begin(id: id, kind: kind, repositoryID: repositoryID, identity: repositoryIdentity?(), workflow: workflow, cancel: cancellable ? cancelOperation : nil) }
     return ticket
   }
@@ -123,26 +127,24 @@ struct OperationState {
 struct OperationProgressView: View {
   @ObservedObject var progress: OperationProgress
   @EnvironmentObject var store: AppStore
+  var showsOtherOperations = true
+  var leadingBar = false
+  var barWidth: CGFloat = 100
   let cancel: () -> Void
   var body: some View {
     if let state = progress.state {
-      HStack(spacing: 8) {
-        Image(systemName: OperationStatusPresentation(state.result).symbol)
-          .foregroundStyle(OperationStatusPresentation(state.result).color).accessibilityHidden(true)
-        Text(label(state)).lineLimit(1).truncationMode(.middle).frame(
-          maxWidth: 240, alignment: .leading)
-        WorkflowProgressBar(workflow: state.workflow).frame(width: 100, height: 8)
-        if state.result == .running && progress.canCancel {
-          IconButton("xmark.circle", help: store.text("Cancel operation", "取消操作"), action: cancel)
-        }
-      }.font(.system(size: 10)).foregroundStyle(
+      OperationProgressContent(title: label(state), workflow: state.workflow,
+        status: OperationStatusPresentation(state.result),
+        cancel: state.result == .running && progress.canCancel ? cancel : nil, leadingBar: leadingBar,
+        barWidth: barWidth, presentation: state.presentation)
+      .foregroundStyle(
         state.result == .failed
           ? Color.red : state.result == .needsAttention ? Color.orange : Color.secondary
       )
       .accessibilityElement(children: .contain).accessibilityIdentifier(
         "gitpier.operation.progress")
-    } else {
-      OtherOperationProgressView(center: store.operations)
+    } else if showsOtherOperations {
+      OtherOperationProgressView(center: store.operations, leadingBar: leadingBar, barWidth: barWidth)
     }
   }
   func label(_ state: OperationState) -> String {
@@ -158,30 +160,67 @@ struct OperationProgressView: View {
   }
 }
 
+private struct OperationProgressContent: View {
+  @EnvironmentObject var store: AppStore
+  let title: String
+  let workflow: OperationWorkflowProgress
+  let status: OperationStatusPresentation
+  var cancel: (() -> Void)?
+  var leadingBar = false
+  var barWidth: CGFloat = 100
+  var presentation: OperationProgressPresentation = .workflow
+  var body: some View {
+    HStack(spacing: 8) {
+      if leadingBar { WorkflowProgressBar(workflow: workflow, width: barWidth, presentation: presentation) }
+      Image(systemName: status.symbol).foregroundStyle(status.color)
+        .frame(width: 12).accessibilityHidden(true)
+      Text(title).lineLimit(1).truncationMode(.middle).frame(maxWidth: 240, alignment: .leading)
+        .accessibilityIdentifier("gitpier.operation.summary")
+      // Reserve the same target before the trailing bar when cancellation is unavailable.
+      ZStack {
+        if let cancel {
+          IconButton("xmark.circle", help: store.text("Cancel operation", "取消操作"), action: cancel)
+        }
+      }.frame(width: Theme.iconTarget, height: Theme.iconTarget)
+      if !leadingBar { WorkflowProgressBar(workflow: workflow, width: barWidth, presentation: presentation) }
+    }.font(.system(size: 10))
+  }
+}
+
 /// Keep other repositories' operations reachable while the user changes pages or opens Dashboard.
 private struct OtherOperationProgressView: View {
   @ObservedObject var center: OperationsCenter
   @EnvironmentObject var store: AppStore
+  var leadingBar = false
+  var barWidth: CGFloat = 100
   var body: some View {
     if let record = center.records.first(where: { $0.state.active && $0.kind != .automaticFetch && $0.workflow != nil }),
       let workflow = record.workflow {
       Button { store.showOperationsCenter = true } label: {
-        HStack(spacing: 8) {
-          Text([record.repositoryID.flatMap { store.models[$0]?.record.name }, operationTitle(record.kind, store: store),
-            WorkflowProgressPresentation.label(workflow, store: store)].compactMap { $0 }.joined(separator: " · "))
-            .lineLimit(1).truncationMode(.middle)
-          WorkflowProgressBar(workflow: workflow).frame(width: 100, height: 8)
-        }
+        OperationProgressContent(title: [record.repositoryID.flatMap { store.models[$0]?.record.name },
+          operationTitle(record.kind, store: store), WorkflowProgressPresentation.label(workflow, store: store)]
+            .compactMap { $0 }.joined(separator: " · "),
+          workflow: workflow, status: OperationStatusPresentation(record.state), cancel: nil, leadingBar: leadingBar,
+          barWidth: barWidth)
       }.buttonStyle(.workspace).help(store.text("Open Operations Center", "打开操作中心"))
+        .accessibilityIdentifier("gitpier.operation.background")
     }
   }
 }
 
 enum WorkflowProgressPresentation {
   @MainActor static func label(_ workflow: OperationWorkflowProgress, currentTitle: String? = nil, store: AppStore) -> String {
-    if workflow.outcome != nil {
-      let count = workflow.steps.filter { $0.state == .completed }.count
-      return store.text("\(count) of \(workflow.steps.count) steps completed", "已完成 \(count)/\(workflow.steps.count) 步")
+    if let outcome = workflow.outcome {
+      switch outcome {
+      case .succeeded: return store.text("Completed", "已完成")
+      case .failed: return store.text("Failed", "失败")
+      case .cancelled: return store.text("Cancelled", "已取消")
+      case .needsAttention: return store.text("Needs attention", "需要处理")
+      case .waitingForUser: return store.text("Waiting for you", "等待用户操作")
+      case .resultUnknown: return store.text("Result unknown", "结果未知")
+      case .agentExited: return store.text("Agent exited", "Agent 已退出")
+      case .queued, .running: break
+      }
     }
     let fallbackTitle = switch workflow.current {
     case .prepare: store.text("Preparing", "准备中")
@@ -191,78 +230,64 @@ enum WorkflowProgressPresentation {
     case .push: store.text("Pushing", "正在推送")
     case .refresh: store.text("Refreshing results", "正在刷新结果")
     }
-    let step = store.text("Step \(workflow.index + 1)/\(workflow.steps.count)", "第 \(workflow.index + 1)/\(workflow.steps.count) 步")
     let transfer = workflow.transfer.map { " · " + operationTransferTitle($0.phase, store: store) + " \(Int($0.fraction * 100))%" } ?? ""
-    return step + " · " + (currentTitle ?? fallbackTitle) + transfer
+    return (currentTitle ?? fallbackTitle) + transfer
   }
 }
 
-/// Completed steps stay filled. Only the active step uses the native transfer indicator.
+/// Workflow steps remain internal; measured progress never resets at a phase boundary.
 struct WorkflowProgressBar: View {
-  @Environment(\.accessibilityReduceMotion) private var reduceMotion
   let workflow: OperationWorkflowProgress
+  var width: CGFloat = 100
+  var presentation: OperationProgressPresentation = .workflow
   var body: some View {
     Group {
-      if workflow.outcome == .succeeded && workflow.steps.allSatisfy({ $0.state == .completed }) {
-        OperationBar(value: 1)
+      if presentation == .waiting, workflow.outcome != nil {
+        // Keep the summary anchored without turning a completed refresh into a measured fill.
+        Color.clear.frame(width: width, height: 12)
       } else {
-        steps
+        OperationBar(value: presentation == .waiting ? nil : workflow.indicatorValue, width: width)
       }
-    }.clipShape(Capsule()).accessibilityHidden(true)
-  }
-  private var steps: some View {
-    GeometryReader { geometry in
-      let width = max(0, (geometry.size.width - CGFloat(workflow.steps.count - 1) * 2) / CGFloat(workflow.steps.count))
-      HStack(spacing: 2) {
-        ForEach(workflow.steps.indices, id: \.self) { index in
-          Group {
-            switch workflow.steps[index].state {
-            case .completed:
-              Rectangle().fill(Color.accentColor)
-            case .active:
-              if reduceMotion, workflow.transfer == nil {
-                Rectangle().fill(Color.accentColor.opacity(0.40))
-              } else {
-                OperationBar(value: workflow.transfer?.fraction)
-              }
-            case .interrupted:
-              Rectangle().fill(Color.orange.opacity(0.5))
-            case .pending, .skipped:
-              Rectangle().fill(Color.secondary.opacity(0.16))
-            }
-          }.frame(width: width).clipped()
-        }
-      }
-    }
+    }.accessibilityHidden(true)
   }
 }
-struct OperationBar: NSViewRepresentable {
+
+struct OperationBar: View {
+  @Environment(\.accessibilityReduceMotion) private var reduceMotion
+  @Environment(\.colorSchemeContrast) private var contrast
   let value: Double?
+  var width: CGFloat = 100
+  var body: some View {
+    Group {
+      if value == nil && !reduceMotion {
+        IndeterminateOperationBar()
+      } else {
+        NativeOperationBar(value: value, animates: !reduceMotion, increasedContrast: contrast == .increased)
+      }
+    }.frame(width: width, height: 12).fixedSize()
+  }
+}
+
+/// Preserve v2.0.0's system waiting animation; measured transfers keep their existing renderer.
+private struct IndeterminateOperationBar: NSViewRepresentable {
+  @EnvironmentObject var store: AppStore
   func makeNSView(context: Context) -> NSProgressIndicator {
     let view = NSProgressIndicator()
     view.style = .bar
-    view.minValue = 0
-    view.maxValue = 1
+    view.minValue = 0; view.maxValue = 1
     view.controlSize = .small
     view.isDisplayedWhenStopped = true
     view.usesThreadedAnimation = true
-    view.setAccessibilityLabel(localizedUI("Git operation progress"))
+    view.isIndeterminate = true
     return view
   }
   func updateNSView(_ view: NSProgressIndicator, context: Context) {
-    view.setAccessibilityLabel(localizedUI("Git operation progress"))
-    if let value {
-      if view.isIndeterminate {
-        view.isIndeterminate = false
-        view.stopAnimation(nil)
-      }
-      view.doubleValue = min(1, max(0, value))
-    } else {
-      if !view.isIndeterminate { view.isIndeterminate = true }
-      view.startAnimation(nil)
-    }
+    view.setAccessibilityLabel(store.text("Git operation progress", "Git 操作进度"))
+    if !view.isIndeterminate { view.isIndeterminate = true }
+    view.startAnimation(nil)
   }
-  static func dismantleNSView(_ view: NSProgressIndicator, coordinator: ()) {
-    view.stopAnimation(nil)
+  func sizeThatFits(_ proposal: ProposedViewSize, nsView: NSProgressIndicator, context: Context) -> CGSize? {
+    CGSize(width: proposal.width ?? 100, height: 12)
   }
+  static func dismantleNSView(_ view: NSProgressIndicator, coordinator: ()) { view.stopAnimation(nil) }
 }

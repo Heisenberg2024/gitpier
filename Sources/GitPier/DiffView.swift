@@ -29,8 +29,7 @@ struct DiffPanel: View {
         HStack(spacing: 0) {
           ForEach(model.tabs) { tab in
             HStack(spacing: 8) {
-              Image(systemName: "arrow.left.arrow.right").font(uiFont(size: 10)).foregroundStyle(
-                .secondary)
+              FileTypeIcon(path: tab.path, size: 14)
               Text(URL(fileURLWithPath: tab.path).lastPathComponent).font(
                 .system(size: 11, weight: .medium)
               ).italic(tab.preview)
@@ -105,7 +104,7 @@ struct DiffPanel: View {
       Divider()
       if let path = model.selectedPath {
         HStack {
-          Image(systemName: "doc.text").foregroundStyle(.secondary)
+          FileTypeIcon(path: path)
           Text(path).lineLimit(1).truncationMode(.middle)
           Button(store.text("Blame", "逐行溯源")) { blame = BlameRequest(path: path) }
           Menu {
@@ -491,11 +490,10 @@ struct DiffTable: NSViewRepresentable, Equatable {
       for table in host.tables { table.reloadData() }
       host.reloadCount += 1
       c.resize()
-      for side in 0...1 {
-        let positionKey = key + "-side\(side)"
-        if previousKey != key, let point = ScrollMemory.positions[positionKey] {
-          host.scrolls[side].contentView.scroll(to: point)
-          host.scrolls[side].reflectScrolledClipView(host.scrolls[side].contentView)
+      if previousKey != key {
+        for scroll in host.scrolls {
+          scroll.contentView.scroll(to: .zero)
+          scroll.reflectScrolledClipView(scroll.contentView)
         }
       }
       c.synchronizing = false
@@ -605,11 +603,14 @@ struct DiffTable: NSViewRepresentable, Equatable {
         let available = max(80, scroll.contentSize.width)
         guard abs(lastWidths[side] - available) > 0.5 else { continue }
         lastWidths[side] = available
+        // Equal document widths keep the shorter side aligned through the longest line.
+        let longestLine = settings.unifiedDiff || host.afterOnly
+          ? longestLines[side] : max(longestLines[0], longestLines[1])
         let width =
           settings.wrapDiff
           ? available
           : max(
-            available, min(6000, CGFloat(longestLines[side]) * settings.diffFontSize * 0.65 + 70))
+            available, min(6000, CGFloat(longestLine) * settings.diffFontSize * 0.65 + 70))
         if abs(table.tableColumns[0].width - width) > 0.5 { table.tableColumns[0].width = width }
         if abs(table.frame.width - width) > 0.5 { table.frame.size.width = width }
         if settings.wrapDiff && table.numberOfRows > 0 {
@@ -637,16 +638,14 @@ struct DiffTable: NSViewRepresentable, Equatable {
       guard let host, !synchronizing else { return }
       let source = host.scrolls[side]
       let other = host.scrolls[1 - side]
-      ScrollMemory.positions[key + "-side\(side)"] = source.contentView.bounds.origin
+      let point = source.contentView.bounds.origin
       guard !settings.unifiedDiff, !host.afterOnly,
-        abs(source.contentView.bounds.origin.y - other.contentView.bounds.origin.y) > 0.5
+        abs(point.x - other.contentView.bounds.origin.x) > 0.5
+          || abs(point.y - other.contentView.bounds.origin.y) > 0.5
       else { return }
       synchronizing = true
-      var point = other.contentView.bounds.origin
-      point.y = source.contentView.bounds.origin.y
       other.contentView.scroll(to: point)
       other.reflectScrolledClipView(other.contentView)
-      ScrollMemory.positions[key + "-side\(1-side)"] = other.contentView.bounds.origin
       synchronizing = false
     }
     func tableView(_ tableView: NSTableView, heightOfRow row: Int) -> CGFloat {

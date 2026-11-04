@@ -2,9 +2,13 @@ import GitPierCore
 import SwiftUI
 
 struct OrganizationsView: View {
+  private enum SidebarSelection: Hashable {
+    case ungrouped
+    case organization(UUID)
+  }
   @EnvironmentObject var store: AppStore
   @Environment(\.dismiss) var dismiss
-  @State private var selectedID: UUID?
+  @State private var selectedGroup: SidebarSelection? = .ungrouped
   @State private var selection: Set<UUID> = []
   @State private var destinationID: UUID?
   @State private var creating = false
@@ -12,6 +16,10 @@ struct OrganizationsView: View {
   @State private var deleting = false
   @State private var name = ""
   @State private var problem: String?
+  private var selectedID: UUID? {
+    if case .organization(let id) = selectedGroup { return id }
+    return nil
+  }
   var current: RepositoryOrganization? { store.organizations.first { $0.id == selectedID } }
   var members: [RepositoryRecord] {
     store.repositories.filter { $0.group == (current?.name ?? "") }
@@ -30,20 +38,22 @@ struct OrganizationsView: View {
         }
         Button(store.text("Close", "关闭")) { dismiss() }
       }.padding(16)
-      Divider()
-      HSplitView {
+      Divider().padding(.leading, Theme.panelRadius)
+      HStack(spacing: 0) {
         VStack(spacing: 0) {
-          List(selection: $selectedID) {
-            Label(store.text("Ungrouped", "未分组"), systemImage: "tray").tag(nil as UUID?)
+          List(selection: $selectedGroup) {
+            Label(store.text("Ungrouped", "未分组"), systemImage: "tray")
+              .tag(SidebarSelection.ungrouped)
             ForEach(store.organizations) { organization in
               HStack {
                 Label(organization.name, systemImage: "folder")
                 Spacer()
                 Text("\(store.repositories.filter { $0.group == organization.name }.count)")
                   .foregroundStyle(.secondary)
-              }.tag(Optional(organization.id))
+              }.tag(SidebarSelection.organization(organization.id))
             }
-          }.listStyle(.sidebar)
+          }.listStyle(.sidebar).scrollIndicators(.never)
+            .clipShape(Theme.panelShape(radius: Theme.panelRadius))
           HStack {
             Button(store.text("Rename…", "重命名…")) {
               name = current?.name ?? ""
@@ -91,11 +101,11 @@ struct OrganizationsView: View {
         }.padding(18).frame(minWidth: 390)
       }
     }.frame(minWidth: 680, minHeight: 430).buttonStyle(.bordered)
-      .onChange(of: selectedID) { selection = [] }
+      .onChange(of: selectedGroup) { selection = [] }
       .alert(store.text("Create Organization", "创建组织"), isPresented: $creating) {
         TextField(store.text("Name", "名称"), text: $name)
         Button(store.text("Create", "创建")) {
-          perform { selectedID = try store.createOrganization(name).id }
+          perform { selectedGroup = .organization(try store.createOrganization(name).id) }
         }
         Button(store.text("Cancel", "取消"), role: .cancel) {}
       }
@@ -109,7 +119,7 @@ struct OrganizationsView: View {
       .alert(store.text("Remove Organization?", "移除组织？"), isPresented: $deleting) {
         Button(store.text("Remove", "移除"), role: .destructive) {
           if let selectedID { store.removeOrganization(selectedID) }
-          selectedID = nil
+          selectedGroup = .ungrouped
           selection = []
         }
         Button(store.text("Cancel", "取消"), role: .cancel) {}

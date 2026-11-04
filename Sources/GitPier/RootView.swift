@@ -381,9 +381,8 @@ struct CloneSheet: View {
         Text(store.text("System Git / SSH", "系统 Git / SSH")).tag(nil as UUID?)
         ForEach(store.configuration.credentials) { Text($0.name).tag(Optional($0.id)) }
       }
-      if store.cloning {
-        OperationProgressView(progress: store.cloneActivity) { store.cloneTask?.cancel() }
-      }
+      OperationProgressView(progress: store.cloneActivity, showsOtherOperations: false) { store.cloneTask?.cancel() }
+        .frame(height: Theme.iconTarget)
       HStack {
         Spacer()
         Button(store.text("Close", "关闭")) { dismiss() }.disabled(store.cloning)

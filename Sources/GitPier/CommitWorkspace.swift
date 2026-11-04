@@ -318,35 +318,60 @@ struct RepositoryWorkspace: View {
       .accessibilityElement(children: .contain).accessibilityIdentifier("gitpier.repository.toolbar")
   }
   var statusBar: some View {
-    HStack(spacing: 10) {
-      Circle().fill(model.available ? Color.mint : .orange).frame(width: 5, height: 5)
-      Text(
-        model.available
-          ? store.text(
-            "\(model.status.files.count) changes · \(model.stagedCount) staged",
-            "\(model.status.files.count) 处变更 · \(model.stagedCount) 已暂存")
-          : store.text("Repository unavailable", "仓库不可用"))
-      Spacer(minLength: 4)
-      OperationProgressView(progress: model.activity) { model.cancel() }.layoutPriority(1)
-      if model.busy || model.refreshing {
-        EmptyView()
-      } else if model.hasExternalChanges {
-        Button(store.text("External changes · ⌘R", "外部变更 · ⌘R")) { Task { await model.refresh() } }
-          .foregroundStyle(.orange).buttonStyle(.workspace)
-      } else {
-        Text(store.text("Manual refresh · ⌘R", "手动刷新 · ⌘R"))
-      }
-      if !model.busy && !model.refreshing, let upstream = model.status.upstream {
-        Text(upstream).lineLimit(1)
-      }
-      Text(localizedUI("↑\(model.status.ahead) ↓\(model.status.behind)"))
-      Text(model.status.head.map { String($0.prefix(8)) } ?? "No commits").font(
-        .system(size: 10, design: .monospaced))
-    }.font(uiFont(size: 10)).foregroundStyle(.secondary).padding(.horizontal, 12).frame(height: 26)
-      .background(Theme.panel(scheme))
+    RepositoryStatusBar(model: model, center: store.operations)
   }
   func command(_ operation: GitOperation) -> String {
     operation == .cherryPick ? "cherry-pick" : operation.rawValue
+  }
+}
+
+private struct RepositoryStatusBar: View {
+  @ObservedObject var model: RepositoryModel
+  @ObservedObject var progress: OperationProgress
+  @ObservedObject var center: OperationsCenter
+  @EnvironmentObject var store: AppStore
+  @Environment(\.colorScheme) private var scheme
+  init(model: RepositoryModel, center: OperationsCenter) {
+    self.model = model; self.progress = model.activity; self.center = center
+  }
+  var body: some View {
+    let hasProgress = progress.state != nil || center.records.contains {
+      $0.state.active && $0.kind != .automaticFetch && $0.workflow != nil
+    }
+    GeometryReader { geometry in
+      // Only window width controls this slot; pane dividers and operation labels never do.
+      let barWidth = min(210, max(100, (geometry.size.width - 500) / 2))
+      HStack(spacing: 0) {
+        HStack(spacing: 10) {
+          Circle().fill(model.available ? Color.mint : .orange).frame(width: 5, height: 5)
+          Text(model.available
+            ? store.text("\(model.status.files.count) changes · \(model.stagedCount) staged",
+              "\(model.status.files.count) 处变更 · \(model.stagedCount) 已暂存")
+            : store.text("Repository unavailable", "仓库不可用"))
+          Spacer(minLength: 0)
+        }.padding(.horizontal, 12).frame(width: 210, alignment: .leading)
+          .accessibilityElement(children: .combine).accessibilityIdentifier("gitpier.repository.change-counts")
+        HStack(spacing: 10) {
+          if hasProgress {
+            OperationProgressView(progress: progress, leadingBar: true, barWidth: barWidth) { model.cancel() }
+              .frame(width: barWidth + 180, alignment: .leading)
+          }
+          Spacer(minLength: 4)
+          if !hasProgress && !model.busy && !model.refreshing {
+            if model.hasExternalChanges {
+              Button(store.text("External changes · ⌘R", "外部变更 · ⌘R")) { Task { await model.refresh() } }
+                .foregroundStyle(.orange).buttonStyle(.workspace)
+            } else { Text(store.text("Manual refresh · ⌘R", "手动刷新 · ⌘R")) }
+            if let upstream = model.status.upstream { Text(upstream).lineLimit(1) }
+          }
+          Text(localizedUI("↑\(model.status.ahead) ↓\(model.status.behind)"))
+          Text(model.status.head.map { String($0.prefix(8)) } ?? "No commits")
+            .font(.system(size: 10, design: .monospaced))
+        }.padding(.horizontal, 12)
+      }.frame(height: 26)
+    }.frame(height: 26).font(uiFont(size: 10)).foregroundStyle(.secondary).lineLimit(1)
+      .background(Theme.panel(scheme))
+      .accessibilityElement(children: .contain).accessibilityIdentifier("gitpier.repository.status")
   }
 }
 

@@ -258,7 +258,7 @@ struct ConflictResolutionView: View {
                 editor.select(file.path)
               } label: {
                 HStack {
-                  Image(systemName: "doc.text").foregroundStyle(.orange)
+                  FileTypeIcon(path: file.path)
                   Text(file.path).lineLimit(2).truncationMode(.middle)
                   Spacer(minLength: 0)
                 }.padding(10).frame(maxWidth: .infinity, alignment: .leading)

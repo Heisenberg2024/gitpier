@@ -314,7 +314,17 @@ struct HostingRequestDetail: View {
           HostingReviewStatus(session: reviewSession)
           if let patchError { HStack { Text(patchError).foregroundStyle(.orange); Button(store.text("Retry Preview", "重试预览")) { loadPatch() } }.font(.caption) }
           HSplitView {
-            List(selection: $selectedFile) { ForEach(loader.files) { f in VStack(alignment: .leading) { Text(f.path).lineLimit(2); Text(f.kind + (f.oldPath.isEmpty ? "" : " · " + f.oldPath)).font(.caption).foregroundStyle(.secondary) }.tag(f.path) } }.frame(minWidth: 130, idealWidth: 170, maxWidth: 240)
+            List(selection: $selectedFile) {
+              ForEach(loader.files) { f in
+                HStack(alignment: .top) {
+                  FileTypeIcon(path: f.path)
+                  VStack(alignment: .leading) {
+                    Text(f.path).lineLimit(2)
+                    Text(f.kind + (f.oldPath.isEmpty ? "" : " · " + f.oldPath)).font(.caption).foregroundStyle(.secondary)
+                  }
+                }.tag(f.path)
+              }
+            }.frame(minWidth: 130, idealWidth: 170, maxWidth: 240)
             if patchLoading { ProgressView().frame(maxWidth: .infinity) }
             else if remotePatch != nil {
               if diff.complexMetadata && diff.hunks.isEmpty {

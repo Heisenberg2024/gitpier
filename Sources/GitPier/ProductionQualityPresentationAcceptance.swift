@@ -113,7 +113,9 @@ extension UIAcceptance {
           try await waitFor { window.attachedSheet != nil }
           guard let sheet = window.attachedSheet, let content = sheet.contentView else { throw GitPierError.invalidInput("Missing Operations Center sheet") }
           try await settle()
-          let indicators = descendants(content).compactMap { $0 as? NSProgressIndicator }
+          let indicators = descendants(content).filter {
+            $0 is OperationProgressTrackView || ($0 as? NSProgressIndicator)?.style == .bar
+          }
           guard !indicators.isEmpty, indicators.allSatisfy({ $0.accessibilityLabel() == store.text("Git operation progress", "Git 操作进度") }) else {
             throw GitPierError.invalidInput("Operation progress has missing or untranslated accessibility labels")
           }
