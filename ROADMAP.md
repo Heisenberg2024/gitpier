@@ -2,7 +2,7 @@
 
 **Native Git Client for macOS** · *All Your Repositories. One Workspace.*
 
-Reviewed: 2026-11-05. Current stable: [v2.1.0 (35)](https://github.com/Heisenberg2024/gitpier/releases/tag/v2.1.0). Trusted Distribution remains a separate future milestone with no release date.
+Reviewed: 2026-11-05. Current stable: [v2.2.0 (36)](https://github.com/Heisenberg2024/gitpier/releases/tag/v2.2.0). Trusted Distribution remains a separate future milestone with no release date.
 
 GitPier develops the existing SwiftUI/AppKit workspace through focused, verifiable improvements. Milestones describe scope and acceptance conditions; they do not promise release dates. / GitPier 以现有原生工作空间为基础，持续改进可靠性、交互与性能；路线图说明范围和验收条件，不承诺发布日期。
 
@@ -58,9 +58,11 @@ The release retains Operations Center checkpoints, verifies the exact remote ref
 
 ## v2.2.0 — Native Experience Refinement / 原生体验完善
 
-Release candidate preparation: 2.2.0 (36). Improve operation outcomes and progress, message review, settings and credential clarity; add file type icons and two-axis Diff synchronization while retaining opaque reading surfaces, shared native presentation and macOS 14 compatibility. [Implementation and acceptance](docs/v2.2.0-native-experience.md) and [release preparation](docs/development.md#v220-release-candidate--2026-11-05) record results and outstanding gates separately. The stable download remains v2.1.0 (35).
+**Released / 已发布 · 2026-11-05 · 2.2.0（36）.** [Release](https://github.com/Heisenberg2024/gitpier/releases/tag/v2.2.0) · [Publication evidence](docs/development.md#v220-publication--2026-11-05)
 
-2.2.0（36）候选版准备中。完善操作结果、提交说明、偏好和凭证来源展示，新增文件类型图标与 Diff 双轴同步；保留不透明阅读区域、共用原生弹窗及 macOS 14 兼容路径。正式发布前仍须审阅说明并验证最终版本提交，稳定下载仍为 v2.1.0（35）。
+File type icons, continuous operation progress, two-axis Diff synchronization and file-switch reset refine the native workspace. Dashboard, settings, credential-source clarity, notification preferences and Codex discovery retain opaque reading surfaces, shared scrolling and macOS 14 compatibility. [Implementation and acceptance](docs/v2.2.0-native-experience.md) keeps measured results and unverified hardware/distribution coverage explicit.
+
+文件类型图标、连续操作进度、Diff 双轴同步与切文件复位完善原生工作空间；总览、设置、凭证来源、通知偏好和 Codex 检测继续沿用不透明阅读区域、统一滚动及 macOS 14 兼容路径。版本与公开分发已核验，真实硬件及完整服务、无障碍、自更新边界仍见验收记录。
 
 ## Later: Trusted Distribution / 后续独立工作：可信分发
 

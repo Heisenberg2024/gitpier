@@ -12,15 +12,15 @@ GitPier 将仓库管理、变更审查、提交和集成终端汇集在一个专
 
 ![提交工作台：已跟踪与未跟踪变更、双栏 Diff 和终端](docs/screenshots/commit-workspace.png)
 
-## 原生体验完善 — v2.2.0 候选
+## 原生工作流与界面完善 — v2.2.0
 
-2.2.0（Build 36）正在准备发布，稳定下载仍为 v2.1.0（35）。候选版新增易辨认的文件类型图标、连续的提交并推送进度、Diff 双轴同步滚动及切文件回到左上角；同时完善总览列对齐、设置页侧栏、凭证来源说明、后台通知声音和 Codex CLI 检测。快速打开使用 ⌘K，主侧栏保持不透明背景。
+[v2.2.0（36）](https://github.com/Heisenberg2024/gitpier/releases/tag/v2.2.0)已发布为当前 **Latest**。新增易辨认的文件类型图标、连续的提交并推送进度、Diff 双轴同步滚动及切文件回到左上角；同时完善总览列对齐、设置页侧栏、凭证来源说明、后台通知声音和 Codex CLI 检测。快速打开使用 ⌘K，主侧栏保持不透明背景。
 
-详见[候选变更](CHANGELOG.md#unreleased)、[原生验收与剩余边界](docs/v2.2.0-native-experience.md)和[发布准备](docs/development.md#v220-release-candidate--2026-11-05)。双语说明及最终版本提交的验证完成后，再进入正式发布。
+本版从 `15db897` 发布，同源完整 CI、Tag 验证、Universal DMG、生产 Sparkle 签名、附件回读和公开下载均已核实。详见[变更记录](CHANGELOG.md)、[原生验收与剩余边界](docs/v2.2.0-native-experience.md)和[发布证据](docs/development.md#v220-publication--2026-11-05)。应用仍使用 ad-hoc 签名，Developer ID 与 Apple 公证继续作为独立后续工作。
 
 ## 推送恢复与工作空间性能 — v2.1.0
 
-[v2.1.0（35）](https://github.com/Heisenberg2024/gitpier/releases/tag/v2.1.0)已发布为当前 **Latest**。操作中心保留未决检查点，支持复制完整 Hash、打开历史，以及主动核实已保存的单分支推送和原远端引用。重试须审查并重新核对原来源与目标，不会再次创建提交；上下文建议会突出此前未确认的结果。
+[v2.1.0（35）](https://github.com/Heisenberg2024/gitpier/releases/tag/v2.1.0)完善了推送恢复与工作空间性能。操作中心保留未决检查点，支持复制完整 Hash、打开历史，以及主动核实已保存的单分支推送和原远端引用。重试须审查并重新核对原来源与目标，不会再次创建提交；上下文建议会突出此前未确认的结果。
 
 Dashboard 在单次采集中复用元数据，合并刷新通知，并在每次渲染中复用远端检查说明。Push 预检仅在同一校验阶段复用读取结果，各边界仍重新校验。[性能续作](docs/v2.1.0-performance.md)记录配对比较及其边界。独立 `Marketing/hero-demo/` 已从当前仓库树移除。详见[开发计划](docs/v2.1.0-plan.md)、[验收与剩余边界](docs/v2.1.0-testing.md)和[发布证据](docs/development.md#v210-publication--2026-11-03)。
 

@@ -2,7 +2,11 @@
 
 ## Unreleased
 
-- Release candidate: 2.2.0 (Build 36); the current public release remains v2.1.0 (35). Final version-commit CI and maintainer review of bilingual release notes are still required.
+## 2.2.0 — 2026-11-05 (36)
+
+- Published as [Latest](https://github.com/Heisenberg2024/gitpier/releases/tag/v2.2.0) from `15db897` after exact-source full CI (1,147 Core tests), successful Tag validation, Universal packaging, production Sparkle signatures, asset-ID readbacks and public download/Feed verification. [Publication evidence](docs/development.md#v220-publication--2026-11-05)
+- 已从 `15db897` 正式发布为 [Latest](https://github.com/Heisenberg2024/gitpier/releases/tag/v2.2.0)；同源完整 CI 的 1,147 项 Core、Tag 验证、通用打包、生产更新签名、附件按 ID 回读及公开下载/Feed 均核验通过。
+
 - Background operation notifications can use the system sound or stay silent; the foreground keeps in-app feedback. Automatic background Fetch stays quiet.
 - New installations check for updates automatically. Explicit Sparkle opt-outs are preserved; downloads and installation still require confirmation.
 - Commit and Push use a single workflow with real transfer counters, durable outcomes and existing recovery controls. Optional message formatting is reviewed before it changes what is sent to Git.
@@ -14,8 +18,6 @@
 - Synchronize horizontal and vertical offsets in side-by-side Diff. Switching files resets both panes to the top-left; refreshing the same file retains its position.
 - Repository refresh uses the native waiting animation and hides the track on completion while preserving the result layout. Push and Commit & Push show real transfer progress in one continuous track. Footer progress stays anchored while pane dividers move and shortens in smaller windows.
 - Round the Organizations and Credentials sidebar lists, remove their split-view divider and align header rules with the rounded corners. Restore reliable return to Ungrouped after selecting another organization.
-
-简体中文：2.2.0（Build 36）候选版准备中，当前公开版本仍为 v2.1.0（35）；最终版本提交的 CI 及双语说明仍待维护者审核。
 
 后台操作通知可独立设置声音；新安装默认检查更新，保留已有关闭设置，下载和安装仍需确认。提交和推送使用同一工作流，并在提交前审查说明格式。仓库根目录与文件定位分开，收藏星标统一；总览移除更新时间列并提供首尾仓库的辅助功能动作，Diff 字体和颜色集中到 Diff 设置。仓库设置可核查认证来源及只读获取连接，活动操作结束后再应用凭证配置；迁移任务工作树后终端使用当前目录的准入检查。主侧栏在所有主题下保持不透明背景。验收及未验证边界见[开发记录](docs/v2.2.0-native-experience.md)。
 
