@@ -41,7 +41,7 @@ jobs:
     needs: plan
     if: ${{ always() }}
     runs-on: ${{ (github.run_attempt > 1 || needs.plan.outputs.mode == 'full') && 'macos-15-intel' || 'ubuntu-latest' }}
-    timeout-minutes: 40
+    timeout-minutes: 45
     env:
       # Failed-jobs-only reruns can retain an earlier successful plan's outputs.
       VALIDATION_MODE: ${{ github.run_attempt > 1 && 'full' || needs.plan.outputs.mode }}
@@ -95,6 +95,12 @@ jobs:
         timeout-minutes: 1
         continue-on-error: true
         run: python3 Scripts/ci_cache_inputs.py restore --context "${{ steps.toolchain.outputs.cache-context }}"
+      - name: Build test products
+        if: env.VALIDATION_MODE == 'full'
+        timeout-minutes: 20
+        run: |
+          mkdir -p .cache/ci
+          Scripts/test.sh list --jobs 2 --disable-index-store > .cache/ci/test-products.txt
       - name: Real Git repository tests
         id: core-tests
         if: env.VALIDATION_MODE == 'full'
@@ -122,7 +128,7 @@ jobs:
         run: python3 Scripts/test-release-tools.py
       - name: Build application
         if: env.VALIDATION_MODE == 'full'
-        timeout-minutes: 12
+        timeout-minutes: 15
         run: Scripts/build-app.sh
       - name: Temporary DMG structure (no Finder visual claim)
         if: env.VALIDATION_MODE == 'full'
