@@ -28,8 +28,8 @@ struct HelpView: View {
             "Checkboxes do not change the Git Index. Existing partial staging and changes staged by other tools are preserved. Stage / Unstage and hunk actions explicitly change the Index. Destructive actions ask for confirmation.",
             "勾选不会修改 Git Index，并保留已有部分暂存和其他工具的暂存内容。“暂存 / 取消暂存”和差异块操作会明确修改 Index，破坏性操作需要确认。")
           paragraph(
-            "The Diff settings menu controls unified view, wrapping, line numbers and whitespace. Each side scrolls horizontally; vertical scrolling is synchronized. An empty old side is hidden for newly added files.",
-            "Diff 设置菜单提供统一视图、换行、行号和空白选项。两侧独立水平滚动并同步垂直滚动；新增文件的旧侧为空时自动隐藏。")
+            "The Diff settings menu controls unified view, wrapping, line numbers and whitespace. Side-by-side Diff synchronizes horizontal and vertical scrolling. Switching files returns both sides to the top-left; refreshing the same file preserves its position. An empty old side is hidden for newly added files.",
+            "Diff 设置菜单提供统一视图、换行、行号和空白选项。并排 Diff 同步水平与垂直滚动；切换文件时两侧回到左上角，同一文件刷新保留位置。新增文件的旧侧为空时自动隐藏。")
           paragraph(
             "Lists, settings, help, commit messages, tabs and terminal scrollback use the same compact overlay scrollbars. Scroll or drag a thumb to brighten it; it fades after scrolling pauses.",
             "列表、设置、帮助、提交说明、标签栏和终端缓冲区使用相同的短覆盖滑块。滚动或拖动滑块时加深，停顿后淡化。")

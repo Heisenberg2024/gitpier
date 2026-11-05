@@ -1,77 +1,21 @@
-# GitPier Roadmap
+# Roadmap
 
-**Native Git Client for macOS** · *All Your Repositories. One Workspace.*
+GitPier's ongoing focus is the existing native macOS workspace: reliable reviewed Git operations, clear recovery, readable interfaces, accessibility, and measured performance across larger repository collections.
 
-Reviewed: 2026-11-05. Current stable: [v2.2.0 (36)](https://github.com/Heisenberg2024/gitpier/releases/tag/v2.2.0). Trusted Distribution remains a separate future milestone with no release date.
+## Trusted distribution
 
-GitPier develops the existing SwiftUI/AppKit workspace through focused, verifiable improvements. Milestones describe scope and acceptance conditions; they do not promise release dates. / GitPier 以现有原生工作空间为基础，持续改进可靠性、交互与性能；路线图说明范围和验收条件，不承诺发布日期。
+Developer ID signing, Apple notarization, production Hardened Runtime adaptation, and the related Gatekeeper/update pipeline remain future work. Current distribution continues to use Universal DMGs, ad-hoc code signing, and the existing signed Sparkle update channel. These are separate trust mechanisms; see [Security](SECURITY.md#updates-and-distribution).
 
-## Released foundation / 已发布基础
+## Possible directions
 
-| Version | Delivered product capabilities |
-| --- | --- |
-| [v1.0.0–v1.0.3](https://github.com/Heisenberg2024/gitpier/releases/tag/v1.0.3) | Native multi-repository workspace, reviewed commits/partial staging, Diff, real PTY, bilingual UI and shared overlay scrolling. 原生多仓库、精确提交、Diff、终端和统一滚动。 |
-| [v1.1.0](https://github.com/Heisenberg2024/gitpier/releases/tag/v1.1.0) | Sparkle updates and a single version configuration with preserved update trust. 应用内更新与统一版本配置。 |
-| [v1.2.0](https://github.com/Heisenberg2024/gitpier/releases/tag/v1.2.0) | Reviewed Worktree lifecycle, Reflog recovery, Blame and branch comparison. 工作树生命周期、引用日志恢复、溯源与比较。 |
-| [v1.3.0](https://github.com/Heisenberg2024/gitpier/releases/tag/v1.3.0) | Interactive Rebase, selective line staging, Patch, LFS and Submodule workflows. 交互式变基、逐行暂存与扩展 Git 工作流。 |
-| [v1.4.0–v1.4.4](https://github.com/Heisenberg2024/gitpier/releases/tag/v1.4.4) | Dashboard, bounded local scans/search, reviewed batch/automatic Fetch and native authentication reuse. 多仓库总览、有界扫描/搜索、获取及原生认证复用。 |
-| [v1.5.0–v1.5.1](https://github.com/Heisenberg2024/gitpier/releases/tag/v1.5.1) | GitHub/GitLab/Gitea accounts, OAuth/PAT, Local Vault/Keychain choices and on-demand hosting detail. 代码托管、多账号与凭证存储选择。 |
-| [v1.6.0–v1.6.1](https://github.com/Heisenberg2024/gitpier/releases/tag/v1.6.1) | Native code review, provider-specific collaboration and durable unknown-result recovery. 原生代码审查、平台协作与未知结果恢复。 |
-| [v1.7.0](https://github.com/Heisenberg2024/gitpier/releases/tag/v1.7.0) | Operations Center, contextual workflows, command/navigation and optional CLI integration. 操作中心、上下文工作流、命令与 CLI。 |
-| [v1.8.0](https://github.com/Heisenberg2024/gitpier/releases/tag/v1.8.0) | Worktree Task Workspaces and optional Codex CLI through the existing user environment. 任务工作树与可选 Codex CLI。 |
-| [v1.8.1](https://github.com/Heisenberg2024/gitpier/releases/tag/v1.8.1) | Large staged assets, native file scrolling and merge/mainline reliability. 大资源、原生多文件滚动与合并可靠性。 |
-| [v1.9.0](https://github.com/Heisenberg2024/gitpier/releases/tag/v1.9.0) | Ordered Cherry-pick, unified Revert recovery, six-state Branch Health and large-history graph optimization. 有序重放、统一撤销恢复、分支健康与历史图优化。 |
-| [v2.0.1](https://github.com/Heisenberg2024/gitpier/releases/tag/v2.0.1) | Reduced repeated snapshot queries; interrupted-commit safeguards, retained recovery Push targets and explicit unknown results. 减少重复快照查询，加固提交中断与恢复推送。 |
-| [v2.0.0](https://github.com/Heisenberg2024/gitpier/releases/tag/v2.0.0) | Coherent Index review, retained local commit results, bounded Diff reads, operation diagnostics, native History/locale refinements and measured scheduling. 一致审查、部分成功反馈、有界 Diff、诊断和原生体验。 |
+Further hosting integrations, issue/task connections, and optional assistance may be explored. These are ideas, not committed releases or dates. Discussion and maintenance priorities belong in [GitHub Issues](https://github.com/Heisenberg2024/gitpier/issues).
 
-Maintenance releases and exact changes are recorded in the [changelog](CHANGELOG.md). Released status does not imply all hardware, private accounts or distribution paths have been validated. / 维护版及具体差异见变更记录；已发布状态不等同于全部硬件、私有账号与分发路径均已验收。
+Implemented capabilities are described in the [README](README.md). Completed release history belongs in [CHANGELOG.md](CHANGELOG.md).
 
-## v2.0.0 — Production Quality & Native Experience
+## 简体中文
 
-**Released / 已发布：2026-11-02，2.0.0（33）.** [Release](https://github.com/Heisenberg2024/gitpier/releases/tag/v2.0.0) · [Implementation record](docs/v2.0.0-plan.md) · [Validation and remaining limits](docs/v2.0.0-testing.md).
+持续维护现有 macOS 原生工作空间，重点是可审查的 Git 操作、清楚的恢复路径、易读界面、无障碍与较大仓库集合下的实测性能。
 
-The release improves existing capabilities without introducing another Git engine, hosting platform or major business module. / 本版本打磨既有功能，不增加另一套 Git 引擎、新托管平台或大型业务模块。
+Developer ID 签名、Apple 公证、生产 Hardened Runtime 适配，以及相关 Gatekeeper/更新流水线仍是后续独立工作。当前继续使用 Universal DMG、ad-hoc 签名和既有 Sparkle 更新签名，不将它们混同为 Apple 公证。
 
-| Workstream | Intended user result |
-| --- | --- |
-| Workflow reliability / 工作流可靠性 | Coherent Index review, accurate partial-success feedback, native recovery and protected worktree/task ownership. 一致的审查、准确的部分成功反馈和原生恢复。 |
-| Native experience / 原生体验 | Consistent operation semantics, readable context, useful history selection/keyboard controls, native presentations and shared scrolling. 一致状态、清晰上下文、历史键盘体验和原生弹窗。 |
-| Accessibility and languages / 无障碍与双语 | Meaningful labels and counts, selected-language dates/numbers, Light/Dark and increased-contrast checks. 明确标签与数量、语言适配、深浅色和增强对比度检查。 |
-| Measured performance / 量化性能 | Bounded work and fewer scheduling allocations with reproducible algorithm and real UI measurements. 有界任务、更少调度开销及可复现测量。 |
-| Quality evidence / 质量证据 | Real temporary Git scenarios, full Core/native acceptance, stable-source Universal builds and an honest RC decision. 真实临时 Git、完整回归、固定源码通用构建与可信 RC 判断。 |
-
-Release acceptance includes independent source review, full same-source Swift 6.1.2 CI and the verified Universal/ad-hoc DMG with production Sparkle signatures. Final snapshot checks retain about 59 ms of measured refresh cost. Intel/macOS 14 hardware, full VoiceOver, long soak, private services and production self-update remain unverified. / 独立源码审核、同源完整 CI、通用包及生产更新签名已核实；保留约 59 ms 刷新成本，并明确硬件、完整无障碍、长时、私有服务和生产升级未验范围。
-
-## v2.0.1 — Stability & Performance
-
-**Released / 已发布：2026-11-02，2.0.1（34）.** [Release](https://github.com/Heisenberg2024/gitpier/releases/tag/v2.0.1) · [Publication evidence](docs/development.md#v201-publication--2026-11-02). Independent source review, full same-source CI, Tag CI reuse and signed Universal assets passed; live-service/hardware/long-soak limits remain explicit. / 独立复核、同源完整CI、Tag CI复用及已签名通用附件通过；真实服务／硬件／长时边界保留。 Reduce repeated repository queries while retaining coherent review and external-change detection. Preserve successful local commits through observation failures and distinguish unverified remote results; exercise large histories, multiple repositories/worktrees, synthetic authentication and native lifecycle recovery with reproducible measurements. No new Git engine, hosting platform or UI redesign. See the [maintenance plan](docs/v2.0.1-plan.md) and [executed evidence / remaining gates](docs/v2.0.1-testing.md).
-
-减少重复查询但保留完整一致性校验；完善提交后的部分成功反馈与远端未知结果，量化验收大历史、多仓库/工作树、隔离认证及原生生命周期。开发、本地验收、独立审核、CI 与发布分别记录；版本准备不代表发布授权。
-
-## v2.1.0 — Native workflow refinements / 原生工作流完善
-
-**Released / 已发布 · 2026-11-03 · 2.1.0（35）.** [Release](https://github.com/Heisenberg2024/gitpier/releases/tag/v2.1.0) · [Publication evidence](docs/development.md#v210-publication--2026-11-03)
-
-The release retains Operations Center checkpoints, verifies the exact remote ref explicitly, and reviews Push-only retries against the saved source and destination. Dashboard and preflight reuse observations within the original validation boundaries. See the [validation record](docs/v2.1.0-testing.md) and [matched performance results](docs/v2.1.0-performance.md).
-
-操作中心保留未决检查点，支持主动核实精确远端引用及审查原目标重试。Dashboard 和 Push 预检在既有校验边界内复用观察结果。验收范围与配对性能见上述记录。
-
-## v2.2.0 — Native Experience Refinement / 原生体验完善
-
-**Released / 已发布 · 2026-11-05 · 2.2.0（36）.** [Release](https://github.com/Heisenberg2024/gitpier/releases/tag/v2.2.0) · [Publication evidence](docs/development.md#v220-publication--2026-11-05)
-
-File type icons, continuous operation progress, two-axis Diff synchronization and file-switch reset refine the native workspace. Dashboard, settings, credential-source clarity, notification preferences and Codex discovery retain opaque reading surfaces, shared scrolling and macOS 14 compatibility. [Implementation and acceptance](docs/v2.2.0-native-experience.md) keeps measured results and unverified hardware/distribution coverage explicit.
-
-文件类型图标、连续操作进度、Diff 双轴同步与切文件复位完善原生工作空间；总览、设置、凭证来源、通知偏好和 Codex 检测继续沿用不透明阅读区域、统一滚动及 macOS 14 兼容路径。版本与公开分发已核验，真实硬件及完整服务、无障碍、自更新边界仍见验收记录。
-
-## Later: Trusted Distribution / 后续独立工作：可信分发
-
-**Planned / 计划中.** Developer ID production signing, Apple notarization, Hardened Runtime production adaptation, staple/ticket validation, Gatekeeper distribution and related production-key/pipeline work form a separate milestone. They are excluded from v2.0.0 development. Existing Universal/ad-hoc/DMG/Sparkle behavior and production update trust remain in place.
-
-Developer ID 生产签名、Apple 公证、Hardened Runtime 生产适配、公证票据、Gatekeeper 分发及相关生产密钥和流水线作为后续独立里程碑，不属于 v2.0.0。现有 Universal、ad-hoc、DMG 和 Sparkle 体系继续沿用。
-
-## Future exploration / 后续探索
-
-Other hosting platforms, issue/task integrations and optional AI assistance remain exploratory. No automatic remote writes or credential migration follow from this roadmap. / 其他平台、Issue/Task 集成和可选 AI 辅助仍处于探索阶段；路线图不授权自动远端写入或凭证迁移。
-
-Implementation and publication follow the existing [development](docs/development.md), [contribution](CONTRIBUTING.md) and [security](SECURITY.md) boundaries. / 开发与发布继续遵守现有开发、贡献和安全边界。
+其他托管集成、Issue/Task 连接及可选辅助能力可以继续讨论，但不承诺版本或日期。已实现能力与发布历史分别见 README 和 CHANGELOG。

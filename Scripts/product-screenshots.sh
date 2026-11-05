@@ -2,7 +2,7 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 task_root="$PWD"
-task_output="${1:-$task_root/docs/screenshots}"
+task_output="${1:-$task_root/.cache/product-screenshots}"
 mkdir -p "$task_output"
 task_output="$(cd "$task_output" && pwd -P)"
 task_temp="$(mktemp -d "${TMPDIR:-/tmp}/GitPier-product.XXXXXX")"

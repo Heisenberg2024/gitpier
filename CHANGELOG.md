@@ -4,7 +4,7 @@
 
 ## 2.2.0 — 2026-11-05 (36)
 
-- Published as [Latest](https://github.com/Heisenberg2024/gitpier/releases/tag/v2.2.0) from `15db897` after exact-source full CI (1,147 Core tests), successful Tag validation, Universal packaging, production Sparkle signatures, asset-ID readbacks and public download/Feed verification. [Publication evidence](docs/development.md#v220-publication--2026-11-05)
+- Published as [Latest](https://github.com/Heisenberg2024/gitpier/releases/tag/v2.2.0) from `15db897` after exact-source full CI (1,147 Core tests), successful Tag validation, Universal packaging, production Sparkle signatures, asset-ID readbacks and public download/Feed verification. [Publication evidence](https://github.com/Heisenberg2024/gitpier/blob/e10fd58f23a930b66fba6b527f49ab488373986e/docs/development.md#v220-publication--2026-11-05)
 - 已从 `15db897` 正式发布为 [Latest](https://github.com/Heisenberg2024/gitpier/releases/tag/v2.2.0)；同源完整 CI 的 1,147 项 Core、Tag 验证、通用打包、生产更新签名、附件按 ID 回读及公开下载/Feed 均核验通过。
 
 - Background operation notifications can use the system sound or stay silent; the foreground keeps in-app feedback. Automatic background Fetch stays quiet.
@@ -19,7 +19,7 @@
 - Repository refresh uses the native waiting animation and hides the track on completion while preserving the result layout. Push and Commit & Push show real transfer progress in one continuous track. Footer progress stays anchored while pane dividers move and shortens in smaller windows.
 - Round the Organizations and Credentials sidebar lists, remove their split-view divider and align header rules with the rounded corners. Restore reliable return to Ungrouped after selecting another organization.
 
-后台操作通知可独立设置声音；新安装默认检查更新，保留已有关闭设置，下载和安装仍需确认。提交和推送使用同一工作流，并在提交前审查说明格式。仓库根目录与文件定位分开，收藏星标统一；总览移除更新时间列并提供首尾仓库的辅助功能动作，Diff 字体和颜色集中到 Diff 设置。仓库设置可核查认证来源及只读获取连接，活动操作结束后再应用凭证配置；迁移任务工作树后终端使用当前目录的准入检查。主侧栏在所有主题下保持不透明背景。验收及未验证边界见[开发记录](docs/v2.2.0-native-experience.md)。
+后台操作通知可独立设置声音；新安装默认检查更新，保留已有关闭设置，下载和安装仍需确认。提交和推送使用同一工作流，并在提交前审查说明格式。仓库根目录与文件定位分开，收藏星标统一；总览移除更新时间列并提供首尾仓库的辅助功能动作，Diff 字体和颜色集中到 Diff 设置。仓库设置可核查认证来源及只读获取连接，活动操作结束后再应用凭证配置；迁移任务工作树后终端使用当前目录的准入检查。主侧栏在所有主题下保持不透明背景。验收及未验证边界见[开发记录](https://github.com/Heisenberg2024/gitpier/blob/e10fd58f23a930b66fba6b527f49ab488373986e/docs/v2.2.0-native-experience.md)。
 
 总览列表更新时持续隐藏系统滚动条，分支、修改状态及同步列的表头和内容居中。恢复关于页更新卡片的背景框，提交、历史和分支导航按钮使用普通样式。
 
@@ -33,7 +33,7 @@ Finder 与 Dock 启动时可从 `~/.local/bin` 检测 Codex CLI，快速打开�
 
 ## 2.1.0 — 2026-11-03 (35)
 
-- Published as [Latest](https://github.com/Heisenberg2024/gitpier/releases/tag/v2.1.0) from `5ff81be`. Full source CI passed 1,128 Core tests, and Tag CI reused the successful validation for the same SHA. The Universal DMG and production Sparkle Feed passed signature, asset readback and public download checks. [Publication evidence](docs/development.md#v210-publication--2026-11-03)
+- Published as [Latest](https://github.com/Heisenberg2024/gitpier/releases/tag/v2.1.0) from `5ff81be`. Full source CI passed 1,128 Core tests, and Tag CI reused the successful validation for the same SHA. The Universal DMG and production Sparkle Feed passed signature, asset readback and public download checks. [Publication evidence](https://github.com/Heisenberg2024/gitpier/blob/e10fd58f23a930b66fba6b527f49ab488373986e/docs/development.md#v210-publication--2026-11-03)
 - 已从 `5ff81be` 发布为 [Latest](https://github.com/Heisenberg2024/gitpier/releases/tag/v2.1.0)。同源完整 CI 通过 1,128 项 Core，Tag CI 复用同一 SHA 的成功验证。Universal DMG 和生产 Sparkle Feed 已通过验签、附件回读和公开下载核验。
 
 - Retain unresolved attention records independently of the 100 completed-summary limit; preserve each operation's branch, worktree, verified local commit and redacted original diagnosis.
@@ -41,9 +41,9 @@ Finder 与 Dock 启动时可从 `~/.local/bin` 检测 Codex CLI，快速打开�
 - Review Push-only retries against the saved source and destination, query the remote first, skip another transfer when already confirmed, and preserve native non-fast-forward recovery. Never repeat Commit, automatically Push or use Force.
 - Add operation type symbols, captured target details, full Hash copy, History navigation and bilingual verification feedback. Context advice prioritizes unverified earlier results while preserving conflict/unfinished-operation precedence and the compact native popover.
 - Reuse current-scan common-directory/effective-URL data with directory identity revalidation, suppress no-op Dashboard publications, and use blue for the Behind metric.
-- Coalesce Dashboard refresh publications and reuse remote-check presentation per render. Batch duplicate Push configuration/URL reads within each phase, retaining fresh final configuration/transport checks and all native alias/source/directory/authentication validation; see the [performance follow-up](docs/v2.1.0-performance.md).
+- Coalesce Dashboard refresh publications and reuse remote-check presentation per render. Batch duplicate Push configuration/URL reads within each phase, retaining fresh final configuration/transport checks and all native alias/source/directory/authentication validation; see the [performance follow-up](https://github.com/Heisenberg2024/gitpier/blob/e10fd58f23a930b66fba6b527f49ab488373986e/docs/v2.1.0-performance.md).
 - Remove the tracked standalone `Marketing/hero-demo/` tree. Preserve existing ignored Demo files outside the repository and retain native branding/resources.
-- Verification and performance evidence, including unrun external acceptance, are recorded in [v2.1.0 validation](docs/v2.1.0-testing.md).
+- Verification and performance evidence, including unrun external acceptance, are recorded in [v2.1.0 validation](https://github.com/Heisenberg2024/gitpier/blob/e10fd58f23a930b66fba6b527f49ab488373986e/docs/v2.1.0-testing.md).
 - 未决注意事项独立于最近 100 条已完成摘要保留；按操作保存分支、工作树、本地提交及原始脱敏诊断。
 - 新增主动只读核实，使用实际 Push URL 与精确远端引用；不同/缺失/不完整结果仍未确认，地址、配置或目录变化使核实失效；宽泛或多目标推送交由手动检查。
 - 原目标重试须审查、重新核对来源与目标并先查询远端；已确认时不再发送，保留原生非快进恢复，不重复提交、不自动推送、不 Force。
@@ -54,7 +54,7 @@ Finder 与 Dock 启动时可从 `~/.local/bin` 检测 Codex CLI，快速打开�
 
 ## 2.0.1 — 2026-11-02 (34)
 
-- Published as [Latest](https://github.com/Heisenberg2024/gitpier/releases/tag/v2.0.1) from `0c3bcd9` after independent source review, same-source full Swift 6.1.2 CI and successful Tag CI reusing that validation. Production Sparkle signatures, three stable-ID asset readbacks and six anonymous release/download/Feed endpoints verified; see [publication evidence](docs/development.md#v201-publication--2026-11-02).
+- Published as [Latest](https://github.com/Heisenberg2024/gitpier/releases/tag/v2.0.1) from `0c3bcd9` after independent source review, same-source full Swift 6.1.2 CI and successful Tag CI reusing that validation. Production Sparkle signatures, three stable-ID asset readbacks and six anonymous release/download/Feed endpoints verified; see [publication evidence](https://github.com/Heisenberg2024/gitpier/blob/e10fd58f23a930b66fba6b527f49ab488373986e/docs/development.md#v201-publication--2026-11-02).
 - 已从`0c3bcd9`正式发布为[Latest](https://github.com/Heisenberg2024/gitpier/releases/tag/v2.0.1)；独立源码复核、同源Swift 6.1.2完整CI及复用该验证的Tag CI通过，生产更新签名、三附件回读与六项匿名页面／下载／Feed均已核验。
 
 - Remove two unused common-directory queries from a complete Index snapshot (10 → 8 Git launches), retaining both native status scans, fresh worktree directory resolution and final Index-byte/HEAD/branch/operation/file validation.
@@ -64,7 +64,7 @@ Finder 与 Dock 启动时可从 `~/.local/bin` 检测 Codex CLI，快速打开�
 - Direct unknown Push results to remote verification in both languages; keep Review-history guidance specific to Review operations.
 - Retain verified local Hash/destination checkpoints and unknown-result diagnostics in both Merge & Push recovery and conflict Retry Push, including cancellation and no-op merges across unrelated staging, in-flight refreshes and another unverified retry. Reject a source changed after merge validation before transfer.
 - Treat native commit deadline/cancellation/output-limit interruptions as unverified when completion proof is missing. Preserve redacted partial stdout/stderr and the attempted recent message, require History/Reflog verification and prevent repeating the unchanged Commit draft.
-- Extend real temporary-Git and native acceptance for SHA-256, 5,000-commit pagination, newline/replaced worktrees, post-commit faults, remote acceptance followed by client error, page changes and short native lifecycle stress. Before/after measurements and independent gates are tracked in [v2.0.1 validation](docs/v2.0.1-testing.md).
+- Extend real temporary-Git and native acceptance for SHA-256, 5,000-commit pagination, newline/replaced worktrees, post-commit faults, remote acceptance followed by client error, page changes and short native lifecycle stress. Before/after measurements and independent gates are tracked in [v2.0.1 validation](https://github.com/Heisenberg2024/gitpier/blob/e10fd58f23a930b66fba6b527f49ab488373986e/docs/v2.0.1-testing.md).
 - 完整 Index 快照去除两次未使用的公共目录查询（Git 进程 10 → 8），保留两次原生状态扫描、实时工作树目录解析及最终 Index 字节、HEAD、分支、操作与文件校验。
 - 拒绝原始提交 Hook 引起的同 Hash 分支切换；私有目录继续转发其他可执行原生 Hook，保留引用事务的提交拒绝策略，以及参数、标准输入、退出状态和引号/换行路径。
 - 在原始 post-commit Hook 前捕获完整提交身份；后续 Index 观察或命令结果采集失败时保留已证实的本地结果、停止自动推送并保留诊断。缺少可靠回执时要求核查历史/引用日志，不猜测 Hash，也不让同一草稿直接再次提交。
@@ -76,7 +76,7 @@ Finder 与 Dock 启动时可从 `~/.local/bin` 检测 Codex CLI，快速打开�
 
 ## 2.0.0 — 2026-11-02 (33)
 
-- Published as Latest from `b99f72f`; exact-source Swift 6.1.2 CI passed 1,065 Core tests, and Tag CI ran the full macOS gates. Universal DMG, production update signatures, asset-ID readbacks and public downloads/Latest Feed were verified. See [publication evidence and limits](docs/development.md#v200-publication--2026-11-02).
+- Published as Latest from `b99f72f`; exact-source Swift 6.1.2 CI passed 1,065 Core tests, and Tag CI ran the full macOS gates. Universal DMG, production update signatures, asset-ID readbacks and public downloads/Latest Feed were verified. See [publication evidence and limits](https://github.com/Heisenberg2024/gitpier/blob/e10fd58f23a930b66fba6b527f49ab488373986e/docs/development.md#v200-publication--2026-11-02).
 - 已从 `b99f72f` 正式发布为 Latest；同源 Swift 6.1.2 CI 通过 1,065 项 Core，Tag CI 完整执行 macOS 门槛。通用 DMG、生产更新签名、附件按 ID 回读与公开下载/Latest Feed 已核验，仍保留刷新成本和真实硬件、无障碍、服务、生产升级未验边界。
 
 ### Production Quality & Native Experience
@@ -105,8 +105,8 @@ Finder 与 Dock 启动时可从 `~/.local/bin` 检测 Codex CLI，快速打开�
 
 ## 1.9.0 — 2026-11-01 (32)
 
-- Published [v1.9.0](https://github.com/Heisenberg2024/gitpier/releases/tag/v1.9.0) as Latest from `9df9364`. Exact-source Swift 6.1.2 CI passed 1056 Core tests; Tag CI reused that full run. Universal DMG, production update signatures, asset-ID readbacks and public downloads/Latest Feed were verified. See [publication evidence and limits](docs/development.md#v190-publication--2026-11-01).
-- 已从 `9df9364` 正式发布为 Latest；同源码 Swift 6.1.2 CI 通过 1056 项 Core，Tag CI 复用完整主运行。通用 DMG、生产更新签名、附件按 ID 回读及公开下载/Latest Feed 已核验，范围与边界见[发布记录](docs/development.md#v190-publication--2026-11-01)。
+- Published [v1.9.0](https://github.com/Heisenberg2024/gitpier/releases/tag/v1.9.0) as Latest from `9df9364`. Exact-source Swift 6.1.2 CI passed 1056 Core tests; Tag CI reused that full run. Universal DMG, production update signatures, asset-ID readbacks and public downloads/Latest Feed were verified. See [publication evidence and limits](https://github.com/Heisenberg2024/gitpier/blob/e10fd58f23a930b66fba6b527f49ab488373986e/docs/development.md#v190-publication--2026-11-01).
+- 已从 `9df9364` 正式发布为 Latest；同源码 Swift 6.1.2 CI 通过 1056 项 Core，Tag CI 复用完整主运行。通用 DMG、生产更新签名、附件按 ID 回读及公开下载/Latest Feed 已核验，范围与边界见[发布记录](https://github.com/Heisenberg2024/gitpier/blob/e10fd58f23a930b66fba6b527f49ab488373986e/docs/development.md#v190-publication--2026-11-01)。
 
 - Review and reorder 1–200 selected History commits with full IDs, original Worktree/branch/HEAD and shared Diff. Run native Cherry-pick with fresh identity/Index checks; refuse merge mainline guessing and stop duplicate/empty results for explicit recovery.
 - Unify ordinary/merge Revert review with a Diff entry and explicit merge parent; add native sequencer Continue/Skip/Abort review and retain pending operations across pages, hook/signing failures and marker-free sequencer states.
@@ -119,11 +119,11 @@ Finder 与 Dock 启动时可从 `~/.local/bin` 检测 Codex CLI，快速打开�
 - 统一原生分支状态图标颜色：同步／合并为绿色、领先为自适应文本色、落后为蓝色、分叉为橙色、未知／无上游为中性灰；当前检出图标及工作流／获取风险保持独立。
 - 优化大型历史图的轨道查找并保持图形几何，记录可复现的算法测量和原生性能边界。
 
-Development validation and unrun hardware/distribution checks: [v1.9.0 validation](docs/v1.9.0-testing.md). Version 1.9.0 (32) is released; the production update identity is unchanged. 应用仍为 ad-hoc 签名，未做 Apple 公证；真实硬件与最终生产包升级边界单独记录。
+Development validation and unrun hardware/distribution checks: [v1.9.0 validation](https://github.com/Heisenberg2024/gitpier/blob/e10fd58f23a930b66fba6b527f49ab488373986e/docs/v1.9.0-testing.md). Version 1.9.0 (32) is released; the production update identity is unchanged. 应用仍为 ad-hoc 签名，未做 Apple 公证；真实硬件与最终生产包升级边界单独记录。
 
 ## 1.8.1 — 2026-10-29 (31)
 
-- Published [v1.8.1](https://github.com/Heisenberg2024/gitpier/releases/tag/v1.8.1) as Latest from `6c90015`. Exact-source full CI passed 1010 Core tests; Tag CI verified reuse of that complete run. Universal DMG, production update signatures, three asset-ID readbacks and anonymous public downloads/Latest Feed were verified. See [publication evidence and limits](docs/development.md#v181-publication--2026-10-29).
+- Published [v1.8.1](https://github.com/Heisenberg2024/gitpier/releases/tag/v1.8.1) as Latest from `6c90015`. Exact-source full CI passed 1010 Core tests; Tag CI verified reuse of that complete run. Universal DMG, production update signatures, three asset-ID readbacks and anonymous public downloads/Latest Feed were verified. See [publication evidence and limits](https://github.com/Heisenberg2024/gitpier/blob/e10fd58f23a930b66fba6b527f49ab488373986e/docs/development.md#v181-publication--2026-10-29).
 - 已从 `6c90015` 正式发布为 Latest；同源码完整 CI 通过 1010 项 Core，Tag CI 核实复用该完整运行。Universal DMG、生产更新签名、三附件按 ID 回读及匿名公开下载/Latest Feed 均核验通过，验收范围与边界见发布记录。
 
 - Reuse native AppKit file-list rows to improve scrolling with hundreds or thousands of changes, preserving list/tree groups, independent inclusion checkboxes, multi-selection, keyboard navigation, context menus and shared overlay scrollbars.
@@ -140,7 +140,7 @@ Development validation and unrun hardware/distribution checks: [v1.9.0 validatio
 
 ## 1.8.0 — 2026-10-22 (30)
 
-- Published [v1.8.0](https://github.com/Heisenberg2024/gitpier/releases/tag/v1.8.0) as Latest from `ce761f0`. Exact-source Swift 6.1.2 CI and local packaging passed 993 Core tests; Tag CI reused the full main run. Universal DMG, production signatures, Draft asset readback and anonymous public downloads/Latest Feed were verified. See [evidence and limits](docs/development.md#v180-publication--2026-10-22).
+- Published [v1.8.0](https://github.com/Heisenberg2024/gitpier/releases/tag/v1.8.0) as Latest from `ce761f0`. Exact-source Swift 6.1.2 CI and local packaging passed 993 Core tests; Tag CI reused the full main run. Universal DMG, production signatures, Draft asset readback and anonymous public downloads/Latest Feed were verified. See [evidence and limits](https://github.com/Heisenberg2024/gitpier/blob/e10fd58f23a930b66fba6b527f49ab488373986e/docs/development.md#v180-publication--2026-10-22).
 - 已从 `ce761f0` 正式发布为 Latest；同源码 Swift 6.1.2 CI 与本地打包均通过 993 项 Core 测试，Tag CI 复用完整主运行。通用 DMG、生产签名、草稿附件回读及匿名公开下载/Latest Feed 核验通过，验收范围与边界见发布记录。
 - Compare reviewed Index, HEAD and branch snapshots, describe concrete changes and prevent obsolete review flags from repeatedly prompting. Preserve fresh precommit validation, partial staging, hooks and signing. 按已审查的 Index、HEAD 和分支快照比较并展示具体变化，避免历史审查标记反复提示；保留提交前重新校验、部分暂存、Hooks 与签名。
 - Bound confirmation content with shared scrolling and fixed action buttons, keeping long file lists usable. 确认内容复用共享滚动条并限制高度，固定操作按钮，避免大量文件将按钮挤出页面。
@@ -185,7 +185,7 @@ Development validation and unrun hardware/distribution checks: [v1.9.0 validatio
 - 新增跨窗口事件驱动操作中心、有界内存历史、取消请求状态及既有恢复/审查日志入口。
 - 新增仅负责导航的原生CLI、冷/热唤起及不覆盖已有文件的用户目录安装/卸载，保持OAuth和更新身份。
 - 增强既有快速打开的命令和最近选择，提供Developer ID/公证实施方案。
-- Published [v1.7.0](https://github.com/Heisenberg2024/gitpier/releases/tag/v1.7.0) from `dfcd0f6`: exact-source Swift 6.1.2 CI passed 932 Core tests and 10 release gates; Tag CI reused that full run. Independent review, Universal/native acceptance, signed Draft/public assets and isolated 1.6.1 → 1.7.0 Sparkle relaunch passed. See [evidence and limits](docs/development.md#v170-publication--2026-10-19).
+- Published [v1.7.0](https://github.com/Heisenberg2024/gitpier/releases/tag/v1.7.0) from `dfcd0f6`: exact-source Swift 6.1.2 CI passed 932 Core tests and 10 release gates; Tag CI reused that full run. Independent review, Universal/native acceptance, signed Draft/public assets and isolated 1.6.1 → 1.7.0 Sparkle relaunch passed. See [evidence and limits](https://github.com/Heisenberg2024/gitpier/blob/e10fd58f23a930b66fba6b527f49ab488373986e/docs/development.md#v170-publication--2026-10-19).
 - 已从 `dfcd0f6` 正式发布；同源码 Swift 6.1.2 CI 通过932项Core与10项发布门控，Tag CI复用该完整运行；独立审核、Universal/原生验收、签名草稿/公开附件及隔离28→29实际Sparkle重启升级均通过，硬件与生产环境边界分别记录。
 
 ## 1.6.1 — 2026-10-18
@@ -199,25 +199,25 @@ Development validation and unrun hardware/distribution checks: [v1.9.0 validatio
 - Confirm account-wide review discard before disconnect, cancel pending work and prevent late responses from restoring private drafts or old sessions across windows.
 - Require the confirmed review decision, complete commit SHA and stable repository/request identity during readback. Preserve an incomplete POST receipt for later checking. Keep unsafe Gitea reviews and unverified GitLab Request Changes in the browser.
 - Recognize form-encoded Gitea scope-conflict callbacks without changing codes/state or exposing provider descriptions. Record maintainer-authorized live review results, including a real persisted unknown outcome, separately from fixture evidence.
-- Add isolated data/update compatibility fixtures for actual v1.6.0 (27) to v1.6.1 (28). Validation and real-service authorization boundaries are recorded in [v1.6.1 validation](docs/v1.6.1-validation.md).
+- Add isolated data/update compatibility fixtures for actual v1.6.0 (27) to v1.6.1 (28). Validation and real-service authorization boundaries are recorded in [v1.6.1 validation](https://github.com/Heisenberg2024/gitpier/blob/e10fd58f23a930b66fba6b527f49ab488373986e/docs/v1.6.1-validation.md).
 - 每条确认后的远端审查写入前持久化最小版本化意图，逐项保留已知结果 ID、验证成功和未发送状态；重启后将可能已发送的操作恢复为未知，不自动重发。
 - 新增可见恢复面板、已知结果只读回查、单独确认后的人工核实与已完成日志主动清理；日志不保存评论正文、私有代码、Diff 位置或正文哈希。
 - 断开前明确确认该账号所有窗口的审查丢弃，取消等待中的任务，阻止迟到响应恢复私有草稿或旧会话。
 - 回读严格核实确认的审查决定、完整提交 SHA 及稳定仓库/请求身份；保留不完整 POST 结果 ID 供核查。Gitea 不安全审查与 GitLab 未验证的 Request Changes 继续使用网页。
 - 正确识别表单编码的 Gitea Scope Conflict 回调，不改写 code/state 或展示远端描述；单独记录授权后的真实审查结果与实际跨重启未知记录。
-- 新增真实 v1.6.0（27）到 v1.6.1（28）的隔离数据/更新兼容夹具；[验收记录](docs/v1.6.1-validation.md)区分自动化、真实平台与授权边界。
+- 新增真实 v1.6.0（27）到 v1.6.1（28）的隔离数据/更新兼容夹具；[验收记录](https://github.com/Heisenberg2024/gitpier/blob/e10fd58f23a930b66fba6b527f49ab488373986e/docs/v1.6.1-validation.md)区分自动化、真实平台与授权边界。
 
 ## 1.6.0 — 2026-10-18
 
 ### Native code review and collaboration (27)
 
 - Add account/repository/request/revision-bound review models, exact Diff anchors, immutable submission previews and a shared submission coordinator. Check fresh permissions and versions before each write; verify returned stable IDs and preserve unknown/partial outcomes without automatic POST retries.
-- Add provider-specific review adapters and native collaboration interfaces. GitLab Discussions and Approval remain independent operations; Gitea inline placement requires controlled live verification; formal review creation/pending submission stays in the browser because the API may publish another client’s pending comments or adopt newer HEAD. See [capabilities and validation limits](docs/code-review.md).
+- Add provider-specific review adapters and native collaboration interfaces. GitLab Discussions and Approval remain independent operations; Gitea inline placement requires controlled live verification; formal review creation/pending submission stays in the browser because the API may publish another client’s pending comments or adopt newer HEAD. See [capabilities and validation limits](https://github.com/Heisenberg2024/gitpier/blob/e10fd58f23a930b66fba6b527f49ab488373986e/docs/code-review.md).
 - Add confirmed GitHub multiline comments, GitLab discussion resolution and separately loaded approval rules, additive GitHub/Gitea reviewer requests, an on-demand account review inbox and exact-source current-branch shortcuts. Reuse local branch comparison with explicit tracking-snapshot provenance; keep unsafe or unverified provider actions in the browser.
 - Split the review inbox into smaller native views to keep Swift 6.1 compilation bounded without changing query or navigation behavior.
 - Persist per-account disconnect intent before asynchronous cleanup; suppress stale active metadata after restart and retain explicit recovery when metadata or credential cleanup fails. Preserve original OAuth, Local Vault, Keychain and Git workflows.
 - 新增绑定账号、仓库、请求和版本的审查模型、准确 Diff 位置、不可变提交预览与共享提交协调器；每条写入前检查最新权限和版本，回读稳定 ID，保留未知/部分成功结果且不自动重复 POST。
-- 新增各平台独立审查适配与原生协作界面。GitLab Discussion 与 Approval 分别写入；Gitea 逐行落点需受控真实验证；正式审查/Pending 接口可能发布其他客户端草稿或采用新 HEAD，保留网页操作。[能力与验收边界](docs/code-review.md)明确区分。
+- 新增各平台独立审查适配与原生协作界面。GitLab Discussion 与 Approval 分别写入；Gitea 逐行落点需受控真实验证；正式审查/Pending 接口可能发布其他客户端草稿或采用新 HEAD，保留网页操作。[能力与验收边界](https://github.com/Heisenberg2024/gitpier/blob/e10fd58f23a930b66fba6b527f49ab488373986e/docs/code-review.md)明确区分。
 - 新增确认后的 GitHub 多行评论、GitLab 讨论解决与独立审批规则读取、GitHub/Gitea 追加审查者、主动加载的账号级审查收件箱和准确源身份的当前分支入口；复用并明确来源的本地分支比较，未验证或缺少安全条件的平台操作保留网页入口。
 - 拆分审查收件箱原生视图，兼容 Swift 6.1 编译，保持查询与导航行为。
 - 异步清理前持久化每账号断开意图，重启时抑制旧活动元数据；元数据或凭证清理失败保留主动恢复入口，保持原 OAuth、本地库、Keychain 与 Git 工作流。

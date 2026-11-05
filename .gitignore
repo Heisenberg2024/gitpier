@@ -80,7 +80,7 @@ workspace.local.json
 *.sqlite-shm
 *.db
 
-# Internal notes, acceptance captures and machine-specific measurements
+# Internal notes, docs archives, Stageshow projects and local measurements
 /.local/
 /PROJECT_MEMORY.md
 /.codex/
