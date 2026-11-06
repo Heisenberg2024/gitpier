@@ -10,12 +10,17 @@
 
 GitPier is a native Git client for macOS, built with Swift, SwiftUI, and AppKit. Manage your repositories in one workspace, review changes side by side, and switch between Git workflows, your editor, and an integrated terminal without losing track of the repository you're working in.
 
+<details open>
+<summary>Product demo (expand/collapse)</summary>
+
 <picture>
   <source media="(prefers-reduced-motion: reduce) and (max-width: 600px)" srcset=".github/assets/gitpier-demo-compact.png">
   <source media="(prefers-reduced-motion: reduce)" srcset=".github/assets/gitpier-demo.png">
   <source media="(max-width: 600px)" srcset=".github/assets/gitpier-demo-compact.gif">
   <img src=".github/assets/gitpier-demo.gif" width="1040" alt="GitPier walkthrough: open a repository, review its Diff, and stage a change">
 </picture>
+
+</details>
 
 ## Features
 

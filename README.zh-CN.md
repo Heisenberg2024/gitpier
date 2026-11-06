@@ -10,12 +10,17 @@
 
 GitPier 是使用 Swift、SwiftUI 和 AppKit 构建的 macOS 原生 Git 客户端。你可以在一个工作空间管理多个仓库，并排审查变更，在 Git 工作流、编辑器和内置终端之间切换，同时保留当前仓库的上下文。
 
+<details open>
+<summary>产品演示（展开/收起）</summary>
+
 <picture>
   <source media="(prefers-reduced-motion: reduce) and (max-width: 600px)" srcset=".github/assets/gitpier-demo-compact.png">
   <source media="(prefers-reduced-motion: reduce)" srcset=".github/assets/gitpier-demo.png">
   <source media="(max-width: 600px)" srcset=".github/assets/gitpier-demo-compact.gif">
   <img src=".github/assets/gitpier-demo.gif" width="1040" alt="GitPier 演示：打开仓库、审查 Diff 并暂存变更">
 </picture>
+
+</details>
 
 ## 主要功能
 
